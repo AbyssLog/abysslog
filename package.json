@@ -1,0 +1,54 @@
+{
+  "name": "abysslog",
+  "version": "1.0.0",
+  "description": "EVE Online Abyssal Deadspace run tracker",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --win --mac --linux"
+  },
+  "build": {
+    "appId": "com.abysslog.app",
+    "productName": "AbyssLog",
+    "directories": {
+      "output": "dist"
+    },
+    "protocols": {
+      "name": "AbyssLog",
+      "schemes": ["abysslog"]
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3"
+  }
+}

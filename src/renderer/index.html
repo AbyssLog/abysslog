@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AbyssLog</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0c10;
+  --surface: #0f1318;
+  --panel: #141a22;
+  --border: #1e2d3d;
+  --border-bright: #2a4060;
+  --cyan: #4fc3f7;
+  --cyan-dim: rgba(79,195,247,0.12);
+  --gold: #ffa726;
+  --gold-dim: rgba(255,167,38,0.12);
+  --red: #ef5350;
+  --red-dim: rgba(239,83,80,0.12);
+  --green: #66bb6a;
+  --green-dim: rgba(102,187,106,0.12);
+  --text: #c8d8e8;
+  --text-dim: #5a7a9a;
+  --text-muted: #2a4a6a;
+  --font: 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Consolas', 'Courier New', monospace;
+}
+html, body { height: 100%; overflow: hidden; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; }
+button { cursor: pointer; font-family: var(--font); }
+input, select, textarea { font-family: var(--font); }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+
+/* ── Layout ───────────────────────────────────────────────────────────── */
+.app { display: flex; flex-direction: column; height: 100vh; }
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border-bright);
+  padding: 0 16px; height: 44px; flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+.topbar > * { -webkit-app-region: no-drag; }
+.logo { font-size: 15px; font-weight: 700; letter-spacing: 3px; color: var(--cyan); text-transform: uppercase; }
+.topbar-sep { width: 1px; height: 22px; background: var(--border); }
+.nav { display: flex; gap: 2px; }
+.nav-btn {
+  background: none; border: none; color: var(--text-dim);
+  font-size: 12px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase;
+  padding: 6px 12px; border-bottom: 2px solid transparent; transition: all 0.15s;
+}
+.nav-btn:hover { color: var(--text); }
+.nav-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+.char-switcher { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.char-select {
+  background: var(--panel); border: 1px solid var(--border-bright); color: var(--text);
+  font-size: 12px; padding: 4px 8px; outline: none;
+}
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.status-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.scanning { background: var(--gold); animation: blink 1s infinite; }
+.status-dot.abyss { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: blink 0.6s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+.content { flex: 1; overflow-y: auto; }
+.page { display: none; padding: 16px; }
+.page.active { display: block; }
+
+/* ── Components ───────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid var(--cyan); color: var(--cyan);
+  font-size: 12px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase;
+  padding: 7px 16px; transition: all 0.15s;
+}
+.btn:hover { background: var(--cyan-dim); }
+.btn.red { border-color: var(--red); color: var(--red); }
+.btn.red:hover { background: var(--red-dim); }
+.btn.green { border-color: var(--green); color: var(--green); }
+.btn.green:hover { background: var(--green-dim); }
+.btn.gold { border-color: var(--gold); color: var(--gold); }
+.btn.gold:hover { background: var(--gold-dim); }
+.btn.sm { font-size: 11px; padding: 5px 10px; letter-spacing: 1px; }
+.btn.ghost { border-color: var(--border-bright); color: var(--text-dim); }
+.btn.ghost:hover { background: rgba(255,255,255,0.03); color: var(--text); }
+.btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+
+.field-label { font-size: 10px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 5px; }
+.field-input {
+  width: 100%; background: var(--surface); border: 1px solid var(--border-bright);
+  color: var(--text); font-size: 13px; padding: 7px 10px; outline: none; transition: border-color 0.15s;
+}
+.field-input:focus { border-color: var(--cyan); }
+.field-select {
+  width: 100%; background: var(--surface); border: 1px solid var(--border-bright);
+  color: var(--text); font-size: 13px; padding: 7px 10px; outline: none; cursor: pointer;
+}
+.field-select:focus { border-color: var(--cyan); }
+.field-textarea {
+  width: 100%; background: var(--surface); border: 1px solid var(--border-bright);
+  color: var(--text); font-family: var(--font-mono); font-size: 12px;
+  padding: 8px 10px; resize: vertical; min-height: 100px; outline: none; transition: border-color 0.15s;
+}
+.field-textarea:focus { border-color: var(--cyan); }
+.field-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); padding: 14px 16px; }
+.panel-title { font-size: 10px; letter-spacing: 2px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; }
+
+.section-title {
+  font-size: 10px; letter-spacing: 3px; color: var(--text-muted); text-transform: uppercase;
+  margin: 18px 0 10px; display: flex; align-items: center; gap: 8px;
+}
+.section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+.alert { padding: 9px 13px; font-size: 12px; border-left: 3px solid var(--cyan); background: var(--cyan-dim); color: var(--text-dim); line-height: 1.6; margin-bottom: 10px; }
+.alert.warn { border-color: var(--gold); background: var(--gold-dim); }
+.alert.err { border-color: var(--red); background: var(--red-dim); }
+.alert.success { border-color: var(--green); background: var(--green-dim); }
+
+.badge { display: inline-block; padding: 2px 7px; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+.badge.survived { background: var(--green-dim); color: var(--green); }
+.badge.died { background: var(--red-dim); color: var(--red); }
+.badge.tier { background: var(--cyan-dim); color: var(--cyan); }
+.badge.weather { background: var(--gold-dim); color: var(--gold); }
+
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border-bright); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Tracker Page ─────────────────────────────────────────────────────── */
+.tracker-grid { display: grid; grid-template-columns: 1fr 380px; gap: 12px; max-width: 1100px; }
+.hud-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.hud-card { background: var(--panel); border: 1px solid var(--border); padding: 12px 14px; }
+.hud-card.active { border-color: var(--cyan); }
+.hud-card-label { font-size: 10px; letter-spacing: 2px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+.hud-card-value { font-family: var(--font-mono); font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-card-value.cyan { color: var(--cyan); }
+.hud-card-value.gold { color: var(--gold); }
+.hud-card-value.green { color: var(--green); }
+.hud-card-value.red { color: var(--red); }
+
+.timer {
+  font-family: var(--font-mono); font-size: 40px; letter-spacing: 5px; color: var(--cyan);
+  text-align: center; padding: 20px; background: var(--panel); border: 1px solid var(--border-bright);
+  margin-bottom: 10px; transition: all 0.3s;
+}
+.timer.survived { color: var(--green); border-color: var(--green); }
+.timer.died { color: var(--red); border-color: var(--red); }
+
+.run-panel { background: var(--panel); border: 1px solid var(--border); padding: 14px 16px; margin-bottom: 10px; }
+.run-config { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.action-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+.cargo-tabs { display: flex; }
+.cargo-tab { background: none; border: 1px solid var(--border); color: var(--text-dim); font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; padding: 6px 14px; cursor: pointer; transition: all 0.15s; }
+.cargo-tab.active { background: var(--cyan-dim); color: var(--cyan); border-color: var(--cyan); }
+
+.fit-capture { background: var(--green-dim); border: 1px solid var(--green); padding: 8px 12px; font-size: 12px; color: var(--green); margin-top: 10px; display: none; }
+
+/* ── Appraisal Results ────────────────────────────────────────────────── */
+.appraisal-section { margin-bottom: 14px; }
+.appraisal-header { font-size: 10px; letter-spacing: 2px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
+.item-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.item-table th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1px; color: var(--text-muted); text-transform: uppercase; border-bottom: 1px solid var(--border-bright); font-weight: 500; }
+.item-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.item-table tr:hover td { background: rgba(255,255,255,0.02); }
+.item-table .name { color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-table .qty { color: var(--text-dim); text-align: right; font-family: var(--font-mono); }
+.item-table .price { text-align: right; font-family: var(--font-mono); }
+.item-table .price.gained { color: var(--green); }
+.item-table .price.consumed { color: var(--red); }
+.item-table .price.zero { color: var(--gold); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.item-table tfoot td { padding: 8px; font-weight: 600; border-top: 1px solid var(--border-bright); font-family: var(--font-mono); }
+
+.net-isk-row {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--panel); border: 1px solid var(--border-bright); padding: 12px 16px; margin-top: 10px;
+}
+.net-isk-label { font-size: 11px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; }
+.net-isk-value { font-family: var(--font-mono); font-size: 22px; font-weight: 500; }
+.net-isk-value.positive { color: var(--green); }
+.net-isk-value.negative { color: var(--red); }
+
+/* ── History Page ─────────────────────────────────────────────────────── */
+.filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+.filter-row .field-select { width: auto; min-width: 130px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th { text-align: left; padding: 8px 10px; font-size: 10px; letter-spacing: 1.5px; color: var(--text-muted); text-transform: uppercase; border-bottom: 1px solid var(--border-bright); font-weight: 500; cursor: pointer; user-select: none; }
+.data-table th:hover { color: var(--text); }
+.data-table th.sort-asc::after { content: ' ↑'; color: var(--cyan); }
+.data-table th.sort-desc::after { content: ' ↓'; color: var(--cyan); }
+.data-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.data-table tr:hover td { background: var(--panel); }
+.data-table .mono { font-family: var(--font-mono); }
+.data-table .positive { color: var(--green); font-family: var(--font-mono); }
+.data-table .negative { color: var(--red); font-family: var(--font-mono); }
+.empty-state { text-align: center; padding: 48px; color: var(--text-muted); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+
+/* ── Stats Page ───────────────────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+.stat-card { background: var(--panel); border: 1px solid var(--border); padding: 14px 16px; }
+.stat-card-label { font-size: 10px; letter-spacing: 2px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
+.stat-card-value { font-family: var(--font-mono); font-size: 20px; }
+.stat-card-value.cyan { color: var(--cyan); }
+.stat-card-value.green { color: var(--green); }
+.stat-card-value.gold { color: var(--gold); }
+.stat-card-value.red { color: var(--red); }
+
+/* ── Settings Page ────────────────────────────────────────────────────── */
+.settings-section { max-width: 600px; margin-bottom: 24px; }
+.char-list { margin-bottom: 12px; }
+.char-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 6px; }
+.char-portrait { width: 36px; height: 36px; border-radius: 3px; background: var(--border); object-fit: cover; }
+.char-info { flex: 1; }
+.char-name { font-size: 13px; font-weight: 500; }
+.char-id { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+
+/* ── Modal ────────────────────────────────────────────────────────────── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; align-items: center; justify-content: center; z-index: 200; }
+.modal-overlay.open { display: flex; }
+.modal { background: var(--panel); border: 1px solid var(--border-bright); padding: 24px; width: 90%; max-width: 580px; max-height: 85vh; overflow-y: auto; }
+.modal-title { font-size: 15px; font-weight: 600; letter-spacing: 2px; color: var(--cyan); text-transform: uppercase; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+.modal-close { background: none; border: none; color: var(--text-dim); font-size: 18px; line-height: 1; cursor: pointer; }
+.modal-close:hover { color: var(--text); }
+
+/* ── Setup / No Char ──────────────────────────────────────────────────── */
+.setup-card { max-width: 520px; margin: 40px auto; background: var(--panel); border: 1px solid var(--border-bright); padding: 28px; }
+.setup-card h2 { font-size: 18px; font-weight: 700; letter-spacing: 2px; color: var(--cyan); text-transform: uppercase; margin-bottom: 8px; }
+.setup-card p { color: var(--text-dim); margin-bottom: 20px; font-size: 13px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Top Bar -->
+  <div class="topbar">
+    <span class="logo">▲ AbyssLog</span>
+    <div class="topbar-sep"></div>
+    <nav class="nav">
+      <button class="nav-btn active" onclick="showPage('tracker')">Tracker</button>
+      <button class="nav-btn" onclick="showPage('history')">History</button>
+      <button class="nav-btn" onclick="showPage('stats')">Statistics</button>
+      <button class="nav-btn" onclick="showPage('settings')">Settings</button>
+    </nav>
+    <div class="char-switcher">
+      <span class="status-dot" id="statusDot"></span>
+      <select class="char-select" id="charSelect" onchange="switchCharacter(this.value)">
+        <option value="">No character</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ── TRACKER PAGE ──────────────────────────────────────────────── -->
+    <div class="page active" id="page-tracker">
+      <div id="no-char-prompt" style="display:none">
+        <div class="setup-card">
+          <h2>No Character Connected</h2>
+          <p>Add a character in Settings to begin tracking your abyssal runs. You'll need a free EVE developer application Client ID to authorise via EVE SSO.</p>
+          <button class="btn" onclick="showPage('settings')">Go to Settings</button>
+        </div>
+      </div>
+
+      <div id="tracker-ui" style="display:none">
+        <div class="tracker-grid">
+          <!-- Left: HUD + Timer + Run Controls -->
+          <div>
+            <div class="hud-row">
+              <div class="hud-card" id="hudLocation">
+                <div class="hud-card-label">Location</div>
+                <div class="hud-card-value" id="hudLocationVal">—</div>
+              </div>
+              <div class="hud-card">
+                <div class="hud-card-label">Ship</div>
+                <div class="hud-card-value" id="hudShipVal">—</div>
+              </div>
+              <div class="hud-card">
+                <div class="hud-card-label">ESI</div>
+                <div class="hud-card-value" id="hudEsiVal" style="font-size:12px">Idle</div>
+              </div>
+              <div class="hud-card">
+                <div class="hud-card-label">Run State</div>
+                <div class="hud-card-value cyan" id="hudRunState">Awaiting</div>
+              </div>
+            </div>
+
+            <div class="timer" id="timerDisplay">00:00:00</div>
+
+            <!-- State: Awaiting Run -->
+            <div id="state-awaiting" class="run-panel">
+              <div class="panel-title">Run Setup</div>
+              <div class="run-config">
+                <div>
+                  <div class="field-label">Tier</div>
+                  <select class="field-select" id="tierSelect">
+                    <option value="">— Select —</option>
+                    <option value="T1">Tier 1</option>
+                    <option value="T2">Tier 2</option>
+                    <option value="T3">Tier 3</option>
+                    <option value="T4">Tier 4</option>
+                    <option value="T5">Tier 5</option>
+                    <option value="T6">Tier 6</option>
+                  </select>
+                </div>
+                <div>
+                  <div class="field-label">Weather</div>
+                  <select class="field-select" id="weatherSelect">
+                    <option value="">— Select —</option>
+                    <option value="Electrical">Electrical</option>
+                    <option value="Exotic">Exotic</option>
+                    <option value="Dark">Dark</option>
+                    <option value="Firestorm">Firestorm</option>
+                    <option value="Gamma">Gamma</option>
+                  </select>
+                </div>
+              </div>
+              <div style="margin-bottom:10px">
+                <div class="field-label">Pre-Run Cargo <span style="color:var(--text-muted)">(paste from in-game cargo hold)</span></div>
+                <textarea class="field-textarea" id="cargoBeforeText" placeholder="Select all items in your cargo hold (Ctrl+A), copy (Ctrl+C), paste here.&#10;&#10;Format: Item Name&#9;x100"></textarea>
+              </div>
+              <div id="fitCaptured" class="fit-capture">✓ Ship fitting and implants captured for loss tracking</div>
+              <div class="action-row">
+                <button class="btn gold" id="startBtn" onclick="manualStart()">▶ Start Run</button>
+              </div>
+              <div id="iskPerHourDisplay" style="margin-top:10px;font-size:12px;color:var(--text-dim)"></div>
+            </div>
+
+            <!-- State: In Abyss -->
+            <div id="state-in-abyss" class="run-panel" style="display:none">
+              <div class="panel-title">Run in Progress</div>
+              <div class="alert" style="margin-bottom:0">
+                ESI is monitoring your location. The timer will stop automatically when you exit or your ship is destroyed.
+                <div style="margin-top:8px;display:flex;gap:8px">
+                  <button class="btn sm green" onclick="manualEndSurvived()">✓ Manual: Survived</button>
+                  <button class="btn sm red" onclick="manualEndDied()">✗ Manual: Died</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- State: Awaiting Cargo (Survived) -->
+            <div id="state-awaiting-cargo" class="run-panel" style="display:none">
+              <div class="panel-title">Run Complete — Paste Post-Run Cargo</div>
+              <div class="alert success" style="margin-bottom:10px">You survived! Paste your cargo hold contents to calculate loot gained and items consumed.</div>
+              <div>
+                <div class="field-label">Post-Run Cargo</div>
+                <textarea class="field-textarea" id="cargoAfterText" placeholder="Select all in cargo, Ctrl+C, paste here..."></textarea>
+              </div>
+              <div class="action-row">
+                <button class="btn gold" onclick="appraiseRun()"><span id="appraiseSpinner" style="display:none" class="spinner"></span>Appraise Loot</button>
+                <button class="btn ghost sm" onclick="cancelRun()">Cancel Run</button>
+              </div>
+              <div id="appraise-error" style="display:none"></div>
+            </div>
+
+            <!-- State: Loss Summary (Died) -->
+            <div id="state-died" class="run-panel" style="display:none">
+              <div class="panel-title">Run Failed — Loss Summary</div>
+              <div class="alert err" style="margin-bottom:10px">Your ship and pod were destroyed. Calculating total loss from pre-run cargo, fitting, and implants...</div>
+              <div id="loss-loading" style="text-align:center;padding:20px;color:var(--text-dim)"><span class="spinner"></span> Appraising losses via Janice...</div>
+              <div id="loss-results" style="display:none"></div>
+              <div class="action-row" id="loss-actions" style="display:none">
+                <button class="btn green" onclick="saveCurrentRun()">Save Run</button>
+                <button class="btn ghost sm" onclick="cancelRun()">Discard</button>
+              </div>
+            </div>
+
+            <!-- State: Appraisal Results (Survived) -->
+            <div id="state-appraisal" class="run-panel" style="display:none">
+              <div class="panel-title">Appraisal Results</div>
+              <div id="appraisal-results"></div>
+              <div class="action-row">
+                <button class="btn green" onclick="saveCurrentRun()">Save Run</button>
+                <button class="btn ghost sm" onclick="backToAppraise()">← Re-Appraise</button>
+                <button class="btn ghost sm" onclick="cancelRun()">Discard</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Info Panel -->
+          <div>
+            <div class="panel" style="margin-bottom:10px">
+              <div class="panel-title">Current Run</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div><div class="field-label">Tier</div><div id="infoTier" style="font-size:13px;color:var(--text-dim)">—</div></div>
+                <div><div class="field-label">Weather</div><div id="infoWeather" style="font-size:13px;color:var(--text-dim)">—</div></div>
+                <div><div class="field-label">Started</div><div id="infoStarted" style="font-size:12px;font-family:var(--font-mono);color:var(--text-dim)">—</div></div>
+                <div><div class="field-label">Outcome</div><div id="infoOutcome">—</div></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Recent Runs</div>
+              <div id="recentRunsList" style="font-size:12px;color:var(--text-dim)">No runs yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── HISTORY PAGE ───────────────────────────────────────────────── -->
+    <div class="page" id="page-history">
+      <div class="filter-row">
+        <select class="field-select" id="filterTier" onchange="renderHistory()">
+          <option value="">All Tiers</option>
+          <option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option>
+          <option value="T4">T4</option><option value="T5">T5</option><option value="T6">T6</option>
+        </select>
+        <select class="field-select" id="filterWeather" onchange="renderHistory()">
+          <option value="">All Weather</option>
+          <option value="Electrical">Electrical</option><option value="Exotic">Exotic</option>
+          <option value="Dark">Dark</option><option value="Firestorm">Firestorm</option>
+          <option value="Gamma">Gamma</option>
+        </select>
+        <select class="field-select" id="filterOutcome" onchange="renderHistory()">
+          <option value="">All Outcomes</option>
+          <option value="Survived">Survived</option>
+          <option value="Died">Died</option>
+        </select>
+        <button class="btn sm ghost" onclick="renderHistory()" style="margin-left:auto">Refresh</button>
+      </div>
+      <div id="historyContent"></div>
+    </div>
+
+    <!-- ── STATS PAGE ──────────────────────────────────────────────────── -->
+    <div class="page" id="page-stats">
+      <div id="statsContent"></div>
+    </div>
+
+    <!-- ── SETTINGS PAGE ──────────────────────────────────────────────── -->
+    <div class="page" id="page-settings">
+      <div class="settings-section">
+        <div class="section-title">Characters</div>
+        <div id="charList" class="char-list"></div>
+        <button class="btn" onclick="openAddCharModal()">+ Add Character</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">API Keys</div>
+        <div style="margin-bottom:12px">
+          <div class="field-label">Janice API Key</div>
+          <input type="password" class="field-input" id="janiceKeyInput" placeholder="Your Janice API key..." />
+          <div class="field-note">API keys are available by filing a ticket in the <a href="#" onclick="openExternal('https://discord.gg/janice')" style="color:var(--cyan)">Janice Discord</a>.</div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div class="field-label">EVE Developer Client ID</div>
+          <input type="text" class="field-input" id="clientIdInput" placeholder="Your EVE app client ID..." />
+          <div class="field-note">Register at <a href="#" onclick="openExternal('https://developers.eveonline.com')" style="color:var(--cyan)">developers.eveonline.com</a>. Callback URL: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">abysslog://callback</span><br>
+          Scopes: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">esi-location.read_location.v1 esi-location.read_ship_type.v1 esi-location.read_online.v1 esi-fittings.read_fittings.v1 esi-clones.read_implants.v1</span></div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">Preferences</div>
+        <div style="margin-bottom:12px;max-width:200px">
+          <div class="field-label">ESI Poll Interval (seconds)</div>
+          <input type="number" class="field-input" id="pollIntervalInput" value="5" min="3" max="30" />
+        </div>
+        <div style="margin-bottom:12px;max-width:200px">
+          <div class="field-label">Default Tier</div>
+          <select class="field-select" id="defaultTierInput">
+            <option value="">None</option>
+            <option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option>
+            <option value="T4">T4</option><option value="T5">T5</option><option value="T6">T6</option>
+          </select>
+        </div>
+        <div style="margin-bottom:12px;max-width:200px">
+          <div class="field-label">Default Weather</div>
+          <select class="field-select" id="defaultWeatherInput">
+            <option value="">None</option>
+            <option value="Electrical">Electrical</option><option value="Exotic">Exotic</option>
+            <option value="Dark">Dark</option><option value="Firestorm">Firestorm</option>
+            <option value="Gamma">Gamma</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="saveSettings()">Save Settings</button>
+      </div>
+      <div id="settingsSaved" style="display:none;margin-top:10px" class="alert success">Settings saved.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Add Character Modal ─────────────────────────────────────────────── -->
+<div class="modal-overlay" id="addCharModal">
+  <div class="modal">
+    <div class="modal-title">
+      Add Character
+      <button class="modal-close" onclick="closeModal('addCharModal')">✕</button>
+    </div>
+    <p style="color:var(--text-dim);margin-bottom:16px;font-size:13px;line-height:1.7">
+      Click the button below to open EVE Online SSO in your browser. After authorising,
+      the app will detect the callback automatically.
+    </p>
+    <div id="ssoClientIdWarn" class="alert warn" style="display:none">Please save your Client ID in Settings first.</div>
+    <button class="btn gold" onclick="startSSO()"><span id="ssoSpinner" style="display:none" class="spinner"></span>Login with EVE SSO</button>
+    <div id="ssoStatus" style="margin-top:12px;font-size:12px;color:var(--text-dim)"></div>
+  </div>
+</div>
+
+<!-- ── Run Detail Modal ────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="runDetailModal">
+  <div class="modal">
+    <div class="modal-title">
+      <span id="runDetailTitle">Run Details</span>
+      <button class="modal-close" onclick="closeModal('runDetailModal')">✕</button>
+    </div>
+    <div id="runDetailContent"></div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+const S = {
+  characters: [],
+  activeCharId: null,
+  tokens: null,
+  settings: {},
+  runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraising | appraisal | died | loss
+  activeRun: null,
+  timerInterval: null,
+  pollInterval: null,
+  sortCol: 'started_at',
+  sortDir: 'desc',
+  pkceVerifier: null,
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────
+async function init() {
+  S.settings = await window.api.settings.getAll();
+  S.characters = await window.api.auth.getCharacters();
+
+  loadSettingsPage();
+  await populateCharSelect();
+
+  const savedCharId = S.settings.active_character;
+  if (savedCharId && S.characters.find(c => String(c.id) === String(savedCharId))) {
+    await switchCharacter(savedCharId, false);
+  } else if (S.characters.length > 0) {
+    await switchCharacter(S.characters[0].id, false);
+  } else {
+    showNoCharPrompt();
+  }
+
+  // Listen for SSO callback from main process
+  window.api.onSsoCallback(handleSsoCallback);
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if (b.textContent.toLowerCase().includes(name.toLowerCase())) b.classList.add('active');
+  });
+  if (name === 'history') renderHistory();
+  if (name === 'stats') renderStats();
+}
+
+// ── Character Management ──────────────────────────────────────────────────
+async function populateCharSelect() {
+  const sel = document.getElementById('charSelect');
+  sel.innerHTML = '<option value="">No character</option>';
+  for (const c of S.characters) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    sel.appendChild(opt);
+  }
+  if (S.activeCharId) sel.value = S.activeCharId;
+}
+
+async function switchCharacter(charId, save = true) {
+  stopESIPoll();
+  S.activeCharId = charId;
+  document.getElementById('charSelect').value = charId;
+
+  if (!charId) {
+    showNoCharPrompt();
+    return;
+  }
+
+  if (save) await window.api.settings.set('active_character', charId);
+
+  S.tokens = await window.api.auth.getTokens(charId);
+
+  document.getElementById('no-char-prompt').style.display = 'none';
+  document.getElementById('tracker-ui').style.display = 'block';
+
+  loadDefaultSelects();
+  updateRecentRuns();
+  updateIskPerHour();
+
+  if (S.tokens) {
+    startESIPoll();
+    document.getElementById('statusDot').className = 'status-dot online';
+  } else {
+    document.getElementById('statusDot').className = 'status-dot';
+    document.getElementById('hudEsiVal').textContent = 'No Token';
+  }
+
+  renderCharList();
+}
+
+function showNoCharPrompt() {
+  document.getElementById('no-char-prompt').style.display = 'block';
+  document.getElementById('tracker-ui').style.display = 'none';
+}
+
+function loadDefaultSelects() {
+  if (S.settings.default_tier) document.getElementById('tierSelect').value = S.settings.default_tier;
+  if (S.settings.default_weather) document.getElementById('weatherSelect').value = S.settings.default_weather;
+}
+
+// ── SSO Auth ──────────────────────────────────────────────────────────────
+async function startSSO() {
+  const clientId = S.settings.client_id || document.getElementById('clientIdInput').value.trim();
+  if (!clientId) {
+    document.getElementById('ssoClientIdWarn').style.display = 'block';
+    return;
+  }
+  document.getElementById('ssoClientIdWarn').style.display = 'none';
+
+  // Generate PKCE
+  const verifier = generateVerifier();
+  S.pkceVerifier = verifier;
+  const challenge = await generateChallenge(verifier);
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: 'abysslog://callback',
+    scope: 'esi-location.read_location.v1 esi-location.read_ship_type.v1 esi-location.read_online.v1 esi-fittings.read_fittings.v1 esi-clones.read_implants.v1',
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state: 'abysslog_sso'
+  });
+
+  const ssoUrl = 'https://login.eveonline.com/v2/oauth/authorize?' + params.toString();
+  document.getElementById('ssoStatus').textContent = 'Browser opened — waiting for authorisation...';
+  document.getElementById('ssoSpinner').style.display = 'inline-block';
+  await window.api.shell.openExternal(ssoUrl);
+}
+
+async function handleSsoCallback(callbackUrl) {
+  try {
+    const u = new URL(callbackUrl);
+    const code = u.searchParams.get('code');
+    if (!code) throw new Error('No code in callback URL');
+
+    const clientId = S.settings.client_id || document.getElementById('clientIdInput').value.trim();
+    const tokens = await window.api.esi.refreshToken(code, clientId); // reuse the endpoint for initial exchange
+
+    // Actually do code exchange
+    const tokenResp = await fetch('https://login.eveonline.com/v2/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: clientId,
+        code_verifier: S.pkceVerifier,
+        redirect_uri: 'abysslog://callback'
+      })
+    });
+    if (!tokenResp.ok) throw new Error('Token exchange failed: ' + await tokenResp.text());
+    const tokenData = await tokenResp.json();
+    tokenData.expires_at = Date.now() + tokenData.expires_in * 1000;
+
+    // Verify and get character info
+    const charInfo = await window.api.esi.verifyToken(tokenData.access_token);
+    const character = {
+      id: charInfo.CharacterID,
+      name: charInfo.CharacterName,
+      portrait_url: `https://images.evetech.net/characters/${charInfo.CharacterID}/portrait?size=64`,
+      client_id: clientId
+    };
+
+    await window.api.auth.saveCharacter(character);
+    await window.api.auth.saveTokens(character.id, tokenData);
+
+    S.characters = await window.api.auth.getCharacters();
+    await populateCharSelect();
+    await switchCharacter(character.id);
+
+    document.getElementById('ssoStatus').textContent = `✓ Logged in as ${character.name}`;
+    document.getElementById('ssoSpinner').style.display = 'none';
+    setTimeout(() => closeModal('addCharModal'), 1500);
+    renderCharList();
+  } catch (e) {
+    document.getElementById('ssoStatus').textContent = 'Error: ' + e.message;
+    document.getElementById('ssoSpinner').style.display = 'none';
+  }
+}
+
+function generateVerifier() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function generateChallenge(verifier) {
+  const enc = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest('SHA-256', enc);
+  return btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+// ── Token Refresh ─────────────────────────────────────────────────────────
+async function getValidToken() {
+  if (!S.tokens) return null;
+  if (S.tokens.expires_at && Date.now() > S.tokens.expires_at - 60000) {
+    try {
+      const char = S.characters.find(c => String(c.id) === String(S.activeCharId));
+      const clientId = char?.client_id || S.settings.client_id;
+      const newTokens = await window.api.esi.refreshToken(S.tokens.refresh_token, clientId);
+      newTokens.expires_at = Date.now() + newTokens.expires_in * 1000;
+      S.tokens = newTokens;
+      await window.api.auth.saveTokens(S.activeCharId, newTokens);
+    } catch (e) {
+      console.error('Token refresh failed:', e);
+      return null;
+    }
+  }
+  return S.tokens.access_token;
+}
+
+// ── ESI Polling ───────────────────────────────────────────────────────────
+const ABYSSAL_MIN = 32000000;
+const CAPSULE_IDS = [670, 33328];
+let lastShipTypeId = null;
+let lastSystemId = null;
+let wasInAbyss = false;
+
+async function pollESI() {
+  if (!S.activeCharId || !S.tokens) return;
+  document.getElementById('statusDot').className = 'status-dot scanning';
+
+  const token = await getValidToken();
+  if (!token) {
+    document.getElementById('hudEsiVal').textContent = 'Auth Error';
+    document.getElementById('statusDot').className = 'status-dot';
+    return;
+  }
+
+  try {
+    const [loc, ship] = await Promise.all([
+      window.api.esi.getLocation(S.activeCharId, token),
+      window.api.esi.getShip(S.activeCharId, token)
+    ]);
+
+    const sysId = loc.solar_system_id;
+    const inAbyss = sysId >= ABYSSAL_MIN;
+    const isCapsule = CAPSULE_IDS.includes(ship.ship_type_id);
+
+    // Update HUD
+    if (inAbyss) {
+      document.getElementById('hudLocationVal').textContent = `Abyssal #${sysId}`;
+      document.getElementById('hudLocation').classList.add('active');
+    } else {
+      document.getElementById('hudLocation').classList.remove('active');
+      if (sysId !== lastSystemId) {
+        window.api.esi.getSystemName(sysId).then(name => {
+          document.getElementById('hudLocationVal').textContent = name;
+        });
+      }
+    }
+    document.getElementById('hudShipVal').textContent = ship.ship_name || `Ship ${ship.ship_type_id}`;
+    document.getElementById('hudEsiVal').textContent = inAbyss ? '⚡ IN ABYSS' : 'Active';
+    document.getElementById('statusDot').className = inAbyss ? 'status-dot abyss' : 'status-dot online';
+
+    // Detect transitions
+    if (inAbyss && !wasInAbyss && S.runState === 'awaiting') {
+      autoStartRun();
+    } else if (!inAbyss && wasInAbyss && S.runState === 'in-abyss') {
+      if (isCapsule) {
+        autoEndDied();
+      } else {
+        autoEndSurvived();
+      }
+    } else if (isCapsule && S.runState === 'in-abyss') {
+      autoEndDied();
+    }
+
+    wasInAbyss = inAbyss;
+    lastSystemId = sysId;
+    lastShipTypeId = ship.ship_type_id;
+
+  } catch (e) {
+    document.getElementById('hudEsiVal').textContent = 'Poll Error';
+    document.getElementById('statusDot').className = 'status-dot';
+  }
+}
+
+function startESIPoll() {
+  pollESI();
+  const interval = Math.max(3, parseInt(S.settings.esi_poll_interval) || 5) * 1000;
+  S.pollInterval = setInterval(pollESI, interval);
+}
+
+function stopESIPoll() {
+  if (S.pollInterval) { clearInterval(S.pollInterval); S.pollInterval = null; }
+}
+
+// ── Run Lifecycle ─────────────────────────────────────────────────────────
+async function startRun() {
+  const tier = document.getElementById('tierSelect').value;
+  const weather = document.getElementById('weatherSelect').value;
+  const cargoBefore = document.getElementById('cargoBeforeText').value;
+
+  S.activeRun = {
+    character_id: S.activeCharId,
+    started_at: Math.floor(Date.now() / 1000),
+    tier: tier || 'Unknown',
+    weather: weather || 'Unknown',
+    cargoBefore,
+    cargoAfter: '',
+    outcome: null,
+    fitting: [],
+    implants: [],
+    fitCaptured: false
+  };
+
+  // Capture fitting and implants at run start
+  if (S.tokens) {
+    const token = await getValidToken();
+    if (token) {
+      try {
+        const [fitData, implantIds] = await Promise.all([
+          window.api.esi.getFitting(S.activeCharId, token),
+          window.api.esi.getImplants(S.activeCharId, token)
+        ]);
+
+        // Resolve type names for fitting items
+        const fitTypeIds = [fitData.ship_type_id, ...fitData.items.map(i => i.type_id)];
+        const implantTypeIds = implantIds;
+        const allTypeIds = [...new Set([...fitTypeIds, ...implantTypeIds])];
+        const typeNames = await window.api.esi.getTypeNames(allTypeIds);
+
+        // Build fitting array
+        S.activeRun.fitting = [
+          { type_id: fitData.ship_type_id, type_name: typeNames[fitData.ship_type_id] || `Type ${fitData.ship_type_id}`, qty: 1, slot: 'hull' },
+          ...fitData.items.map(i => ({
+            type_id: i.type_id,
+            type_name: typeNames[i.type_id] || `Type ${i.type_id}`,
+            qty: i.quantity || 1,
+            slot: i.flag || 'unknown'
+          }))
+        ];
+
+        // Build implants array
+        S.activeRun.implants = implantIds.map(id => ({
+          type_id: id,
+          type_name: typeNames[id] || `Type ${id}`,
+        }));
+
+        S.activeRun.fitCaptured = true;
+        document.getElementById('fitCaptured').style.display = 'block';
+      } catch (e) {
+        console.error('Failed to capture fitting/implants:', e);
+      }
+    }
+  }
+
+  setRunState('in-abyss');
+  startTimer();
+  updateRunInfo();
+}
+
+function manualStart() {
+  startRun();
+}
+
+function autoStartRun() {
+  startRun();
+}
+
+function autoEndSurvived() {
+  endRunSurvived();
+}
+
+function autoEndDied() {
+  endRunDied();
+}
+
+function manualEndSurvived() {
+  endRunSurvived();
+}
+
+function manualEndDied() {
+  endRunDied();
+}
+
+function endRunSurvived() {
+  stopTimer();
+  S.activeRun.outcome = 'Survived';
+  S.activeRun.duration = Math.floor(Date.now() / 1000) - S.activeRun.started_at;
+  document.getElementById('timerDisplay').classList.add('survived');
+  document.getElementById('hudRunState').textContent = 'Survived';
+  document.getElementById('infoOutcome').innerHTML = '<span class="badge survived">Survived</span>';
+  setRunState('awaiting-cargo');
+}
+
+async function endRunDied() {
+  stopTimer();
+  S.activeRun.outcome = 'Died';
+  S.activeRun.duration = Math.floor(Date.now() / 1000) - S.activeRun.started_at;
+  document.getElementById('timerDisplay').classList.add('died');
+  document.getElementById('hudRunState').textContent = 'Died';
+  document.getElementById('infoOutcome').innerHTML = '<span class="badge died">Died</span>';
+  setRunState('died');
+  await appraiseLoss();
+}
+
+async function appraiseRun() {
+  const apiKey = S.settings.janice_api_key;
+  if (!apiKey) {
+    document.getElementById('appraise-error').innerHTML = '<div class="alert err">Janice API key not set. Go to Settings to add it.</div>';
+    document.getElementById('appraise-error').style.display = 'block';
+    return;
+  }
+  document.getElementById('appraise-error').style.display = 'none';
+  document.getElementById('appraiseSpinner').style.display = 'inline-block';
+
+  const cargoAfter = document.getElementById('cargoAfterText').value;
+  S.activeRun.cargoAfter = cargoAfter;
+
+  const diff = diffCargo(S.activeRun.cargoBefore, cargoAfter);
+
+  try {
+    let lootResult = null, consumedResult = null;
+
+    if (diff.gained.length > 0) {
+      lootResult = await window.api.janice.appraise(diff.gained, 'buy', apiKey);
+    }
+    if (diff.consumed.length > 0) {
+      consumedResult = await window.api.janice.appraise(diff.consumed, 'sell', apiKey);
+    }
+
+    S.activeRun.diff = diff;
+    S.activeRun.lootResult = lootResult;
+    S.activeRun.consumedResult = consumedResult;
+
+    const lootVal = lootResult ? lootResult.totalBuyPrice : 0;
+    const consumedCost = consumedResult ? consumedResult.totalSellPrice : 0;
+    S.activeRun.loot_value = lootVal;
+    S.activeRun.consumed_cost = consumedCost;
+    S.activeRun.net_isk = lootVal - consumedCost;
+
+    renderAppraisalResults(lootResult, consumedResult, diff);
+    setRunState('appraisal');
+  } catch (e) {
+    document.getElementById('appraise-error').innerHTML = `<div class="alert err">Appraisal failed: ${e.message} <button class="btn sm red" onclick="appraiseRun()">Retry</button></div>`;
+    document.getElementById('appraise-error').style.display = 'block';
+  }
+  document.getElementById('appraiseSpinner').style.display = 'none';
+}
+
+async function appraiseLoss() {
+  const apiKey = S.settings.janice_api_key;
+  const cargoItems = parseCargo(S.activeRun.cargoBefore);
+
+  try {
+    const results = { cargo: null, fitting: null, implants: null };
+
+    if (cargoItems.length > 0 && apiKey) {
+      results.cargo = await window.api.janice.appraise(cargoItems, 'sell', apiKey);
+    }
+    if (S.activeRun.fitting.length > 0 && apiKey) {
+      results.fitting = await window.api.janice.appraise(
+        S.activeRun.fitting.map(f => ({ name: f.type_name, qty: f.qty })), 'sell', apiKey
+      );
+    }
+    if (S.activeRun.implants.length > 0 && apiKey) {
+      results.implants = await window.api.janice.appraise(
+        S.activeRun.implants.map(i => ({ name: i.type_name, qty: 1 })), 'sell', apiKey
+      );
+    }
+
+    const cargoLoss = results.cargo ? results.cargo.totalSellPrice : 0;
+    const fittingLoss = results.fitting ? results.fitting.totalSellPrice : 0;
+    const implantLoss = results.implants ? results.implants.totalSellPrice : 0;
+    S.activeRun.total_loss = cargoLoss + fittingLoss + implantLoss;
+    S.activeRun.lossResults = results;
+
+    renderLossResults(results, cargoLoss, fittingLoss, implantLoss);
+  } catch (e) {
+    document.getElementById('loss-loading').textContent = 'Appraisal failed: ' + e.message;
+  }
+}
+
+function renderAppraisalResults(lootResult, consumedResult, diff) {
+  const el = document.getElementById('appraisal-results');
+  let html = '';
+
+  if (lootResult && lootResult.items.length > 0) {
+    html += `<div class="appraisal-section">
+      <div class="appraisal-header">Loot Gained</div>
+      <table class="item-table">
+        <thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Buy</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>`;
+    for (const item of lootResult.items) {
+      const p = item.effectivePrices;
+      const isZero = p.buyPrice === 0;
+      html += `<tr>
+        <td class="name">${esc(item.itemType.name)}</td>
+        <td class="qty">${item.amount.toLocaleString()}</td>
+        <td class="price ${isZero ? 'zero' : 'gained'}">${isZero ? 'no orders' : fmtIsk(p.buyPrice)}</td>
+        <td class="price ${isZero ? 'zero' : 'gained'}">${isZero ? '—' : fmtIsk(p.buyPriceTotal)}</td>
+      </tr>`;
+    }
+    html += `</tbody><tfoot><tr><td colspan="3" style="color:var(--text-dim)">Total Loot (instant sell)</td><td class="price gained">${fmtIsk(lootResult.totalBuyPrice)}</td></tr></tfoot></table>`;
+    if (lootResult.unresolved.length > 0) {
+      html += `<div class="alert warn" style="margin-top:6px">Unresolved items: ${lootResult.unresolved.map(esc).join(', ')}</div>`;
+    }
+    html += `</div>`;
+  } else if (diff.gained.length === 0) {
+    html += `<div class="alert" style="margin-bottom:10px">No loot gained detected in cargo diff.</div>`;
+  }
+
+  if (consumedResult && consumedResult.items.length > 0) {
+    html += `<div class="appraisal-section">
+      <div class="appraisal-header">Items Consumed / Used</div>
+      <table class="item-table">
+        <thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Sell</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>`;
+    for (const item of consumedResult.items) {
+      const p = item.effectivePrices;
+      const isZero = p.sellPrice === 0;
+      html += `<tr>
+        <td class="name">${esc(item.itemType.name)}</td>
+        <td class="qty">${item.amount.toLocaleString()}</td>
+        <td class="price ${isZero ? 'zero' : 'consumed'}">${isZero ? 'no orders' : fmtIsk(p.sellPrice)}</td>
+        <td class="price ${isZero ? 'zero' : 'consumed'}">${isZero ? '—' : fmtIsk(p.sellPriceTotal)}</td>
+      </tr>`;
+    }
+    html += `</tbody><tfoot><tr><td colspan="3" style="color:var(--text-dim)">Total Cost (replacement)</td><td class="price consumed">−${fmtIsk(consumedResult.totalSellPrice)}</td></tr></tfoot></table>
+    </div>`;
+  }
+
+  const net = S.activeRun.net_isk;
+  html += `<div class="net-isk-row">
+    <div><div class="net-isk-label">Net ISK This Run</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${S.activeRun.tier} ${S.activeRun.weather} · ${fmtDuration(S.activeRun.duration)}</div></div>
+    <div class="net-isk-value ${net >= 0 ? 'positive' : 'negative'}">${net >= 0 ? '+' : ''}${fmtIsk(net)}</div>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+function renderLossResults(results, cargoLoss, fittingLoss, implantLoss) {
+  document.getElementById('loss-loading').style.display = 'none';
+  const el = document.getElementById('loss-results');
+
+  let html = '';
+  const sections = [
+    { label: 'Cargo Lost', result: results.cargo, total: cargoLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
+    { label: 'Fitting Lost', result: results.fitting, total: fittingLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
+    { label: 'Implants Lost', result: results.implants, total: implantLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
+  ];
+
+  for (const s of sections) {
+    if (!s.result || s.result.items.length === 0) continue;
+    html += `<div class="appraisal-section">
+      <div class="appraisal-header">${s.label}</div>
+      <table class="item-table"><thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Sell</th><th style="text-align:right">Total</th></tr></thead><tbody>`;
+    for (const item of s.result.items) {
+      const p = item.effectivePrices;
+      const isZero = p[s.priceField] === 0;
+      html += `<tr>
+        <td class="name">${esc(item.itemType.name)}</td>
+        <td class="qty">${item.amount.toLocaleString()}</td>
+        <td class="price ${isZero ? 'zero' : 'consumed'}">${isZero ? 'no orders' : fmtIsk(p[s.priceField])}</td>
+        <td class="price ${isZero ? 'zero' : 'consumed'}">${isZero ? '—' : fmtIsk(p[s.totalField])}</td>
+      </tr>`;
+    }
+    html += `</tbody><tfoot><tr><td colspan="3" style="color:var(--text-dim)">Subtotal</td><td class="price consumed">−${fmtIsk(s.result[s.grandTotal])}</td></tr></tfoot></table></div>`;
+  }
+
+  const total = cargoLoss + fittingLoss + implantLoss;
+  html += `<div class="net-isk-row">
+    <div><div class="net-isk-label">Total Loss</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${S.activeRun.tier} ${S.activeRun.weather} · ${fmtDuration(S.activeRun.duration)}</div></div>
+    <div class="net-isk-value negative">−${fmtIsk(total)}</div>
+  </div>`;
+
+  el.innerHTML = html;
+  el.style.display = 'block';
+  document.getElementById('loss-actions').style.display = 'flex';
+}
+
+async function saveCurrentRun() {
+  if (!S.activeRun) return;
+
+  const run = S.activeRun;
+  const items = [];
+
+  if (run.outcome === 'Survived') {
+    // Build items from appraisal results
+    if (run.lootResult) {
+      for (const item of run.lootResult.items) {
+        const p = item.effectivePrices;
+        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'gained', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+      }
+    }
+    if (run.consumedResult) {
+      for (const item of run.consumedResult.items) {
+        const p = item.effectivePrices;
+        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'consumed', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+      }
+    }
+  } else {
+    // Build loss items from loss results
+    if (run.lossResults) {
+      for (const [, result] of Object.entries(run.lossResults)) {
+        if (!result) continue;
+        for (const item of result.items) {
+          const p = item.effectivePrices;
+          items.push({ item_name: item.itemType.name, qty: item.amount, type: 'lost', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+        }
+      }
+    }
+  }
+
+  // Build fitting items with pricing
+  const fitting = run.fitting.map(f => ({
+    ...f,
+    unit_price_sell: run.lossResults?.fitting?.items?.find(i => i.itemType.name === f.type_name)?.effectivePrices?.sellPrice || 0
+  }));
+  const implants = run.implants.map(imp => ({
+    ...imp,
+    unit_price_sell: run.lossResults?.implants?.items?.find(i => i.itemType.name === imp.type_name)?.effectivePrices?.sellPrice || 0
+  }));
+
+  const runData = {
+    character_id: run.character_id,
+    started_at: run.started_at,
+    duration: run.duration || 0,
+    tier: run.tier,
+    weather: run.weather,
+    outcome: run.outcome,
+    loot_value: run.loot_value || 0,
+    consumed_cost: run.consumed_cost || 0,
+    net_isk: run.net_isk || 0,
+    total_loss: run.total_loss || 0,
+    system_id: lastSystemId,
+    items,
+    fitting,
+    implants
+  };
+
+  await window.api.runs.save(runData);
+
+  // Promote post-run cargo to pre-run if survived
+  if (run.outcome === 'Survived') {
+    document.getElementById('cargoBeforeText').value = run.cargoAfter;
+  } else {
+    document.getElementById('cargoBeforeText').value = '';
+  }
+
+  S.activeRun = null;
+  resetRunUI();
+  updateRecentRuns();
+  updateIskPerHour();
+}
+
+function cancelRun() {
+  S.activeRun = null;
+  resetRunUI();
+}
+
+function backToAppraise() {
+  setRunState('awaiting-cargo');
+}
+
+function resetRunUI() {
+  stopTimer();
+  document.getElementById('timerDisplay').textContent = '00:00:00';
+  document.getElementById('timerDisplay').className = 'timer';
+  document.getElementById('hudRunState').textContent = 'Awaiting';
+  document.getElementById('infoTier').textContent = '—';
+  document.getElementById('infoWeather').textContent = '—';
+  document.getElementById('infoStarted').textContent = '—';
+  document.getElementById('infoOutcome').textContent = '—';
+  document.getElementById('cargoAfterText').value = '';
+  document.getElementById('fitCaptured').style.display = 'none';
+  document.getElementById('appraise-error').style.display = 'none';
+  setRunState('awaiting');
+}
+
+function setRunState(state) {
+  S.runState = state;
+  const states = ['awaiting', 'in-abyss', 'awaiting-cargo', 'died', 'appraisal'];
+  for (const s of states) {
+    const el = document.getElementById('state-' + s);
+    if (el) el.style.display = s === state ? 'block' : 'none';
+  }
+  // Reset died sub-state
+  if (state === 'died') {
+    document.getElementById('loss-loading').style.display = 'block';
+    document.getElementById('loss-results').style.display = 'none';
+    document.getElementById('loss-actions').style.display = 'none';
+  }
+}
+
+function updateRunInfo() {
+  if (!S.activeRun) return;
+  document.getElementById('infoTier').textContent = S.activeRun.tier;
+  document.getElementById('infoWeather').textContent = S.activeRun.weather;
+  const d = new Date(S.activeRun.started_at * 1000);
+  document.getElementById('infoStarted').textContent = d.toLocaleTimeString();
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────
+function startTimer() {
+  stopTimer();
+  S.timerInterval = setInterval(() => {
+    if (!S.activeRun) return;
+    const elapsed = Math.floor(Date.now() / 1000) - S.activeRun.started_at;
+    document.getElementById('timerDisplay').textContent = fmtDuration(elapsed);
+  }, 500);
+}
+
+function stopTimer() {
+  if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+}
+
+// ── Cargo Parsing & Diffing ───────────────────────────────────────────────
+function parseCargo(raw) {
+  if (!raw || !raw.trim()) return [];
+  const items = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Match "Item Name<tab>x100" or "Item Name  x100" or "Item Name x 100"
+    const m = trimmed.match(/^(.+?)\s*[\t]\s*x\s*([0-9,]+)\s*$/i)
+           || trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
+    if (m) {
+      const name = m[1].trim();
+      const qty = parseInt(m[2].replace(/,/g, ''));
+      if (name && qty > 0) items[name] = (items[name] || 0) + qty;
+    } else if (trimmed.length > 2) {
+      items[trimmed] = (items[trimmed] || 0) + 1;
+    }
+  }
+  return Object.entries(items).map(([name, qty]) => ({ name, qty }));
+}
+
+function diffCargo(beforeRaw, afterRaw) {
+  const before = {};
+  for (const { name, qty } of parseCargo(beforeRaw)) before[name] = qty;
+  const after = {};
+  for (const { name, qty } of parseCargo(afterRaw)) after[name] = qty;
+
+  const gained = [];
+  const consumed = [];
+  const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+
+  for (const key of allKeys) {
+    const b = before[key] || 0;
+    const a = after[key] || 0;
+    if (a > b) gained.push({ name: key, qty: a - b });
+    else if (b > a) consumed.push({ name: key, qty: b - a });
+    // equal = carry-over, excluded
+  }
+  return { gained, consumed };
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+async function renderHistory() {
+  const el = document.getElementById('historyContent');
+  const filters = {
+    character_id: S.activeCharId || undefined,
+    tier: document.getElementById('filterTier').value || undefined,
+    weather: document.getElementById('filterWeather').value || undefined,
+    outcome: document.getElementById('filterOutcome').value || undefined,
+  };
+
+  const runs = await window.api.runs.getAll(filters);
+  if (!runs.length) {
+    el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
+    return;
+  }
+
+  // Sort
+  runs.sort((a, b) => {
+    let av = a[S.sortCol], bv = b[S.sortCol];
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    return S.sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  const cols = [
+    { key: 'started_at', label: 'Date' },
+    { key: 'tier', label: 'Tier' },
+    { key: 'weather', label: 'Weather' },
+    { key: 'duration', label: 'Duration' },
+    { key: 'outcome', label: 'Outcome' },
+    { key: 'net_isk', label: 'Net ISK' },
+    { key: 'total_loss', label: 'Total Loss' },
+    { key: '_detail', label: '' },
+  ];
+
+  let html = `<table class="data-table"><thead><tr>`;
+  for (const col of cols) {
+    if (col.key === '_detail') { html += `<th></th>`; continue; }
+    const cls = S.sortCol === col.key ? (S.sortDir === 'asc' ? 'sort-asc' : 'sort-desc') : '';
+    html += `<th class="${cls}" onclick="sortHistory('${col.key}')">${col.label}</th>`;
+  }
+  html += `</tr></thead><tbody>`;
+
+  for (const run of runs) {
+    const d = new Date(run.started_at * 1000);
+    html += `<tr>
+      <td class="mono">${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+      <td><span class="badge tier">${esc(run.tier || '—')}</span></td>
+      <td><span class="badge weather">${esc(run.weather || '—')}</span></td>
+      <td class="mono">${fmtDuration(run.duration)}</td>
+      <td><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${run.outcome}</span></td>
+      <td class="${run.outcome === 'Survived' ? 'positive' : ''}">${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '—'}</td>
+      <td class="${run.outcome === 'Died' ? 'negative' : 'mono'}">${run.outcome === 'Died' ? '−' + fmtIsk(run.total_loss) : '—'}</td>
+      <td><button class="btn sm ghost" onclick="showRunDetail(${run.id})">Detail</button></td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  el.innerHTML = html;
+}
+
+function sortHistory(col) {
+  if (S.sortCol === col) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
+  else { S.sortCol = col; S.sortDir = 'desc'; }
+  renderHistory();
+}
+
+async function showRunDetail(runId) {
+  const run = await window.api.runs.getById(runId);
+  if (!run) return;
+
+  const d = new Date(run.started_at * 1000);
+  document.getElementById('runDetailTitle').textContent = `${run.tier} ${run.weather} — ${d.toLocaleDateString()}`;
+
+  const gained = run.items.filter(i => i.type === 'gained');
+  const consumed = run.items.filter(i => i.type === 'consumed');
+  const lost = run.items.filter(i => i.type === 'lost');
+
+  let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+    <div><div class="field-label">Date</div><div class="mono" style="font-size:12px">${d.toLocaleString()}</div></div>
+    <div><div class="field-label">Duration</div><div class="mono" style="font-size:12px">${fmtDuration(run.duration)}</div></div>
+    <div><div class="field-label">Outcome</div><div><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${run.outcome}</span></div></div>
+    <div><div class="field-label">${run.outcome === 'Survived' ? 'Net ISK' : 'Total Loss'}</div>
+    <div class="mono" style="font-size:14px;color:${run.outcome === 'Survived' ? 'var(--green)' : 'var(--red)'}">
+      ${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '−' + fmtIsk(run.total_loss)}
+    </div></div>
+  </div>`;
+
+  if (gained.length) {
+    html += itemTableHtml('Loot Gained', gained, 'gained', 'unit_price_buy');
+  }
+  if (consumed.length) {
+    html += itemTableHtml('Items Consumed', consumed, 'consumed', 'unit_price_sell');
+  }
+  if (lost.length) {
+    html += itemTableHtml('Items Lost', lost, 'consumed', 'unit_price_sell');
+  }
+  if (run.fitting.length) {
+    html += fittingTableHtml('Ship Fitting (at run start)', run.fitting);
+  }
+  if (run.implants.length) {
+    html += implantTableHtml('Implants (at run start)', run.implants);
+  }
+
+  html += `<div style="margin-top:16px"><button class="btn sm red" onclick="deleteRun(${run.id})">Delete Run</button></div>`;
+  document.getElementById('runDetailContent').innerHTML = html;
+  openModal('runDetailModal');
+}
+
+function itemTableHtml(title, items, priceClass, priceField) {
+  let html = `<div class="appraisal-section"><div class="appraisal-header">${title}</div>
+    <table class="item-table"><thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Total</th></tr></thead><tbody>`;
+  for (const item of items) {
+    const unit = item[priceField] || 0;
+    const total = unit * item.qty;
+    html += `<tr>
+      <td class="name">${esc(item.item_name)}</td>
+      <td class="qty">${item.qty.toLocaleString()}</td>
+      <td class="price ${unit === 0 ? 'zero' : priceClass}">${unit === 0 ? 'no orders' : fmtIsk(unit)}</td>
+      <td class="price ${total === 0 ? 'zero' : priceClass}">${total === 0 ? '—' : fmtIsk(total)}</td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  return html;
+}
+
+function fittingTableHtml(title, fitting) {
+  let html = `<div class="appraisal-section"><div class="appraisal-header">${title}</div>
+    <table class="item-table"><thead><tr><th>Module</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Sell</th><th style="text-align:right">Total</th></tr></thead><tbody>`;
+  for (const item of fitting) {
+    const total = (item.unit_price_sell || 0) * item.qty;
+    html += `<tr>
+      <td class="name">${esc(item.type_name)}</td>
+      <td class="qty">${item.qty}</td>
+      <td class="price consumed">${fmtIsk(item.unit_price_sell || 0)}</td>
+      <td class="price consumed">${fmtIsk(total)}</td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  return html;
+}
+
+function implantTableHtml(title, implants) {
+  let html = `<div class="appraisal-section"><div class="appraisal-header">${title}</div>
+    <table class="item-table"><thead><tr><th>Implant</th><th style="text-align:right">Unit Sell</th></tr></thead><tbody>`;
+  for (const imp of implants) {
+    html += `<tr>
+      <td class="name">${esc(imp.type_name)}</td>
+      <td class="price consumed">${fmtIsk(imp.unit_price_sell || 0)}</td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  return html;
+}
+
+async function deleteRun(runId) {
+  if (!confirm('Delete this run? This cannot be undone.')) return;
+  await window.api.runs.delete(runId);
+  closeModal('runDetailModal');
+  renderHistory();
+  updateRecentRuns();
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+async function renderStats() {
+  const el = document.getElementById('statsContent');
+  const stats = await window.api.runs.getStats(S.activeCharId);
+  const o = stats.overall;
+
+  if (!o || o.total_runs === 0) {
+    el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
+    return;
+  }
+
+  const survRate = o.total_runs > 0 ? Math.round(o.survived / o.total_runs * 100) : 0;
+
+  let html = `<div class="stat-grid">
+    <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">${survRate}%</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Duration</div><div class="stat-card-value">${fmtDuration(Math.round(o.avg_duration_survived || 0))}</div></div>
+    <div class="stat-card"><div class="stat-card-label">ISK / Hour</div><div class="stat-card-value gold">${fmtIsk(stats.iskPerHour)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Net ISK</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${fmtIsk(o.total_net_isk || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Net ISK / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${fmtIsk(o.avg_net_isk || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Loss on Death</div><div class="stat-card-value red">${fmtIsk(o.avg_loss || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Losses</div><div class="stat-card-value red">${fmtIsk(o.total_loss || 0)}</div></div>
+  </div>`;
+
+  if (stats.byTier.length) {
+    html += `<div class="section-title">By Tier</div>
+    <table class="data-table" style="margin-bottom:16px"><thead><tr>
+      <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Duration</th><th>Avg Net ISK</th>
+    </tr></thead><tbody>`;
+    for (const t of stats.byTier) {
+      const sr = t.total_runs > 0 ? Math.round(t.survived / t.total_runs * 100) : 0;
+      html += `<tr>
+        <td><span class="badge tier">${esc(t.tier || '—')}</span></td>
+        <td>${t.total_runs}</td>
+        <td style="color:var(--green)">${t.survived}</td>
+        <td style="color:var(--red)">${t.total_runs - t.survived}</td>
+        <td>${sr}%</td>
+        <td class="mono">${fmtDuration(Math.round(t.avg_duration || 0))}</td>
+        <td class="${(t.avg_net_isk || 0) >= 0 ? 'positive' : 'negative'}">${fmtIsk(t.avg_net_isk || 0)}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if (stats.byWeather.length) {
+    html += `<div class="section-title">By Weather</div>
+    <table class="data-table"><thead><tr>
+      <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Net ISK</th>
+    </tr></thead><tbody>`;
+    for (const w of stats.byWeather) {
+      const sr = w.total_runs > 0 ? Math.round(w.survived / w.total_runs * 100) : 0;
+      html += `<tr>
+        <td><span class="badge weather">${esc(w.weather || '—')}</span></td>
+        <td>${w.total_runs}</td>
+        <td style="color:var(--green)">${w.survived}</td>
+        <td style="color:var(--red)">${w.total_runs - w.survived}</td>
+        <td>${sr}%</td>
+        <td class="${(w.avg_net_isk || 0) >= 0 ? 'positive' : 'negative'}">${fmtIsk(w.avg_net_isk || 0)}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────
+function loadSettingsPage() {
+  if (S.settings.janice_api_key) document.getElementById('janiceKeyInput').value = S.settings.janice_api_key;
+  if (S.settings.client_id) document.getElementById('clientIdInput').value = S.settings.client_id;
+  if (S.settings.esi_poll_interval) document.getElementById('pollIntervalInput').value = S.settings.esi_poll_interval;
+  if (S.settings.default_tier) document.getElementById('defaultTierInput').value = S.settings.default_tier;
+  if (S.settings.default_weather) document.getElementById('defaultWeatherInput').value = S.settings.default_weather;
+  renderCharList();
+}
+
+async function saveSettings() {
+  const updates = {
+    janice_api_key: document.getElementById('janiceKeyInput').value.trim(),
+    client_id: document.getElementById('clientIdInput').value.trim(),
+    esi_poll_interval: document.getElementById('pollIntervalInput').value,
+    default_tier: document.getElementById('defaultTierInput').value,
+    default_weather: document.getElementById('defaultWeatherInput').value,
+  };
+  for (const [key, value] of Object.entries(updates)) {
+    await window.api.settings.set(key, value);
+  }
+  S.settings = { ...S.settings, ...updates };
+  const msg = document.getElementById('settingsSaved');
+  msg.style.display = 'block';
+  setTimeout(() => msg.style.display = 'none', 2500);
+}
+
+function renderCharList() {
+  const el = document.getElementById('charList');
+  if (!S.characters.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">No characters added yet.</div>';
+    return;
+  }
+  el.innerHTML = S.characters.map(c => `
+    <div class="char-item">
+      <img class="char-portrait" src="${c.portrait_url || ''}" alt="" onerror="this.style.display='none'">
+      <div class="char-info">
+        <div class="char-name">${esc(c.name)}</div>
+        <div class="char-id">${c.id}</div>
+      </div>
+      <button class="btn sm red" onclick="removeCharacter(${c.id})">Remove</button>
+    </div>`).join('');
+}
+
+async function removeCharacter(charId) {
+  if (!confirm('Remove this character? Their run history will be deleted.')) return;
+  await window.api.auth.deleteTokens(charId);
+  await window.api.auth.deleteCharacter(charId);
+  S.characters = await window.api.auth.getCharacters();
+  await populateCharSelect();
+  renderCharList();
+  if (String(S.activeCharId) === String(charId)) {
+    S.activeCharId = null;
+    if (S.characters.length) await switchCharacter(S.characters[0].id);
+    else showNoCharPrompt();
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+async function updateRecentRuns() {
+  if (!S.activeCharId) return;
+  const runs = await window.api.runs.getAll({ character_id: S.activeCharId, limit: 5 });
+  const el = document.getElementById('recentRunsList');
+  if (!runs.length) { el.textContent = 'No runs yet'; return; }
+  el.innerHTML = runs.map(r => {
+    const d = new Date(r.started_at * 1000);
+    const col = r.outcome === 'Survived' ? 'var(--green)' : 'var(--red)';
+    const val = r.outcome === 'Survived' ? fmtIsk(r.net_isk) : '−' + fmtIsk(r.total_loss);
+    return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
+      <span>${r.tier} ${r.weather} <span class="badge ${r.outcome === 'Survived' ? 'survived' : 'died'}" style="font-size:9px">${r.outcome === 'Survived' ? '✓' : '✗'}</span></span>
+      <span style="color:${col};font-family:var(--font-mono)">${val}</span>
+    </div>`;
+  }).join('');
+}
+
+async function updateIskPerHour() {
+  if (!S.activeCharId) return;
+  const stats = await window.api.runs.getStats(S.activeCharId);
+  const el = document.getElementById('iskPerHourDisplay');
+  if (stats.iskPerHour > 0) {
+    el.innerHTML = `<span style="color:var(--text-muted)">ISK/hr (recent 20):</span> <span style="color:var(--gold);font-family:var(--font-mono)">${fmtIsk(stats.iskPerHour)}</span>`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+function fmtIsk(n) {
+  if (n == null || isNaN(n)) return '0';
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return Math.round(n).toLocaleString();
+}
+
+function fmtDuration(secs) {
+  if (!secs) return '00:00:00';
+  const h = Math.floor(secs / 3600).toString().padStart(2, '0');
+  const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+  const s = (secs % 60).toString().padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function esc(str) {
+  return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function openExternal(url) {
+  window.api.shell.openExternal(url);
+}
+
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openAddCharModal() { openModal('addCharModal'); }
+
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+
+// Start
+init();
+</script>
+</body>
+</html>
