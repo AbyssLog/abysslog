@@ -260,7 +260,7 @@ input, select, textarea { font-family: var(--font); }
       <div id="no-char-prompt" style="display:none">
         <div class="setup-card">
           <h2>No Character Connected</h2>
-          <p>Add a character in Settings to begin tracking your abyssal runs. You'll need a free EVE developer application Client ID to authorise via EVE SSO.</p>
+          <p>Add a character in Settings to begin tracking your abyssal runs. Click "Add Character" and log in with your EVE Online account.</p>
           <button class="btn" onclick="showPage('settings')">Go to Settings</button>
         </div>
       </div>
@@ -444,12 +444,6 @@ input, select, textarea { font-family: var(--font); }
           <input type="password" class="field-input" id="janiceKeyInput" placeholder="Your Janice API key..." />
           <div class="field-note">API keys are available by filing a ticket in the <a href="#" onclick="openExternal('https://discord.gg/janice')" style="color:var(--cyan)">Janice Discord</a>.</div>
         </div>
-        <div style="margin-bottom:12px">
-          <div class="field-label">EVE Developer Client ID</div>
-          <input type="text" class="field-input" id="clientIdInput" placeholder="Your EVE app client ID..." />
-          <div class="field-note">Register at <a href="#" onclick="openExternal('https://developers.eveonline.com')" style="color:var(--cyan)">developers.eveonline.com</a>. Callback URL: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">eveauth-abysslog://callback</span><br>
-          Scopes: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">esi-location.read_location.v1 esi-location.read_ship_type.v1 esi-location.read_online.v1 esi-fittings.read_fittings.v1 esi-clones.read_implants.v1</span></div>
-        </div>
       </div>
 
       <div class="settings-section">
@@ -497,7 +491,6 @@ input, select, textarea { font-family: var(--font); }
       Click the button below to open EVE Online SSO in your browser. After authorising,
       the app will detect the callback automatically.
     </p>
-    <div id="ssoClientIdWarn" class="alert warn" style="display:none">Please save your Client ID in Settings first.</div>
     <button class="btn gold" onclick="startSSO()"><span id="ssoSpinner" style="display:none" class="spinner"></span>Login with EVE SSO</button>
     <div id="ssoStatus" style="margin-top:12px;font-size:12px;color:var(--text-dim)"></div>
   </div>
@@ -515,6 +508,8 @@ input, select, textarea { font-family: var(--font); }
 </div>
 
 <script>
+const CLIENT_ID = 'c74d7418579645ebbad0665c93e47900';
+
 // ── State ─────────────────────────────────────────────────────────────────
 const S = {
   characters: [],
@@ -620,13 +615,7 @@ function loadDefaultSelects() {
 
 // ── SSO Auth ──────────────────────────────────────────────────────────────
 async function startSSO() {
-  const clientId = S.settings.client_id || document.getElementById('clientIdInput').value.trim();
-  if (!clientId) {
-    document.getElementById('ssoClientIdWarn').style.display = 'block';
-    return;
-  }
-  document.getElementById('ssoClientIdWarn').style.display = 'none';
-
+  const clientId = CLIENT_ID;
   // Generate PKCE
   const verifier = generateVerifier();
   S.pkceVerifier = verifier;
@@ -654,10 +643,8 @@ async function handleSsoCallback(callbackUrl) {
     const code = u.searchParams.get('code');
     if (!code) throw new Error('No code in callback URL');
 
-    const clientId = S.settings.client_id || document.getElementById('clientIdInput').value.trim();
-    const tokens = await window.api.esi.refreshToken(code, clientId); // reuse the endpoint for initial exchange
+    const clientId = CLIENT_ID;
 
-    // Actually do code exchange
     const tokenResp = await fetch('https://login.eveonline.com/v2/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -679,7 +666,7 @@ async function handleSsoCallback(callbackUrl) {
       id: charInfo.CharacterID,
       name: charInfo.CharacterName,
       portrait_url: `https://images.evetech.net/characters/${charInfo.CharacterID}/portrait?size=64`,
-      client_id: clientId
+      client_id: CLIENT_ID
     };
 
     await window.api.auth.saveCharacter(character);
@@ -717,7 +704,7 @@ async function getValidToken() {
   if (S.tokens.expires_at && Date.now() > S.tokens.expires_at - 60000) {
     try {
       const char = S.characters.find(c => String(c.id) === String(S.activeCharId));
-      const clientId = char?.client_id || S.settings.client_id;
+      const clientId = CLIENT_ID;
       const newTokens = await window.api.esi.refreshToken(S.tokens.refresh_token, clientId);
       newTokens.expires_at = Date.now() + newTokens.expires_in * 1000;
       S.tokens = newTokens;
@@ -1500,7 +1487,6 @@ async function renderStats() {
 // ── Settings ──────────────────────────────────────────────────────────────
 function loadSettingsPage() {
   if (S.settings.janice_api_key) document.getElementById('janiceKeyInput').value = S.settings.janice_api_key;
-  if (S.settings.client_id) document.getElementById('clientIdInput').value = S.settings.client_id;
   if (S.settings.esi_poll_interval) document.getElementById('pollIntervalInput').value = S.settings.esi_poll_interval;
   if (S.settings.default_tier) document.getElementById('defaultTierInput').value = S.settings.default_tier;
   if (S.settings.default_weather) document.getElementById('defaultWeatherInput').value = S.settings.default_weather;
@@ -1510,7 +1496,6 @@ function loadSettingsPage() {
 async function saveSettings() {
   const updates = {
     janice_api_key: document.getElementById('janiceKeyInput').value.trim(),
-    client_id: document.getElementById('clientIdInput').value.trim(),
     esi_poll_interval: document.getElementById('pollIntervalInput').value,
     default_tier: document.getElementById('defaultTierInput').value,
     default_weather: document.getElementById('defaultWeatherInput').value,
