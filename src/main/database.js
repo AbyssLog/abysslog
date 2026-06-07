@@ -278,4 +278,9 @@ function getStats(characterId) {
   return { overall, byTier, byWeather, iskPerHour };
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, getAllSettings, saveRun, getRuns, getRunById, deleteRun, getStats };
+function deleteSetting(key) {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+  return true;
+}
+
+module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, getRuns, getRunById, deleteRun, getStats };

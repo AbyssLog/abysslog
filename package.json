@@ -8,7 +8,8 @@
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
-    "build:all": "electron-builder --win --mac --linux"
+    "build:all": "electron-builder --win --mac --linux",
+    "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "com.abysslog.app",
@@ -41,14 +42,14 @@
       "assets/**/*",
       "node_modules/**/*",
       "package.json"
-    ]
+    ],
+    "npmRebuild": true
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
-    "keytar": "^7.9.0"
+    "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {
-    "electron": "^29.1.0",
+    "electron": "^31.0.0",
     "electron-builder": "^24.13.3"
   }
 }
