@@ -5,10 +5,10 @@ let mainWindow;
 
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('abysslog', process.execPath, [path.resolve(process.argv[1])]);
+    app.setAsDefaultProtocolClient('eveauth-abysslog', process.execPath, [path.resolve(process.argv[1])]);
   }
 } else {
-  app.setAsDefaultProtocolClient('abysslog');
+  app.setAsDefaultProtocolClient('eveauth-abysslog');
 }
 
 const db = require('./database');
@@ -45,7 +45,7 @@ if (!gotTheLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
-    const callbackUrl = commandLine.find(arg => arg.startsWith('abysslog://'));
+    const callbackUrl = commandLine.find(arg => arg.startsWith('eveauth-abysslog://'));
     if (callbackUrl && mainWindow) {
       mainWindow.webContents.send('sso-callback', callbackUrl);
     }

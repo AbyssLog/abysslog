@@ -30,7 +30,7 @@ You need a free EVE developer application to use ESI login.
 
 1. Go to [developers.eveonline.com](https://developers.eveonline.com)
 2. Create a new application with these settings:
-   - **Callback URL:** `abysslog://callback`
+   - **Callback URL:** `eveauth-abysslog://callback`
    - **Scopes:**
      ```
      esi-location.read_location.v1

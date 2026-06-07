@@ -447,7 +447,7 @@ input, select, textarea { font-family: var(--font); }
         <div style="margin-bottom:12px">
           <div class="field-label">EVE Developer Client ID</div>
           <input type="text" class="field-input" id="clientIdInput" placeholder="Your EVE app client ID..." />
-          <div class="field-note">Register at <a href="#" onclick="openExternal('https://developers.eveonline.com')" style="color:var(--cyan)">developers.eveonline.com</a>. Callback URL: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">abysslog://callback</span><br>
+          <div class="field-note">Register at <a href="#" onclick="openExternal('https://developers.eveonline.com')" style="color:var(--cyan)">developers.eveonline.com</a>. Callback URL: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">eveauth-abysslog://callback</span><br>
           Scopes: <span style="font-family:var(--font-mono);font-size:11px;color:var(--text)">esi-location.read_location.v1 esi-location.read_ship_type.v1 esi-location.read_online.v1 esi-fittings.read_fittings.v1 esi-clones.read_implants.v1</span></div>
         </div>
       </div>
@@ -635,7 +635,7 @@ async function startSSO() {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: clientId,
-    redirect_uri: 'abysslog://callback',
+    redirect_uri: 'eveauth-abysslog://callback',
     scope: 'esi-location.read_location.v1 esi-location.read_ship_type.v1 esi-location.read_online.v1 esi-fittings.read_fittings.v1 esi-clones.read_implants.v1',
     code_challenge: challenge,
     code_challenge_method: 'S256',
@@ -666,7 +666,7 @@ async function handleSsoCallback(callbackUrl) {
         code,
         client_id: clientId,
         code_verifier: S.pkceVerifier,
-        redirect_uri: 'abysslog://callback'
+        redirect_uri: 'eveauth-abysslog://callback'
       })
     });
     if (!tokenResp.ok) throw new Error('Token exchange failed: ' + await tokenResp.text());
