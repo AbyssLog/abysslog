@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
     delete: (runId) => ipcRenderer.invoke('runs:delete', runId),
     getStats: (characterId) => ipcRenderer.invoke('runs:get-stats', characterId),
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', { runId, data }),
+    getDailyStats: (characterId) => ipcRenderer.invoke('runs:get-daily-stats', characterId),
   },
 
   // Shell

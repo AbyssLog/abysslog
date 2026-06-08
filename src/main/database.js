@@ -322,4 +322,21 @@ function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_befo
   return true;
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, getRuns, getRunById, deleteRun, getStats };
+function getDailyStats(characterId) {
+  const where = characterId ? 'WHERE character_id = ?' : '';
+  const params = characterId ? [characterId] : [];
+  return db.prepare(`
+    SELECT
+      date(started_at, 'unixepoch', 'localtime') as day,
+      COUNT(*) as total_runs,
+      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
+      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE 0 END) as net_isk,
+      SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss
+    FROM runs ${where}
+    GROUP BY day
+    ORDER BY day ASC
+    LIMIT 60
+  `).all(...params);
+}
+
+module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, getRuns, getRunById, deleteRun, getStats, getDailyStats };

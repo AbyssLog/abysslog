@@ -1476,10 +1476,13 @@ async function reappraiseRun(runId) {
       items
     });
 
-    statusEl.innerHTML = `<div class="alert success">Re-appraised — Net ISK updated to ${fmtIsk(netIsk)}</div>`;
     renderHistory();
     updateRecentRuns();
     updateIskPerHour();
+    // Re-render the modal in place so updated items are immediately visible
+    await showRunDetail(runId);
+    // Re-show success status after modal re-renders
+    document.getElementById(`reappraise-status-${runId}`).innerHTML = `<div class="alert success">Re-appraised — Net ISK updated to ${fmtIsk(netIsk)}</div>`;
   } catch (e) {
     statusEl.innerHTML = `<div class="alert err">Re-appraisal failed: ${e.message}</div>`;
   }
@@ -1543,7 +1546,10 @@ async function deleteRun(runId) {
 // ── Stats ─────────────────────────────────────────────────────────────────
 async function renderStats() {
   const el = document.getElementById('statsContent');
-  const stats = await window.api.runs.getStats(S.activeCharId);
+  const [stats, daily] = await Promise.all([
+    window.api.runs.getStats(S.activeCharId),
+    window.api.runs.getDailyStats(S.activeCharId)
+  ]);
   const o = stats.overall;
 
   if (!o || o.total_runs === 0) {
@@ -1563,6 +1569,10 @@ async function renderStats() {
     <div class="stat-card"><div class="stat-card-label">Avg Loss on Death</div><div class="stat-card-value red">${fmtIsk(o.avg_loss || 0)}</div></div>
     <div class="stat-card"><div class="stat-card-label">Total Losses</div><div class="stat-card-value red">${fmtIsk(o.total_loss || 0)}</div></div>
   </div>`;
+
+  // Daily chart — always shown
+  html += `<div class="section-title">Daily Activity</div>
+    <div id="dailyChart" style="background:var(--panel);border:1px solid var(--border);padding:16px;margin-bottom:16px"></div>`;
 
   if (stats.byTier.length) {
     html += `<div class="section-title">By Tier</div>
@@ -1604,6 +1614,129 @@ async function renderStats() {
   }
 
   el.innerHTML = html;
+
+  // Render chart after DOM is set
+  renderDailyChart(daily);
+}
+
+function renderDailyChart(daily) {
+  const container = document.getElementById('dailyChart');
+  if (!container) return;
+  if (!daily || daily.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:11px;letter-spacing:2px;text-transform:uppercase">No data yet</div>';
+    return;
+  }
+  if (daily.length === 1) {
+    // Pad with a zero day before so the single point renders as a bar rather than a flat line
+    daily = [{ day: '', total_runs: 0, net_isk: 0, total_loss: 0, survived: 0 }, ...daily];
+  }
+
+  const W = container.clientWidth - 32;
+  const H = 200;
+  const PAD = { top: 10, right: 16, bottom: 36, left: 64 };
+  const cw = W - PAD.left - PAD.right;
+  const ch = H - PAD.top - PAD.bottom;
+
+  // Data ranges
+  const maxRuns = Math.max(...daily.map(d => d.total_runs), 1);
+  const maxIsk = Math.max(...daily.map(d => Math.abs(d.net_isk)), 1);
+
+  const n = daily.length;
+  const barW = Math.max(2, Math.floor(cw / n) - 2);
+
+  // Build SVG
+  let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+    <defs>
+      <linearGradient id="iskGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#66bb6a" stop-opacity="0.8"/>
+        <stop offset="100%" stop-color="#66bb6a" stop-opacity="0.1"/>
+      </linearGradient>
+      <linearGradient id="lossGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ef5350" stop-opacity="0.1"/>
+        <stop offset="100%" stop-color="#ef5350" stop-opacity="0.8"/>
+      </linearGradient>
+    </defs>
+    <g transform="translate(${PAD.left},${PAD.top})">`;
+
+  // Y axis gridlines (ISK) — 4 lines
+  for (let i = 0; i <= 4; i++) {
+    const y = Math.round(ch * (1 - i / 4));
+    const val = (maxIsk * i / 4);
+    const label = fmtIsk(val);
+    svg += `<line x1="0" y1="${y}" x2="${cw}" y2="${y}" stroke="#1e2d3d" stroke-width="1"/>`;
+    svg += `<text x="-6" y="${y + 4}" fill="#2a4a6a" font-size="10" text-anchor="end" font-family="Consolas,monospace">${label}</text>`;
+  }
+
+  // Zero line
+  const zeroY = ch;
+  svg += `<line x1="0" y1="${zeroY}" x2="${cw}" y2="${zeroY}" stroke="#2a4060" stroke-width="1"/>`;
+
+  // ISK area path + loss area path
+  let iskPoints = '', lossPoints = '';
+  let iskPath = '', lossPath = '';
+
+  daily.forEach((d, i) => {
+    const x = Math.round((i + 0.5) * cw / n);
+    const iskY = d.net_isk >= 0
+      ? Math.round(ch - (d.net_isk / maxIsk) * ch)
+      : ch;
+    const lossY = d.net_isk < 0
+      ? Math.round(ch - (Math.abs(d.net_isk) / maxIsk) * ch)
+      : ch;
+
+    if (i === 0) {
+      iskPath = `M${x},${iskY}`;
+      lossPath = `M${x},${lossY}`;
+    } else {
+      iskPath += ` L${x},${iskY}`;
+      lossPath += ` L${x},${lossY}`;
+    }
+  });
+
+  // Close paths for fill
+  const lastX = Math.round((daily.length - 0.5) * cw / n);
+  const firstX = Math.round(0.5 * cw / n);
+  svg += `<path d="${iskPath} L${lastX},${ch} L${firstX},${ch} Z" fill="url(#iskGrad)" opacity="0.7"/>`;
+  svg += `<path d="${iskPath}" fill="none" stroke="#66bb6a" stroke-width="1.5"/>`;
+  if (daily.some(d => d.net_isk < 0)) {
+    svg += `<path d="${lossPath} L${lastX},${ch} L${firstX},${ch} Z" fill="url(#lossGrad)" opacity="0.7"/>`;
+    svg += `<path d="${lossPath}" fill="none" stroke="#ef5350" stroke-width="1.5"/>`;
+  }
+
+  // Run count bars (subtle, behind ISK line)
+  daily.forEach((d, i) => {
+    const x = Math.round(i * cw / n + (cw / n - barW) / 2);
+    const barH = Math.round((d.total_runs / maxRuns) * (ch * 0.25));
+    const y = ch - barH;
+    svg += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="#4fc3f7" opacity="0.25" rx="1"/>`;
+  });
+
+  // X axis labels — show every N days to avoid crowding
+  const labelEvery = daily.length <= 14 ? 1 : daily.length <= 30 ? 3 : 7;
+  daily.forEach((d, i) => {
+    if (i % labelEvery !== 0 && i !== daily.length - 1) return;
+    const x = Math.round((i + 0.5) * cw / n);
+    const dateStr = d.day.slice(5); // MM-DD
+    svg += `<text x="${x}" y="${ch + 20}" fill="#2a4a6a" font-size="10" text-anchor="middle" font-family="Consolas,monospace">${dateStr}</text>`;
+  });
+
+  // Tooltip hit areas (title tag for native hover)
+  daily.forEach((d, i) => {
+    const x = Math.round(i * cw / n);
+    const w = Math.round(cw / n);
+    const iskStr = d.net_isk >= 0 ? '+' + fmtIsk(d.net_isk) : '-' + fmtIsk(Math.abs(d.net_isk));
+    const title = `${d.day}  |  ${d.total_runs} runs  |  Net ISK: ${iskStr}`;
+    svg += `<rect x="${x}" y="0" width="${w}" height="${ch}" fill="transparent"><title>${title}</title></rect>`;
+  });
+
+  // Legend
+  svg += `<circle cx="${cw - 120}" cy="-4" r="4" fill="#66bb6a"/>
+    <text x="${cw - 112}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Net ISK</text>
+    <rect x="${cw - 54}" y="-8" width="8" height="8" fill="#4fc3f7" opacity="0.4" rx="1"/>
+    <text x="${cw - 42}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Runs</text>`;
+
+  svg += `</g></svg>`;
+  container.innerHTML = svg;
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────

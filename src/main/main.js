@@ -135,6 +135,7 @@ ipcMain.handle('runs:get-by-id', async (e, runId) => db.getRunById(runId));
 ipcMain.handle('runs:delete', async (e, runId) => db.deleteRun(runId));
 ipcMain.handle('runs:get-stats', async (e, characterId) => db.getStats(characterId));
 ipcMain.handle('runs:update-appraisal', async (e, { runId, data }) => db.updateAppraisal(runId, data));
+ipcMain.handle('runs:get-daily-stats', async (e, characterId) => db.getDailyStats(characterId));
 
 // ── IPC: Shell ────────────────────────────────────────────────────────────
 
