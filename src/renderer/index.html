@@ -293,7 +293,7 @@ input, select, textarea { font-family: var(--font); }
             <!-- Always-visible pre-run cargo -->
             <div class="run-panel" style="margin-bottom:8px">
               <div class="panel-title">Pre-Run Cargo <span style="font-size:10px;color:var(--text-muted);letter-spacing:0">(paste from in-game cargo hold before entering)</span></div>
-              <textarea class="field-textarea" id="cargoBeforeText" placeholder="Select all items in your cargo hold (Ctrl+A), copy (Ctrl+C), paste here.&#10;&#10;Format: Item Name&#9;x100" style="min-height:80px"></textarea>
+              <textarea class="field-textarea" id="cargoBeforeText" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Expected format (tab-separated columns):&#10;Item Name   Qty   Category   Volume   ISK Value&#10;&#10;Example:&#10;Caldari Navy Inferno Heavy Missile   156   Heavy Missile   4.68 m3   160,956.00 ISK" style="min-height:80px"></textarea>
             </div>
 
             <!-- State: Awaiting Run -->
@@ -327,8 +327,8 @@ input, select, textarea { font-family: var(--font); }
               <div id="fitCaptured" class="fit-capture">✓ Ship fitting and implants captured for loss tracking</div>
               <div class="action-row">
                 <button class="btn gold" id="startBtn" onclick="manualStart()">▶ Start Run</button>
+                <button class="btn ghost sm" onclick="openManualEntryModal()">✎ Enter Run Manually</button>
               </div>
-              <div id="iskPerHourDisplay" style="margin-top:10px;font-size:12px;color:var(--text-dim)"></div>
             </div>
 
             <!-- State: In Abyss -->
@@ -349,7 +349,7 @@ input, select, textarea { font-family: var(--font); }
               <div class="alert success" style="margin-bottom:10px">You survived! Paste your cargo hold contents to calculate loot gained and items consumed.</div>
               <div>
                 <div class="field-label">Post-Run Cargo</div>
-                <textarea class="field-textarea" id="cargoAfterText" placeholder="Select all in cargo, Ctrl+C, paste here..."></textarea>
+                <textarea class="field-textarea" id="cargoAfterText" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Same format as pre-run cargo. The app will diff before/after to find&#10;loot gained and items consumed."></textarea>
               </div>
               <div class="action-row">
                 <button class="btn gold" onclick="appraiseRun()"><span id="appraiseSpinner" style="display:none" class="spinner"></span>Appraise Loot</button>
@@ -498,6 +498,66 @@ input, select, textarea { font-family: var(--font); }
   </div>
 </div>
 
+<!-- ── Manual Entry Modal ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="manualEntryModal">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-title">
+      <span id="manualEntryTitle">Enter Run Manually</span>
+      <button class="modal-close" onclick="closeManualEntryModal()">✕</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+      <div>
+        <div class="field-label">Tier</div>
+        <select class="field-select" id="manualTier">
+          <option value="">— Select —</option>
+          <option value="T1">Tier 1</option><option value="T2">Tier 2</option>
+          <option value="T3">Tier 3</option><option value="T4">Tier 4</option>
+          <option value="T5">Tier 5</option><option value="T6">Tier 6</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Weather</div>
+        <select class="field-select" id="manualWeather">
+          <option value="">— Select —</option>
+          <option value="Electrical">Electrical</option><option value="Exotic">Exotic</option>
+          <option value="Dark">Dark</option><option value="Firestorm">Firestorm</option>
+          <option value="Gamma">Gamma</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Outcome</div>
+        <select class="field-select" id="manualOutcome" onchange="updateManualOutcomeUI()">
+          <option value="Survived">Survived</option>
+          <option value="Died">Died</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Duration (mm:ss)</div>
+        <input type="text" class="field-input" id="manualDuration" placeholder="20:00" />
+      </div>
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="field-label">Date &amp; Time</div>
+      <input type="datetime-local" class="field-input" id="manualDate" />
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px" id="manualCargoGrid">
+      <div>
+        <div class="field-label">Pre-Run Cargo</div>
+        <textarea class="field-textarea" id="manualCargoBefore" style="min-height:100px" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Tab-separated: Item Name   Qty   Category   Volume   ISK"></textarea>
+      </div>
+      <div id="manualCargoAfterCol">
+        <div class="field-label">Post-Run Cargo</div>
+        <textarea class="field-textarea" id="manualCargoAfter" style="min-height:100px" placeholder="Paste post-run cargo here for loot diff."></textarea>
+      </div>
+    </div>
+    <div id="manualEntryStatus" style="margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn gold" onclick="submitManualEntry()"><span id="manualSpinner" style="display:none" class="spinner"></span> <span id="manualSubmitLabel">Appraise &amp; Save</span></button>
+      <button class="btn ghost sm" onclick="closeManualEntryModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Run Detail Modal ────────────────────────────────────────────────── -->
 <div class="modal-overlay" id="runDetailModal">
   <div class="modal">
@@ -592,7 +652,6 @@ async function switchCharacter(charId, save = true) {
 
   loadDefaultSelects();
   updateRecentRuns();
-  updateIskPerHour();
 
   if (S.tokens) {
     startESIPoll();
@@ -1157,7 +1216,195 @@ async function saveCurrentRun() {
   S.activeRun = null;
   resetRunUI();
   updateRecentRuns();
-  updateIskPerHour();
+}
+
+
+// ── Manual Entry & Run Editing ────────────────────────────────────────────
+
+let manualEditRunId = null; // null = new entry, number = editing existing
+
+function openManualEntryModal(runToEdit = null) {
+  manualEditRunId = null;
+  document.getElementById('manualEntryTitle').textContent = 'Enter Run Manually';
+  document.getElementById('manualSubmitLabel').textContent = 'Appraise & Save';
+  document.getElementById('manualTier').value = S.settings.default_tier || '';
+  document.getElementById('manualWeather').value = S.settings.default_weather || '';
+  document.getElementById('manualOutcome').value = 'Survived';
+  document.getElementById('manualDuration').value = '';
+  document.getElementById('manualCargoBefore').value = '';
+  document.getElementById('manualCargoAfter').value = '';
+  document.getElementById('manualEntryStatus').innerHTML = '';
+  // Default date to now
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  document.getElementById('manualDate').value = now.toISOString().slice(0, 16);
+  updateManualOutcomeUI();
+  openModal('manualEntryModal');
+}
+
+async function openEditRunModal(runId) {
+  const run = await window.api.runs.getById(runId);
+  if (!run) return;
+  manualEditRunId = runId;
+  document.getElementById('manualEntryTitle').textContent = 'Edit Run';
+  document.getElementById('manualSubmitLabel').textContent = 'Re-Appraise & Save';
+  document.getElementById('manualTier').value = run.tier || '';
+  document.getElementById('manualWeather').value = run.weather || '';
+  document.getElementById('manualOutcome').value = run.outcome || 'Survived';
+  // Duration: convert seconds to mm:ss
+  const dur = run.duration || 0;
+  const mm = Math.floor(dur / 60).toString().padStart(2, '0');
+  const ss = (dur % 60).toString().padStart(2, '0');
+  document.getElementById('manualDuration').value = `${mm}:${ss}`;
+  // Date
+  const d = new Date(run.started_at * 1000);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
+  document.getElementById('manualCargoBefore').value = run.cargo_before || '';
+  document.getElementById('manualCargoAfter').value = run.cargo_after || '';
+  document.getElementById('manualEntryStatus').innerHTML = '';
+  updateManualOutcomeUI();
+  closeModal('runDetailModal');
+  openModal('manualEntryModal');
+}
+
+function updateManualOutcomeUI() {
+  const outcome = document.getElementById('manualOutcome').value;
+  const afterCol = document.getElementById('manualCargoAfterCol');
+  if (outcome === 'Died') {
+    afterCol.style.display = 'none';
+  } else {
+    afterCol.style.display = 'block';
+  }
+}
+
+function closeManualEntryModal() {
+  closeModal('manualEntryModal');
+  manualEditRunId = null;
+}
+
+function parseDuration(str) {
+  if (!str || !str.trim()) return 0;
+  const parts = str.trim().split(':');
+  if (parts.length === 2) return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+  if (parts.length === 3) return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
+  return parseInt(str) || 0;
+}
+
+async function submitManualEntry() {
+  const apiKey = S.settings.janice_api_key;
+  const tier = document.getElementById('manualTier').value;
+  const weather = document.getElementById('manualWeather').value;
+  const outcome = document.getElementById('manualOutcome').value;
+  const duration = parseDuration(document.getElementById('manualDuration').value);
+  const dateVal = document.getElementById('manualDate').value;
+  const cargoBefore = document.getElementById('manualCargoBefore').value;
+  const cargoAfter = document.getElementById('manualCargoAfter').value;
+  const statusEl = document.getElementById('manualEntryStatus');
+
+  if (!tier || !weather) {
+    statusEl.innerHTML = '<div class="alert err">Please select a tier and weather type.</div>';
+    return;
+  }
+  if (!apiKey) {
+    statusEl.innerHTML = '<div class="alert err">Janice API key not set — go to Settings.</div>';
+    return;
+  }
+
+  const started_at = dateVal ? Math.floor(new Date(dateVal).getTime() / 1000) : Math.floor(Date.now() / 1000);
+  document.getElementById('manualSpinner').style.display = 'inline-block';
+  statusEl.innerHTML = '';
+
+  try {
+    let loot_value = 0, consumed_cost = 0, net_isk = 0, total_loss = 0;
+    let items = [];
+
+    if (outcome === 'Survived') {
+      const diff = diffCargo(cargoBefore, cargoAfter);
+      let lootResult = null, consumedResult = null;
+
+      if (diff.gained.length > 0) {
+        lootResult = await window.api.janice.appraise(diff.gained, 'buy', apiKey);
+      }
+      if (diff.consumed.length > 0) {
+        consumedResult = await window.api.janice.appraise(diff.consumed, 'sell', apiKey);
+      }
+
+      loot_value = lootResult ? lootResult.totalBuyPrice : 0;
+      consumed_cost = consumedResult ? consumedResult.totalSellPrice : 0;
+      net_isk = loot_value - consumed_cost;
+
+      if (lootResult) {
+        for (const item of lootResult.items) {
+          const p = item.effectivePrices;
+          items.push({ item_name: item.itemType.name, qty: item.amount, type: 'gained', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+        }
+      }
+      if (consumedResult) {
+        for (const item of consumedResult.items) {
+          const p = item.effectivePrices;
+          items.push({ item_name: item.itemType.name, qty: item.amount, type: 'consumed', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+        }
+      }
+    } else {
+      // Died — appraise pre-run cargo as loss
+      const cargoItems = parseCargo(cargoBefore);
+      if (cargoItems.length > 0) {
+        const lossResult = await window.api.janice.appraise(cargoItems, 'sell', apiKey);
+        total_loss = lossResult ? lossResult.totalSellPrice : 0;
+        if (lossResult) {
+          for (const item of lossResult.items) {
+            const p = item.effectivePrices;
+            items.push({ item_name: item.itemType.name, qty: item.amount, type: 'lost', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+          }
+        }
+      }
+    }
+
+    const runData = {
+      character_id: S.activeCharId,
+      started_at,
+      duration,
+      tier,
+      weather,
+      outcome,
+      loot_value,
+      consumed_cost,
+      net_isk,
+      total_loss,
+      cargo_before: cargoBefore,
+      cargo_after: cargoAfter,
+      items,
+      fitting: [],
+      implants: []
+    };
+
+    if (manualEditRunId) {
+      // Update existing run
+      await window.api.runs.updateAppraisal(manualEditRunId, {
+        loot_value,
+        consumed_cost,
+        net_isk,
+        cargo_before: cargoBefore,
+        cargo_after: cargoAfter,
+        items
+      });
+      // Also update metadata (tier, weather, outcome, duration, date)
+      await window.api.runs.updateMeta(manualEditRunId, { tier, weather, outcome, duration, started_at, total_loss });
+    } else {
+      await window.api.runs.save(runData);
+    }
+
+    closeManualEntryModal();
+    renderHistory();
+    updateRecentRuns();
+    if (document.getElementById('page-stats').classList.contains('active')) renderStats();
+
+    statusEl.innerHTML = '';
+  } catch (e) {
+    statusEl.innerHTML = `<div class="alert err">Failed: ${e.message}</div>`;
+  }
+  document.getElementById('manualSpinner').style.display = 'none';
 }
 
 function cancelRun() {
@@ -1399,6 +1646,8 @@ async function showRunDetail(runId) {
     <div id="reappraise-status-${run.id}" style="margin-bottom:8px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
       <button class="btn gold sm" onclick="reappraiseRun(${run.id})"><span id="reappraise-spinner-${run.id}" style="display:none" class="spinner"></span> Re-Appraise</button>
+      <button class="btn sm ghost" onclick="openEditRunModal(${run.id})">✎ Edit Run</button>
+      <button class="btn sm ghost" onclick="openEditRunModal(${run.id})">✎ Edit Run</button>
       <button class="btn sm red" onclick="deleteRun(${run.id})">Delete Run</button>
     </div>`;
   } else {
@@ -1408,6 +1657,8 @@ async function showRunDetail(runId) {
       <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+      <button class="btn sm ghost" onclick="openEditRunModal(${run.id})">✎ Edit Run</button>
+      <button class="btn sm ghost" onclick="openEditRunModal(${run.id})">✎ Edit Run</button>
       <button class="btn sm red" onclick="deleteRun(${run.id})">Delete Run</button>
     </div>`;
   }

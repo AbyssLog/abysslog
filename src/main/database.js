@@ -299,6 +299,14 @@ function deleteSetting(key) {
   return true;
 }
 
+function updateMeta(runId, { tier, weather, outcome, duration, started_at, total_loss }) {
+  db.prepare(`
+    UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?
+    WHERE id = ?
+  `).run(tier, weather, outcome, duration, started_at, total_loss || 0, runId);
+  return true;
+}
+
 function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_before, cargo_after, items }) {
   const transaction = db.transaction(() => {
     db.prepare(`
@@ -339,4 +347,4 @@ function getDailyStats(characterId) {
   `).all(...params);
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, getRuns, getRunById, deleteRun, getStats, getDailyStats };
+module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, getRuns, getRunById, deleteRun, getStats, getDailyStats };
