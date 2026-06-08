@@ -290,6 +290,12 @@ input, select, textarea { font-family: var(--font); }
 
             <div class="timer" id="timerDisplay">00:00:00</div>
 
+            <!-- Always-visible pre-run cargo -->
+            <div class="run-panel" style="margin-bottom:8px">
+              <div class="panel-title">Pre-Run Cargo <span style="font-size:10px;color:var(--text-muted);letter-spacing:0">(paste from in-game cargo hold before entering)</span></div>
+              <textarea class="field-textarea" id="cargoBeforeText" placeholder="Select all items in your cargo hold (Ctrl+A), copy (Ctrl+C), paste here.&#10;&#10;Format: Item Name&#9;x100" style="min-height:80px"></textarea>
+            </div>
+
             <!-- State: Awaiting Run -->
             <div id="state-awaiting" class="run-panel">
               <div class="panel-title">Run Setup</div>
@@ -317,10 +323,6 @@ input, select, textarea { font-family: var(--font); }
                     <option value="Gamma">Gamma</option>
                   </select>
                 </div>
-              </div>
-              <div style="margin-bottom:10px">
-                <div class="field-label">Pre-Run Cargo <span style="color:var(--text-muted)">(paste from in-game cargo hold)</span></div>
-                <textarea class="field-textarea" id="cargoBeforeText" placeholder="Select all items in your cargo hold (Ctrl+A), copy (Ctrl+C), paste here.&#10;&#10;Format: Item Name&#9;x100"></textarea>
               </div>
               <div id="fitCaptured" class="fit-capture">✓ Ship fitting and implants captured for loss tracking</div>
               <div class="action-row">
@@ -914,6 +916,8 @@ async function appraiseRun() {
   document.getElementById('appraise-error').style.display = 'none';
   document.getElementById('appraiseSpinner').style.display = 'inline-block';
 
+  // Always re-read both cargo boxes at appraise time so edits are picked up
+  S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
   const cargoAfter = document.getElementById('cargoAfterText').value;
   S.activeRun.cargoAfter = cargoAfter;
 
@@ -1002,8 +1006,8 @@ function renderAppraisalResults(lootResult, consumedResult, diff) {
       </tr>`;
     }
     html += `</tbody><tfoot><tr><td colspan="3" style="color:var(--text-dim)">Total Loot (instant sell)</td><td class="price gained">${fmtIsk(lootResult.totalBuyPrice)}</td></tr></tfoot></table>`;
-    if (lootResult.unresolved.length > 0) {
-      html += `<div class="alert warn" style="margin-top:6px">Unresolved items: ${lootResult.unresolved.map(esc).join(', ')}</div>`;
+    if (lootResult.unresolved && lootResult.unresolved.length > 0) {
+      html += `<div class="alert warn" style="margin-top:6px">⚠ Janice could not price these items (no market orders or unrecognised): ${lootResult.unresolved.map(esc).join(', ')}</div>`;
     }
     html += `</div>`;
   } else if (diff.gained.length === 0) {
@@ -1134,6 +1138,8 @@ async function saveCurrentRun() {
     net_isk: run.net_isk || 0,
     total_loss: run.total_loss || 0,
     system_id: lastSystemId,
+    cargo_before: run.cargoBefore || '',
+    cargo_after: run.cargoAfter || '',
     items,
     fitting,
     implants
@@ -1160,6 +1166,10 @@ function cancelRun() {
 }
 
 function backToAppraise() {
+  // Re-snapshot pre-run cargo in case user edited it before re-appraising
+  if (S.activeRun) S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
+  // Also clear the post-run cargo box so user re-pastes fresh
+  document.getElementById('cargoAfterText').value = S.activeRun ? S.activeRun.cargoAfter : '';
   setRunState('awaiting-cargo');
 }
 
@@ -1222,15 +1232,27 @@ function parseCargo(raw) {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // Match "Item Name<tab>x100" or "Item Name  x100" or "Item Name x 100"
-    const m = trimmed.match(/^(.+?)\s*[\t]\s*x\s*([0-9,]+)\s*$/i)
-           || trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
+
+    // EVE multi-column paste: Name \t Qty \t Category \t Volume \t ISK
+    // Fields are tab-separated; qty is always the second column (integer, no x prefix)
+    const cols = trimmed.split(/\t/);
+    if (cols.length >= 2) {
+      const name = cols[0].trim();
+      // Second col may be plain integer (multi-col paste) or "x100" (simple paste)
+      const qtyRaw = cols[1].trim().replace(/^x/i, '').replace(/,/g, '');
+      const qty = parseInt(qtyRaw);
+      if (name && !isNaN(qty) && qty > 0) {
+        items[name] = (items[name] || 0) + qty;
+        continue;
+      }
+    }
+
+    // Fallback: "Item Name x 100" or "Item Name x100" (no tabs)
+    const m = trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
     if (m) {
       const name = m[1].trim();
       const qty = parseInt(m[2].replace(/,/g, ''));
       if (name && qty > 0) items[name] = (items[name] || 0) + qty;
-    } else if (trimmed.length > 2) {
-      items[trimmed] = (items[trimmed] || 0) + 1;
     }
   }
   return Object.entries(items).map(([name, qty]) => ({ name, qty }));
@@ -1359,9 +1381,109 @@ async function showRunDetail(runId) {
     html += implantTableHtml('Implants (at run start)', run.implants);
   }
 
-  html += `<div style="margin-top:16px"><button class="btn sm red" onclick="deleteRun(${run.id})">Delete Run</button></div>`;
+  // Cargo paste section — always shown, editable for re-appraisal
+  const hasCargo = run.cargo_before || run.cargo_after;
+  html += `<div class="section-title" style="margin-top:18px">Cargo Pastes</div>`;
+
+  if (run.outcome === 'Survived') {
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div>
+        <div class="field-label">Pre-Run Cargo</div>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px">${esc(run.cargo_before || '')}</textarea>
+      </div>
+      <div>
+        <div class="field-label">Post-Run Cargo</div>
+        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:90px;font-size:11px">${esc(run.cargo_after || '')}</textarea>
+      </div>
+    </div>
+    <div id="reappraise-status-${run.id}" style="margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+      <button class="btn gold sm" onclick="reappraiseRun(${run.id})"><span id="reappraise-spinner-${run.id}" style="display:none" class="spinner"></span> Re-Appraise</button>
+      <button class="btn sm red" onclick="deleteRun(${run.id})">Delete Run</button>
+    </div>`;
+  } else {
+    // Died — only pre-run cargo, no post-run
+    html += `<div style="margin-bottom:10px">
+      <div class="field-label">Pre-Run Cargo (at time of death)</div>
+      <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+      <button class="btn sm red" onclick="deleteRun(${run.id})">Delete Run</button>
+    </div>`;
+  }
+
   document.getElementById('runDetailContent').innerHTML = html;
   openModal('runDetailModal');
+}
+
+async function reappraiseRun(runId) {
+  const apiKey = S.settings.janice_api_key;
+  if (!apiKey) {
+    document.getElementById(`reappraise-status-${runId}`).innerHTML = '<div class="alert err">Janice API key not set. Go to Settings.</div>';
+    return;
+  }
+
+  const cargoBefore = document.getElementById('detailCargoBefore').value;
+  const cargoAfter = document.getElementById('detailCargoAfter').value;
+
+  if (!cargoAfter.trim()) {
+    document.getElementById(`reappraise-status-${runId}`).innerHTML = '<div class="alert warn">Post-run cargo is empty — paste it first.</div>';
+    return;
+  }
+
+  const spinner = document.getElementById(`reappraise-spinner-${runId}`);
+  const statusEl = document.getElementById(`reappraise-status-${runId}`);
+  spinner.style.display = 'inline-block';
+  statusEl.innerHTML = '';
+
+  const diff = diffCargo(cargoBefore, cargoAfter);
+
+  try {
+    let lootResult = null, consumedResult = null;
+    if (diff.gained.length > 0) {
+      lootResult = await window.api.janice.appraise(diff.gained, 'buy', apiKey);
+    }
+    if (diff.consumed.length > 0) {
+      consumedResult = await window.api.janice.appraise(diff.consumed, 'sell', apiKey);
+    }
+
+    const lootValue = lootResult ? lootResult.totalBuyPrice : 0;
+    const consumedCost = consumedResult ? consumedResult.totalSellPrice : 0;
+    const netIsk = lootValue - consumedCost;
+
+    // Build updated items list
+    const items = [];
+    if (lootResult) {
+      for (const item of lootResult.items) {
+        const p = item.effectivePrices;
+        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'gained', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+      }
+    }
+    if (consumedResult) {
+      for (const item of consumedResult.items) {
+        const p = item.effectivePrices;
+        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'consumed', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+      }
+    }
+
+    // Save updated run
+    await window.api.runs.updateAppraisal(runId, {
+      loot_value: lootValue,
+      consumed_cost: consumedCost,
+      net_isk: netIsk,
+      cargo_before: cargoBefore,
+      cargo_after: cargoAfter,
+      items
+    });
+
+    statusEl.innerHTML = `<div class="alert success">Re-appraised — Net ISK updated to ${fmtIsk(netIsk)}</div>`;
+    renderHistory();
+    updateRecentRuns();
+    updateIskPerHour();
+  } catch (e) {
+    statusEl.innerHTML = `<div class="alert err">Re-appraisal failed: ${e.message}</div>`;
+  }
+  spinner.style.display = 'none';
 }
 
 function itemTableHtml(title, items, priceClass, priceField) {

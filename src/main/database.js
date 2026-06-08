@@ -10,6 +10,7 @@ function init() {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   createSchema();
+  migrateSchema();
 }
 
 function createSchema() {
@@ -40,6 +41,8 @@ function createSchema() {
       net_isk REAL DEFAULT 0,
       total_loss REAL DEFAULT 0,
       system_id INTEGER,
+      cargo_before TEXT,
+      cargo_after TEXT,
       notes TEXT,
       created_at INTEGER DEFAULT (strftime('%s','now')),
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
@@ -77,6 +80,18 @@ function createSchema() {
       FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
     );
   `);
+}
+
+
+function migrateSchema() {
+  // Add cargo columns to existing databases that predate this feature
+  const cols = db.pragma('table_info(runs)').map(c => c.name);
+  if (!cols.includes('cargo_before')) {
+    db.exec('ALTER TABLE runs ADD COLUMN cargo_before TEXT');
+  }
+  if (!cols.includes('cargo_after')) {
+    db.exec('ALTER TABLE runs ADD COLUMN cargo_after TEXT');
+  }
 }
 
 // ── Characters ────────────────────────────────────────────────────────────
@@ -126,14 +141,15 @@ function getAllSettings() {
 function saveRun(runData) {
   const {
     character_id, started_at, duration, tier, weather, outcome,
-    loot_value, consumed_cost, net_isk, total_loss, system_id, notes,
+    loot_value, consumed_cost, net_isk, total_loss, system_id,
+    cargo_before, cargo_after, notes,
     items = [], fitting = [], implants = []
   } = runData;
 
   const insertRun = db.prepare(`
     INSERT INTO runs (character_id, started_at, duration, tier, weather, outcome,
-      loot_value, consumed_cost, net_isk, total_loss, system_id, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      loot_value, consumed_cost, net_isk, total_loss, system_id, cargo_before, cargo_after, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -155,7 +171,7 @@ function saveRun(runData) {
     const info = insertRun.run(
       character_id, started_at, duration, tier, weather, outcome,
       loot_value || 0, consumed_cost || 0, net_isk || 0, total_loss || 0,
-      system_id, notes
+      system_id, cargo_before || null, cargo_after || null, notes
     );
     const runId = info.lastInsertRowid;
 
@@ -283,4 +299,27 @@ function deleteSetting(key) {
   return true;
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, getRuns, getRunById, deleteRun, getStats };
+function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_before, cargo_after, items }) {
+  const transaction = db.transaction(() => {
+    db.prepare(`
+      UPDATE runs SET loot_value = ?, consumed_cost = ?, net_isk = ?,
+        cargo_before = ?, cargo_after = ? WHERE id = ?
+    `).run(loot_value, consumed_cost, net_isk, cargo_before, cargo_after, runId);
+
+    // Replace gained/consumed items — keep lost items (from death) untouched
+    db.prepare("DELETE FROM run_items WHERE run_id = ? AND type IN ('gained','consumed')").run(runId);
+
+    const insertItem = db.prepare(`
+      INSERT INTO run_items (run_id, item_name, qty, type, unit_price_buy, unit_price_sell)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const item of items) {
+      insertItem.run(runId, item.item_name, item.qty, item.type,
+        item.unit_price_buy || 0, item.unit_price_sell || 0);
+    }
+  });
+  transaction();
+  return true;
+}
+
+module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, getRuns, getRunById, deleteRun, getStats };
