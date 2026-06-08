@@ -308,6 +308,12 @@ function deleteSetting(key) {
   return true;
 }
 
+function updateCargoOnly(runId, { cargo_before, cargo_after }) {
+  db.prepare('UPDATE runs SET cargo_before = ?, cargo_after = ? WHERE id = ?')
+    .run(cargo_before || null, cargo_after || null, runId);
+  return true;
+}
+
 function updateMeta(runId, { tier, weather, outcome, duration, started_at, total_loss, ship_name, ship_class }) {
   db.prepare(`
     UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?,
@@ -357,4 +363,4 @@ function getDailyStats(characterId) {
   `).all(...params);
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, getRuns, getRunById, deleteRun, getStats, getDailyStats };
+module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, updateCargoOnly, getRuns, getRunById, deleteRun, getStats, getDailyStats };

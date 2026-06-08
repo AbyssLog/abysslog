@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('api', {
     getStats: (characterId) => ipcRenderer.invoke('runs:get-stats', characterId),
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', { runId, data }),
     updateMeta: (runId, data) => ipcRenderer.invoke('runs:update-meta', { runId, data }),
+    updateCargoOnly: (runId, data) => ipcRenderer.invoke('runs:update-cargo-only', { runId, data }),
     getDailyStats: (characterId) => ipcRenderer.invoke('runs:get-daily-stats', characterId),
   },
 

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, safeStorage, Menu } = require('electron');
 const path = require('path');
 
 let mainWindow;
@@ -136,6 +136,7 @@ ipcMain.handle('runs:delete', async (e, runId) => db.deleteRun(runId));
 ipcMain.handle('runs:get-stats', async (e, characterId) => db.getStats(characterId));
 ipcMain.handle('runs:update-appraisal', async (e, { runId, data }) => db.updateAppraisal(runId, data));
 ipcMain.handle('runs:update-meta', async (e, { runId, data }) => db.updateMeta(runId, data));
+ipcMain.handle('runs:update-cargo-only', async (e, { runId, data }) => db.updateCargoOnly(runId, data));
 ipcMain.handle('runs:get-daily-stats', async (e, characterId) => db.getDailyStats(characterId));
 
 // ── IPC: Shell ────────────────────────────────────────────────────────────
