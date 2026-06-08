@@ -535,6 +535,15 @@ input, select, textarea { font-family: var(--font); }
         <div class="field-label">Duration (mm:ss)</div>
         <input type="text" class="field-input" id="manualDuration" placeholder="20:00" />
       </div>
+      <div>
+        <div class="field-label">Ship Class</div>
+        <select class="field-select" id="manualShipClass">
+          <option value="Unknown">Unknown</option>
+          <option value="Frigate">Frigate</option>
+          <option value="Destroyer">Destroyer</option>
+          <option value="Cruiser">Cruiser</option>
+        </select>
+      </div>
     </div>
     <div style="margin-bottom:10px">
       <div class="field-label">Date &amp; Time</div>
@@ -856,16 +865,39 @@ function stopESIPoll() {
 }
 
 // ── Run Lifecycle ─────────────────────────────────────────────────────────
+// EVE ship group IDs by class (not exhaustive but covers all abyssal-legal hulls)
+const FRIGATE_GROUPS  = new Set([25,324,831,1283,830,893,1527,237,834,893,543,1305,1534,1535]);
+const DESTROYER_GROUPS = new Set([420,541,1305,1534,1535]);
+const CRUISER_GROUPS  = new Set([26,906,833,358,963,894,832,540,209,27,900,1337]);
+
+function classifyShipByGroup(groupId) {
+  if (!groupId) return 'Unknown';
+  if (FRIGATE_GROUPS.has(groupId))   return 'Frigate';
+  if (DESTROYER_GROUPS.has(groupId)) return 'Destroyer';
+  if (CRUISER_GROUPS.has(groupId))   return 'Cruiser';
+  return 'Unknown';
+}
+
+function classifyShip(typeId) {
+  // Will be refined once fitting data is fetched; default Unknown until then
+  return 'Unknown';
+}
+
 async function startRun() {
   const tier = document.getElementById('tierSelect').value;
   const weather = document.getElementById('weatherSelect').value;
   const cargoBefore = document.getElementById('cargoBeforeText').value;
+
+  // Determine ship class from current ship type
+  const shipClass = classifyShip(lastShipTypeId);
 
   S.activeRun = {
     character_id: S.activeCharId,
     started_at: Math.floor(Date.now() / 1000),
     tier: tier || 'Unknown',
     weather: weather || 'Unknown',
+    ship_name: document.getElementById('hudShipVal').textContent || '',
+    ship_class: shipClass,
     cargoBefore,
     cargoAfter: '',
     outcome: null,
@@ -889,6 +921,12 @@ async function startRun() {
         const implantTypeIds = implantIds;
         const allTypeIds = [...new Set([...fitTypeIds, ...implantTypeIds])];
         const typeNames = await window.api.esi.getTypeNames(allTypeIds);
+
+        // Classify ship from group_id in fitting data
+        if (fitData.group_id) {
+          S.activeRun.ship_class = classifyShipByGroup(fitData.group_id);
+        }
+        S.activeRun.ship_name = typeNames[fitData.ship_type_id] || S.activeRun.ship_name;
 
         // Build fitting array
         S.activeRun.fitting = [
@@ -1061,7 +1099,7 @@ function renderAppraisalResults(lootResult, consumedResult, diff) {
         <td class="name">${esc(item.itemType.name)}</td>
         <td class="qty">${item.amount.toLocaleString()}</td>
         <td class="price ${isZero ? 'zero' : 'gained'}">${isZero ? 'no orders' : fmtIsk(p.buyPrice)}</td>
-        <td class="price ${isZero ? 'zero' : 'gained'}">${isZero ? '—' : fmtIsk(p.buyPriceTotal)}</td>
+        <td class="price ${isZero ? 'zero' : 'gained'}">${isZero ? '<span style=\'font-size:10px\'>no market orders</span>' : fmtIsk(p.buyPriceTotal)}</td>
       </tr>`;
     }
     html += `</tbody><tfoot><tr><td colspan="3" style="color:var(--text-dim)">Total Loot (instant sell)</td><td class="price gained">${fmtIsk(lootResult.totalBuyPrice)}</td></tr></tfoot></table>`;
@@ -1199,6 +1237,8 @@ async function saveCurrentRun() {
     system_id: lastSystemId,
     cargo_before: run.cargoBefore || '',
     cargo_after: run.cargoAfter || '',
+    ship_name: run.ship_name || '',
+    ship_class: run.ship_class || 'Unknown',
     items,
     fitting,
     implants
@@ -1260,6 +1300,7 @@ async function openEditRunModal(runId) {
   const d = new Date(run.started_at * 1000);
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
+  document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
   document.getElementById('manualCargoBefore').value = run.cargo_before || '';
   document.getElementById('manualCargoAfter').value = run.cargo_after || '';
   document.getElementById('manualEntryStatus').innerHTML = '';
@@ -1297,6 +1338,7 @@ async function submitManualEntry() {
   const weather = document.getElementById('manualWeather').value;
   const outcome = document.getElementById('manualOutcome').value;
   const duration = parseDuration(document.getElementById('manualDuration').value);
+  const shipClass = document.getElementById('manualShipClass').value;
   const dateVal = document.getElementById('manualDate').value;
   const cargoBefore = document.getElementById('manualCargoBefore').value;
   const cargoAfter = document.getElementById('manualCargoAfter').value;
@@ -1374,6 +1416,8 @@ async function submitManualEntry() {
       total_loss,
       cargo_before: cargoBefore,
       cargo_after: cargoAfter,
+      ship_name: '',
+      ship_class: shipClass,
       items,
       fitting: [],
       implants: []
@@ -1390,7 +1434,7 @@ async function submitManualEntry() {
         items
       });
       // Also update metadata (tier, weather, outcome, duration, date)
-      await window.api.runs.updateMeta(manualEditRunId, { tier, weather, outcome, duration, started_at, total_loss });
+      await window.api.runs.updateMeta(manualEditRunId, { tier, weather, outcome, duration, started_at, total_loss, ship_class: shipClass });
     } else {
       await window.api.runs.save(runData);
     }
@@ -1481,25 +1525,36 @@ function parseCargo(raw) {
     if (!trimmed) continue;
 
     // EVE multi-column paste: Name \t Qty \t Category \t Volume \t ISK
-    // Fields are tab-separated; qty is always the second column (integer, no x prefix)
+    // The second column is the quantity when it parses as a positive integer.
+    // If it doesn't (e.g. second col is a category name like "Exotic Plasma Charge Blueprint"),
+    // treat the item as qty 1 — EVE omits the qty column for single-item stacks.
     const cols = trimmed.split(/\t/);
     if (cols.length >= 2) {
       const name = cols[0].trim();
-      // Second col may be plain integer (multi-col paste) or "x100" (simple paste)
-      const qtyRaw = cols[1].trim().replace(/^x/i, '').replace(/,/g, '');
+      const qtyRaw = cols[1].trim().replace(/^x/i, '').replace(/,/g, '').replace(/\s.*$/, '');
       const qty = parseInt(qtyRaw);
       if (name && !isNaN(qty) && qty > 0) {
         items[name] = (items[name] || 0) + qty;
         continue;
       }
+      // Second col wasn't a number — single item, qty 1 (e.g. blueprint with category as col 2)
+      if (name && name.length > 2) {
+        items[name] = (items[name] || 0) + 1;
+        continue;
+      }
     }
 
-    // Fallback: "Item Name x 100" or "Item Name x100" (no tabs)
-    const m = trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
-    if (m) {
-      const name = m[1].trim();
-      const qty = parseInt(m[2].replace(/,/g, ''));
-      if (name && qty > 0) items[name] = (items[name] || 0) + qty;
+    // Single column line: plain item name, qty 1
+    if (cols.length === 1) {
+      // Try "Item Name x 100" format first
+      const m = trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
+      if (m) {
+        const name = m[1].trim();
+        const qty = parseInt(m[2].replace(/,/g, ''));
+        if (name && qty > 0) { items[name] = (items[name] || 0) + qty; continue; }
+      }
+      // Plain name, qty 1
+      if (trimmed.length > 2) items[trimmed] = (items[trimmed] || 0) + 1;
     }
   }
   return Object.entries(items).map(([name, qty]) => ({ name, qty }));
@@ -1553,6 +1608,7 @@ async function renderHistory() {
     { key: 'started_at', label: 'Date' },
     { key: 'tier', label: 'Tier' },
     { key: 'weather', label: 'Weather' },
+    { key: 'ship_class', label: 'Ship' },
     { key: 'duration', label: 'Duration' },
     { key: 'outcome', label: 'Outcome' },
     { key: 'net_isk', label: 'Net ISK' },
@@ -1574,6 +1630,7 @@ async function renderHistory() {
       <td class="mono">${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
       <td><span class="badge tier">${esc(run.tier || '—')}</span></td>
       <td><span class="badge weather">${esc(run.weather || '—')}</span></td>
+      <td style="color:var(--dim);font-size:11px">${esc(run.ship_class || '—')}</td>
       <td class="mono">${fmtDuration(run.duration)}</td>
       <td><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${run.outcome}</span></td>
       <td class="${run.outcome === 'Survived' ? 'positive' : ''}">${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '—'}</td>
@@ -1606,6 +1663,7 @@ async function showRunDetail(runId) {
     <div><div class="field-label">Date</div><div class="mono" style="font-size:12px">${d.toLocaleString()}</div></div>
     <div><div class="field-label">Duration</div><div class="mono" style="font-size:12px">${fmtDuration(run.duration)}</div></div>
     <div><div class="field-label">Outcome</div><div><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${run.outcome}</span></div></div>
+    <div><div class="field-label">Ship Class</div><div>${run.ship_class ? '<span class="badge tier">' + esc(run.ship_class) + '</span>' : '<span style="color:var(--muted)">—</span>'}</div></div>
     <div><div class="field-label">${run.outcome === 'Survived' ? 'Net ISK' : 'Total Loss'}</div>
     <div class="mono" style="font-size:14px;color:${run.outcome === 'Survived' ? 'var(--green)' : 'var(--red)'}">
       ${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '−' + fmtIsk(run.total_loss)}

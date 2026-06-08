@@ -43,6 +43,8 @@ function createSchema() {
       system_id INTEGER,
       cargo_before TEXT,
       cargo_after TEXT,
+      ship_name TEXT,
+      ship_class TEXT,
       notes TEXT,
       created_at INTEGER DEFAULT (strftime('%s','now')),
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
@@ -91,6 +93,12 @@ function migrateSchema() {
   }
   if (!cols.includes('cargo_after')) {
     db.exec('ALTER TABLE runs ADD COLUMN cargo_after TEXT');
+  }
+  if (!cols.includes('ship_name')) {
+    db.exec("ALTER TABLE runs ADD COLUMN ship_name TEXT");
+  }
+  if (!cols.includes('ship_class')) {
+    db.exec("ALTER TABLE runs ADD COLUMN ship_class TEXT");
   }
 }
 
@@ -142,14 +150,14 @@ function saveRun(runData) {
   const {
     character_id, started_at, duration, tier, weather, outcome,
     loot_value, consumed_cost, net_isk, total_loss, system_id,
-    cargo_before, cargo_after, notes,
+    cargo_before, cargo_after, ship_name, ship_class, notes,
     items = [], fitting = [], implants = []
   } = runData;
 
   const insertRun = db.prepare(`
     INSERT INTO runs (character_id, started_at, duration, tier, weather, outcome,
-      loot_value, consumed_cost, net_isk, total_loss, system_id, cargo_before, cargo_after, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      loot_value, consumed_cost, net_isk, total_loss, system_id, cargo_before, cargo_after, ship_name, ship_class, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -171,7 +179,8 @@ function saveRun(runData) {
     const info = insertRun.run(
       character_id, started_at, duration, tier, weather, outcome,
       loot_value || 0, consumed_cost || 0, net_isk || 0, total_loss || 0,
-      system_id, cargo_before || null, cargo_after || null, notes
+      system_id, cargo_before || null, cargo_after || null,
+      ship_name || null, ship_class || null, notes
     );
     const runId = info.lastInsertRowid;
 
@@ -299,11 +308,12 @@ function deleteSetting(key) {
   return true;
 }
 
-function updateMeta(runId, { tier, weather, outcome, duration, started_at, total_loss }) {
+function updateMeta(runId, { tier, weather, outcome, duration, started_at, total_loss, ship_name, ship_class }) {
   db.prepare(`
-    UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?
+    UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?,
+      ship_name = ?, ship_class = ?
     WHERE id = ?
-  `).run(tier, weather, outcome, duration, started_at, total_loss || 0, runId);
+  `).run(tier, weather, outcome, duration, started_at, total_loss || 0, ship_name || null, ship_class || null, runId);
   return true;
 }
 
