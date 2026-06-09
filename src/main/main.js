@@ -52,6 +52,7 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
     db.init();
     createWindow();
   });
