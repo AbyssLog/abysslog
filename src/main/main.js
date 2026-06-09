@@ -22,6 +22,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0a0c10',
+    title: '',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -29,7 +30,10 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false
     },
-    icon: path.join(__dirname, '../../assets/icon.png')
+    // Use transparent PNG to suppress the icon in the Windows title bar
+    icon: process.platform === 'win32'
+      ? path.join(__dirname, '../../assets/transparent.png')
+      : path.join(__dirname, '../../assets/icon.png')
   });
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
