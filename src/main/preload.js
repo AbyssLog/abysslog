@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
     refreshToken: (refreshToken, clientId) => ipcRenderer.invoke('esi:refresh-token', { refreshToken, clientId }),
     verifyToken: (accessToken) => ipcRenderer.invoke('esi:verify-token', accessToken),
     getSystemName: (systemId) => ipcRenderer.invoke('esi:get-system-name', systemId),
+    getTypeInfo: (typeId) => ipcRenderer.invoke('esi:get-type-info', typeId),
   },
 
   // Janice

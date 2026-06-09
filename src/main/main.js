@@ -123,6 +123,7 @@ ipcMain.handle('esi:get-type-names', async (e, typeIds) => esi.getTypeNames(type
 ipcMain.handle('esi:refresh-token', async (e, { refreshToken, clientId }) => esi.refreshToken(refreshToken, clientId));
 ipcMain.handle('esi:verify-token', async (e, accessToken) => esi.verifyToken(accessToken));
 ipcMain.handle('esi:get-system-name', async (e, systemId) => esi.getSystemName(systemId));
+ipcMain.handle('esi:get-type-info', async (e, typeId) => esi.getTypeInfo(typeId));
 
 // ── IPC: Janice ───────────────────────────────────────────────────────────
 

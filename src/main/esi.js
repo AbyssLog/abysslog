@@ -81,6 +81,11 @@ async function getImplants(characterId, accessToken) {
   });
 }
 
+async function getTypeInfo(typeId) {
+  // Returns type info including group_id for ship class detection
+  return httpGet(`${ESI_BASE}/universe/types/${typeId}/`);
+}
+
 async function getSystemName(systemId) {
   try {
     const data = await httpGet(`${ESI_BASE}/universe/systems/${systemId}/`);
@@ -145,6 +150,7 @@ module.exports = {
   getShip,
   getFitting,
   getImplants,
+  getTypeInfo,
   getSystemName,
   getTypeNames,
   refreshToken,
