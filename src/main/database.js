@@ -43,6 +43,8 @@ function createSchema() {
       system_id INTEGER,
       cargo_before TEXT,
       cargo_after TEXT,
+      drone_before TEXT,
+      drone_after TEXT,
       ship_name TEXT,
       ship_class TEXT,
       notes TEXT,
@@ -93,6 +95,12 @@ function migrateSchema() {
   }
   if (!cols.includes('cargo_after')) {
     db.exec('ALTER TABLE runs ADD COLUMN cargo_after TEXT');
+  }
+  if (!cols.includes('drone_before')) {
+    db.exec('ALTER TABLE runs ADD COLUMN drone_before TEXT');
+  }
+  if (!cols.includes('drone_after')) {
+    db.exec('ALTER TABLE runs ADD COLUMN drone_after TEXT');
   }
   if (!cols.includes('ship_name')) {
     db.exec("ALTER TABLE runs ADD COLUMN ship_name TEXT");
@@ -150,14 +158,14 @@ function saveRun(runData) {
   const {
     character_id, started_at, duration, tier, weather, outcome,
     loot_value, consumed_cost, net_isk, total_loss, system_id,
-    cargo_before, cargo_after, ship_name, ship_class, notes,
+    cargo_before, cargo_after, drone_before, drone_after, ship_name, ship_class, notes,
     items = [], fitting = [], implants = []
   } = runData;
 
   const insertRun = db.prepare(`
     INSERT INTO runs (character_id, started_at, duration, tier, weather, outcome,
-      loot_value, consumed_cost, net_isk, total_loss, system_id, cargo_before, cargo_after, ship_name, ship_class, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      loot_value, consumed_cost, net_isk, total_loss, system_id, cargo_before, cargo_after, drone_before, drone_after, ship_name, ship_class, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -180,6 +188,7 @@ function saveRun(runData) {
       character_id, started_at, duration, tier, weather, outcome,
       loot_value || 0, consumed_cost || 0, net_isk || 0, total_loss || 0,
       system_id, cargo_before || null, cargo_after || null,
+      drone_before || null, drone_after || null,
       ship_name || null, ship_class || null, notes
     );
     const runId = info.lastInsertRowid;
@@ -308,9 +317,9 @@ function deleteSetting(key) {
   return true;
 }
 
-function updateCargoOnly(runId, { cargo_before, cargo_after }) {
-  db.prepare('UPDATE runs SET cargo_before = ?, cargo_after = ? WHERE id = ?')
-    .run(cargo_before || null, cargo_after || null, runId);
+function updateCargoOnly(runId, { cargo_before, cargo_after, drone_before, drone_after }) {
+  db.prepare('UPDATE runs SET cargo_before = ?, cargo_after = ?, drone_before = ?, drone_after = ? WHERE id = ?')
+    .run(cargo_before || null, cargo_after || null, drone_before || null, drone_after || null, runId);
   return true;
 }
 
@@ -323,12 +332,12 @@ function updateMeta(runId, { tier, weather, outcome, duration, started_at, total
   return true;
 }
 
-function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_before, cargo_after, items }) {
+function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_before, cargo_after, drone_before, drone_after, items }) {
   const transaction = db.transaction(() => {
     db.prepare(`
       UPDATE runs SET loot_value = ?, consumed_cost = ?, net_isk = ?,
-        cargo_before = ?, cargo_after = ? WHERE id = ?
-    `).run(loot_value, consumed_cost, net_isk, cargo_before, cargo_after, runId);
+        cargo_before = ?, cargo_after = ?, drone_before = ?, drone_after = ? WHERE id = ?
+    `).run(loot_value, consumed_cost, net_isk, cargo_before, cargo_after, drone_before || null, drone_after || null, runId);
 
     // Replace gained/consumed items — keep lost items (from death) untouched
     db.prepare("DELETE FROM run_items WHERE run_id = ? AND type IN ('gained','consumed')").run(runId);
@@ -363,4 +372,103 @@ function getDailyStats(characterId) {
   `).all(...params);
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, updateCargoOnly, getRuns, getRunById, deleteRun, getStats, getDailyStats };
+function exportRunsCSV(characterId) {
+  const filters = characterId ? 'WHERE r.character_id = ?' : '';
+  const params = characterId ? [characterId] : [];
+  const runs = db.prepare(`
+    SELECT r.*, c.name as character_name
+    FROM runs r JOIN characters c ON r.character_id = c.id
+    ${filters}
+    ORDER BY r.started_at ASC
+  `).all(...params);
+
+  const headers = [
+    'id','character_name','started_at','duration','tier','weather','outcome',
+    'ship_name','ship_class','loot_value','consumed_cost','net_isk','total_loss',
+    'cargo_before','cargo_after','drone_before','drone_after','notes'
+  ];
+
+  const escape = (v) => {
+    if (v == null) return '';
+    const s = String(v);
+    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+
+  const rows = runs.map(r => headers.map(h => escape(r[h])).join(','));
+  return [headers.join(','), ...rows].join('\n');
+}
+
+function importRunsCSV(csvText, characterId) {
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { imported: 0, skipped: 0, errors: [] };
+
+  // Parse headers from first line
+  const parseCSVLine = (line) => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i+1] === '"') { current += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current); current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current);
+    return result;
+  };
+
+  const headers = parseCSVLine(lines[0]);
+  const idx = (name) => headers.indexOf(name);
+
+  const insertRun = db.prepare(`
+    INSERT OR IGNORE INTO runs
+      (character_id, started_at, duration, tier, weather, outcome,
+       ship_name, ship_class, loot_value, consumed_cost, net_isk, total_loss,
+       cargo_before, cargo_after, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `);
+
+  let imported = 0, skipped = 0;
+  const errors = [];
+
+  const transaction = db.transaction(() => {
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      try {
+        const cols = parseCSVLine(lines[i]);
+        const get = (name) => cols[idx(name)] || null;
+        const charId = characterId || get('character_id');
+        if (!charId) { skipped++; continue; }
+
+        const info = insertRun.run(
+          charId,
+          parseInt(get('started_at')) || Math.floor(Date.now()/1000),
+          parseInt(get('duration')) || 0,
+          get('tier'), get('weather'), get('outcome') || 'Survived',
+          get('ship_name'), get('ship_class'),
+          parseFloat(get('loot_value')) || 0,
+          parseFloat(get('consumed_cost')) || 0,
+          parseFloat(get('net_isk')) || 0,
+          parseFloat(get('total_loss')) || 0,
+          get('cargo_before'), get('cargo_after'), get('notes')
+        );
+        if (info.changes > 0) imported++; else skipped++;
+      } catch(e) {
+        errors.push(`Row ${i}: ${e.message}`);
+        skipped++;
+      }
+    }
+  });
+  transaction();
+  return { imported, skipped, errors };
+}
+
+module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, updateCargoOnly, getRuns, getRunById, deleteRun, getStats, getDailyStats, exportRunsCSV, importRunsCSV };

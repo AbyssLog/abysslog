@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, safeStorage, Menu, dialog } = require('electron');
+const fs = require('fs');
 const path = require('path');
 
 let mainWindow;
@@ -148,3 +149,27 @@ ipcMain.handle('runs:get-daily-stats', async (e, characterId) => db.getDailyStat
 // ── IPC: Shell ────────────────────────────────────────────────────────────
 
 ipcMain.handle('shell:open-external', async (e, url) => shell.openExternal(url));
+
+ipcMain.handle('runs:export-csv', async (e, characterId) => {
+  const csv = db.exportRunsCSV(characterId);
+  const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Runs',
+    defaultPath: `abysslog-runs-${new Date().toISOString().split('T')[0]}.csv`,
+    filters: [{ name: 'CSV Files', extensions: ['csv'] }]
+  });
+  if (canceled || !filePath) return { success: false };
+  fs.writeFileSync(filePath, csv, 'utf8');
+  return { success: true, filePath };
+});
+
+ipcMain.handle('runs:import-csv', async (e, characterId) => {
+  const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import Runs',
+    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+    properties: ['openFile']
+  });
+  if (canceled || !filePaths.length) return { success: false };
+  const csv = fs.readFileSync(filePaths[0], 'utf8');
+  const result = db.importRunsCSV(csv, characterId);
+  return { success: true, ...result };
+});

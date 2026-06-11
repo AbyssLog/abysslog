@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('api', {
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', { runId, data }),
     updateMeta: (runId, data) => ipcRenderer.invoke('runs:update-meta', { runId, data }),
     updateCargoOnly: (runId, data) => ipcRenderer.invoke('runs:update-cargo-only', { runId, data }),
+    exportCSV: (characterId) => ipcRenderer.invoke('runs:export-csv', characterId),
+    importCSV: (characterId) => ipcRenderer.invoke('runs:import-csv', characterId),
     getDailyStats: (characterId) => ipcRenderer.invoke('runs:get-daily-stats', characterId),
   },
 
