@@ -567,8 +567,11 @@ input, select, textarea { font-family: var(--font); }
 
         <div class="panel" style="margin-bottom:12px;line-height:1.8">
           <div class="panel-title">About</div>
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:10px">
+            AbyssLog logs each of your Abyssal Deadspace runs, including tier, weather, ship class, duration, and outcome. Your cargo hold and drone bay are compared before and after each run to track what you looted and what you consumed.
+          </p>
           <p style="color:var(--text-dim);font-size:13px">
-            Track your Abyssal Deadspace runs. Loot is priced against Jita (via Janice).
+            Every run is appraised against Jita market prices via Janice, giving you an accurate ISK value for loot gained and items spent. Deaths are logged with a full loss estimate covering cargo, fit, and implants. The statistics page gives you ISK/hour, survival rate, and a breakdown by tier, weather, and ship class.
           </p>
         </div>
 
@@ -588,7 +591,7 @@ input, select, textarea { font-family: var(--font); }
         <div class="panel" style="margin-bottom:12px;border-color:var(--gold-dim)">
           <div class="panel-title" style="color:var(--gold)">Support the Project</div>
           <p style="color:var(--text-dim);font-size:13px;line-height:1.8">
-            If you've found it useful, ISK donations are always welcome.
+            If you like the app and find it useful, ISK donations are always welcome. Suggestions and feedback can be sent via in-game mail to Erinys.
           </p>
         </div>
 
@@ -1391,6 +1394,7 @@ async function saveCurrentRun() {
     document.getElementById('droneBeforeText').value = run.droneAfter || '';
   } else {
     document.getElementById('cargoBeforeText').value = '';
+    document.getElementById('droneBeforeText').value = '';
   }
 
   S.activeRun = null;
@@ -1470,6 +1474,58 @@ function closeManualEntryModal() {
   manualEditRunId = null;
 }
 
+async function initAboutPage() {
+  try {
+    const version = await window.api.app.getVersion();
+    document.getElementById('aboutVersion').textContent = 'v' + version;
+  } catch(e) {}
+}
+
+function compareSemver(a, b) {
+  const pa = a.replace(/^v/, '').split('.').map(Number);
+  const pb = b.replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
+async function checkForUpdates() {
+  const btn = document.getElementById('updateBtn');
+  const status = document.getElementById('updateStatus');
+  btn.disabled = true;
+  status.style.color = 'var(--text-muted)';
+  status.textContent = 'Checking...';
+
+  try {
+    const result = await window.api.app.checkUpdate();
+    if (!result.success) {
+      status.style.color = 'var(--red)';
+      status.textContent = 'Could not reach update server.';
+      btn.disabled = false;
+      return;
+    }
+
+    const current = await window.api.app.getVersion();
+    const isNewer = compareSemver(result.version, current) > 0;
+
+    if (isNewer) {
+      status.innerHTML = `<span style="color:var(--green)">v${esc(result.version)} available</span>
+        ${result.releaseNotes ? '<span style="color:var(--text-muted);margin-left:6px">' + esc(result.releaseNotes) + '</span>' : ''}
+        &nbsp;<a href="#" onclick="window.api.shell.openExternal('${esc(result.releaseUrl || '')}');return false"
+          style="color:var(--cyan);font-size:11px">Download →</a>`;
+    } else {
+      status.style.color = 'var(--text-muted)';
+      status.textContent = 'You are on the latest version.';
+    }
+  } catch(e) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Update check failed.';
+  }
+  btn.disabled = false;
+}
+
 function toggleCollapsible(bodyId, arrowId, hintId) {
   const body = document.getElementById(bodyId);
   const arrow = document.getElementById(arrowId);
@@ -1505,6 +1561,8 @@ async function submitManualEntry(doAppraise = true) {
   const dateVal = document.getElementById('manualDate').value;
   const cargoBefore = document.getElementById('manualCargoBefore').value;
   const cargoAfter = document.getElementById('manualCargoAfter').value;
+  const droneBefore = document.getElementById('manualDroneBefore')?.value || '';
+  const droneAfter = document.getElementById('manualDroneAfter')?.value || '';
   const statusEl = document.getElementById('manualEntryStatus');
 
   if (!tier || !weather) {
@@ -1528,7 +1586,7 @@ async function submitManualEntry(doAppraise = true) {
       // Save metadata only — preserve existing appraisal values
       await window.api.runs.updateMeta(manualEditRunId, { tier, weather, outcome, duration, started_at, total_loss: 0, ship_class: shipClass });
       // Update cargo text only (so future re-appraise uses corrected pastes)
-      await window.api.runs.updateCargoOnly(manualEditRunId, { cargo_before: cargoBefore, cargo_after: cargoAfter });
+      await window.api.runs.updateCargoOnly(manualEditRunId, { cargo_before: cargoBefore, cargo_after: cargoAfter, drone_before: droneBefore, drone_after: droneAfter });
       closeManualEntryModal();
       renderHistory();
       updateRecentRuns();
@@ -1539,8 +1597,8 @@ async function submitManualEntry(doAppraise = true) {
 
     if (outcome === 'Survived') {
       const _cd = diffCargo(cargoBefore, cargoAfter);
-  const _dd = diffCargo(droneBefore, droneAfter);
-  const diff = { gained: mergeDiffItems(_cd.gained, _dd.gained), consumed: mergeDiffItems(_cd.consumed, _dd.consumed) };
+      const _dd = diffCargo(droneBefore, droneAfter);
+      const diff = { gained: mergeDiffItems(_cd.gained, _dd.gained), consumed: mergeDiffItems(_cd.consumed, _dd.consumed) };
       let lootResult = null, consumedResult = null;
 
       if (diff.gained.length > 0) {
@@ -1887,11 +1945,15 @@ async function showRunDetail(runId) {
     html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
       <div>
         <div class="field-label">Pre-Run Cargo</div>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px">${esc(run.cargo_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px">${esc(run.cargo_before || '')}</textarea>
+        <div class="field-label" style="margin-top:8px">Pre-Run Drone Bay</div>
+        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px">${esc(run.drone_before || '')}</textarea>
       </div>
       <div>
         <div class="field-label">Post-Run Cargo</div>
-        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:90px;font-size:11px">${esc(run.cargo_after || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px">${esc(run.cargo_after || '')}</textarea>
+        <div class="field-label" style="margin-top:8px">Post-Run Drone Bay</div>
+        <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px">${esc(run.drone_after || '')}</textarea>
       </div>
     </div>
     <div id="reappraise-status-${run.id}" style="margin-bottom:8px"></div>
@@ -1902,9 +1964,15 @@ async function showRunDetail(runId) {
     </div>`;
   } else {
     // Died — only pre-run cargo, no post-run
-    html += `<div style="margin-bottom:10px">
-      <div class="field-label">Pre-Run Cargo (at time of death)</div>
-      <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div>
+        <div class="field-label">Pre-Run Cargo (at time of death)</div>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
+      </div>
+      <div>
+        <div class="field-label">Pre-Run Drone Bay (at time of death)</div>
+        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.drone_before || '')}</textarea>
+      </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
       <button class="btn sm ghost" onclick="openEditRunModal(${run.id})">✎ Edit Run</button>

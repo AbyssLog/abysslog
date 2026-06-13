@@ -150,6 +150,28 @@ ipcMain.handle('runs:get-daily-stats', async (e, characterId) => db.getDailyStat
 
 ipcMain.handle('shell:open-external', async (e, url) => shell.openExternal(url));
 
+ipcMain.handle('app:get-version', () => app.getVersion());
+
+ipcMain.handle('app:check-update', async () => {
+  return new Promise((resolve) => {
+    const https = require('https');
+    const url = 'https://raw.githubusercontent.com/YOUR_USERNAME/abysslog/main/version.json';
+    const req = https.get(url, { headers: { 'User-Agent': 'AbyssLog' } }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          resolve({ success: true, ...JSON.parse(data) });
+        } catch(e) {
+          resolve({ success: false, error: 'Invalid response' });
+        }
+      });
+    });
+    req.on('error', (e) => resolve({ success: false, error: e.message }));
+    req.setTimeout(8000, () => { req.destroy(); resolve({ success: false, error: 'Timeout' }); });
+  });
+});
+
 ipcMain.handle('runs:export-csv', async (e, characterId) => {
   const csv = db.exportRunsCSV(characterId);
   const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {

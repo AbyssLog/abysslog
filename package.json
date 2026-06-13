@@ -19,7 +19,9 @@
     },
     "protocols": {
       "name": "AbyssLog",
-      "schemes": ["eveauth-abysslog"]
+      "schemes": [
+        "eveauth-abysslog"
+      ]
     },
     "win": {
       "target": "nsis",

@@ -56,6 +56,12 @@ contextBridge.exposeInMainWorld('api', {
     openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   },
 
+  // App
+  app: {
+    getVersion: () => ipcRenderer.invoke('app:get-version'),
+    checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+  },
+
   // SSO callback listener
   onSsoCallback: (callback) => {
     ipcRenderer.on('sso-callback', (event, callbackUrl) => callback(callbackUrl));
