@@ -511,7 +511,12 @@ input, select, textarea { font-family: var(--font); }
         <div class="section-title">API Keys</div>
         <div style="margin-bottom:12px">
           <div class="field-label">Janice API Key</div>
-          <input type="password" class="field-input" id="janiceKeyInput" placeholder="Your Janice API key..." />
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="password" class="field-input" id="janiceKeyInput" placeholder="Your Janice API key..." style="flex:1" />
+            <button class="btn sm ghost" onclick="toggleJaniceKey(this)" style="flex-shrink:0;white-space:nowrap">Show</button>
+            <button class="btn sm ghost" onclick="testJaniceKey()" style="flex-shrink:0;white-space:nowrap">Test</button>
+          </div>
+          <div id="janiceTestResult" style="display:none;margin-top:6px"></div>
           <div class="field-note">API keys are available by filing a ticket in the <a href="#" onclick="openExternal('https://discord.gg/janice')" style="color:var(--cyan)">Janice Discord</a>.</div>
         </div>
       </div>
@@ -1126,6 +1131,12 @@ function endRunSurvived() {
   document.getElementById('timerDisplay').classList.add('survived');
   document.getElementById('hudRunState').textContent = 'Survived';
   document.getElementById('infoOutcome').innerHTML = '<span class="badge survived">Survived</span>';
+  // Pre-populate post-run drone bay with pre-run contents — user edits only if drones were lost
+  const droneBefore = document.getElementById('droneBeforeText').value;
+  if (droneBefore.trim()) {
+    document.getElementById('droneAfterText').value = droneBefore;
+    updatePasteHint('droneAfterText', 'postDroneHint');
+  }
   setRunState('awaiting-cargo');
 }
 
@@ -2324,6 +2335,36 @@ function loadSettingsPage() {
   if (S.settings.default_tier) document.getElementById('defaultTierInput').value = S.settings.default_tier;
   if (S.settings.default_weather) document.getElementById('defaultWeatherInput').value = S.settings.default_weather;
   renderCharList();
+}
+
+async function testJaniceKey() {
+  const apiKey = document.getElementById('janiceKeyInput').value.trim();
+  const resultEl = document.getElementById('janiceTestResult');
+  if (!apiKey) {
+    resultEl.innerHTML = '<div class="alert err">Enter an API key first.</div>';
+    resultEl.style.display = 'block';
+    return;
+  }
+  resultEl.innerHTML = '<div class="alert" style="color:var(--text-muted)"><span class="spinner"></span> Testing...</div>';
+  resultEl.style.display = 'block';
+  try {
+    const result = await window.api.janice.appraise([{ name: 'Tritanium', qty: 1 }], 'buy', apiKey);
+    if (result && result.items && result.items.length > 0) {
+      const price = result.items[0].effectivePrices.buyPrice;
+      resultEl.innerHTML = `<div class="alert success">✓ API key valid — Tritanium buy price: ${fmtIsk(price)} ISK</div>`;
+    } else {
+      resultEl.innerHTML = '<div class="alert warn">Key accepted but no price data returned.</div>';
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<div class="alert err">✗ Test failed: ${esc(e.message)}</div>`;
+  }
+}
+
+function toggleJaniceKey(btn) {
+  const input = document.getElementById('janiceKeyInput');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.textContent = show ? 'Hide' : 'Show';
 }
 
 async function exportCSV() {
