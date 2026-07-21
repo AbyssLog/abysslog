@@ -907,6 +907,7 @@ async function getValidToken() {
       const newTokens = await window.api.esi.refreshToken(S.tokens.refresh_token, clientId);
       newTokens.expires_at = Date.now() + newTokens.expires_in * 1000;
       S.tokens = newTokens;
+      window._authErrShown = false;
       await window.api.auth.saveTokens(S.activeCharId, newTokens);
     } catch (e) {
       console.error('Token refresh failed:', e);
@@ -929,8 +930,13 @@ async function pollESI() {
 
   const token = await getValidToken();
   if (!token) {
-    document.getElementById('hudEsiVal').textContent = 'Auth Error';
+    document.getElementById('hudEsiVal').innerHTML = 'Auth Error &nbsp;<span style="font-size:10px;color:var(--text-muted)">(Settings → Re-authenticate)</span>';
     document.getElementById('statusDot').className = 'status-dot';
+    // Show a one-time alert nudging user to re-authenticate
+    if (!window._authErrShown) {
+      window._authErrShown = true;
+      document.getElementById('hudEsiVal').title = 'Go to Settings → Re-authenticate to fix this';
+    }
     return;
   }
 
@@ -2377,8 +2383,21 @@ function renderCharList() {
         <div class="char-name">${esc(c.name)}</div>
         <div class="char-id">${c.id}</div>
       </div>
-      <button class="btn sm red" onclick="removeCharacter(${c.id})">Remove</button>
+      <div style="display:flex;gap:6px;margin-left:auto">
+        <button class="btn sm ghost" onclick="reauthCharacter(${c.id})">Re-authenticate</button>
+        <button class="btn sm red" onclick="removeCharacter(${c.id})">Remove</button>
+      </div>
     </div>`).join('');
+}
+
+async function reauthCharacter(charId) {
+  // Switch to this character, open SSO modal and trigger login
+  // Existing run data is preserved — only tokens are replaced
+  await switchCharacter(charId);
+  showPage('tracker');
+  openModal('addCharModal');
+  document.getElementById('ssoStatus').textContent = 'Re-authenticating — your run history will be kept.';
+  startSSO();
 }
 
 async function removeCharacter(charId) {
