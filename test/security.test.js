@@ -408,6 +408,11 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /total_loss:\s*manualEditOriginal\?\.total_loss/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
   assert.match(appJs, /mergeDiffItems\(cargoDiff\.gained,\s*droneDiff\.gained\)/);
+  assert.match(appJs, /MODAL_FOCUSABLE_SELECTOR/);
+  assert.match(appJs, /event\.key === 'Escape'/);
+  assert.match(appJs, /aria-current/);
+  assert.match(appJs, /aria-expanded/);
+  assert.match(appJs, /class="table-sort"/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
   assert.match(esi, /validateEsiShip/);
@@ -415,6 +420,23 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(esi, /characters\/\$\{characterId\}\/assets/);
   assert.doesNotMatch(esi, /characters\/\$\{characterId\}\/fit\//);
   assert.doesNotMatch(preload, /getTokens|saveTokens|refreshToken|verifyToken/);
+});
+
+test('renderer exposes accessible form, dialog, and disclosure semantics', () => {
+  const html = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf8');
+
+  assert.match(html, /<title>AbyssLog<\/title>/);
+  assert.match(html, /role="dialog" aria-modal="true"/);
+  assert.match(html, /role="status" aria-live="polite"/);
+  assert.doesNotMatch(html, /<div class="collapsible-header"/);
+  assert.match(html, /class="collapsible-header"[^>]+aria-expanded="true"/);
+  for (const tag of html.match(/<(?:input|select|textarea)\b[^>]*>/g) || []) {
+    const id = tag.match(/\bid="([^"]+)"/)?.[1];
+    assert.ok(id, `Form control is missing an ID: ${tag}`);
+    const hasAccessibleName = /\baria-label(?:ledby)?="[^"]+"/.test(tag)
+      || new RegExp(`<label[^>]+for="${id}"`).test(html);
+    assert.equal(hasAccessibleName, true, `Form control ${id} is missing an accessible name`);
+  }
 });
 
 test('IPC bridge matches guarded main-process handlers', () => {

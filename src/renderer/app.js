@@ -51,11 +51,16 @@ async function init() {
 
 // ── Navigation ────────────────────────────────────────────────────────────
 function showPage(name) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(b => {
-    if (b.textContent.toLowerCase().includes(name.toLowerCase())) b.classList.add('active');
+  document.querySelectorAll('.page').forEach(page => {
+    const isActive = page.id === `page-${name}`;
+    page.classList.toggle('active', isActive);
+    page.setAttribute('aria-hidden', String(!isActive));
+  });
+  document.querySelectorAll('.nav-btn').forEach(button => {
+    const isActive = button.dataset.page === name;
+    button.classList.toggle('active', isActive);
+    if (isActive) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
   });
   if (name === 'history') renderHistory();
   if (name === 'stats') renderStats();
@@ -403,8 +408,7 @@ async function restoreInventoryBaseline(characterId) {
   updatePasteHint('cargoBeforeText', 'preCargoHint');
   updatePasteHint('droneBeforeText', 'preDroneHint');
   if (nextDrones.trim()) {
-    document.getElementById('preDroneBody').classList.add('open');
-    document.getElementById('preDroneArrow').classList.add('open');
+    setCollapsibleState('preDroneBody', 'preDroneArrow', true);
   }
   showInventoryBaselineStatus(latestRun.started_at);
 }
@@ -1078,8 +1082,7 @@ async function saveCurrentRun() {
     document.getElementById('droneBeforeText').value = nextDroneBefore;
     updatePasteHint('droneBeforeText', 'preDroneHint');
     if (nextDroneBefore.trim()) {
-      document.getElementById('preDroneBody').classList.add('open');
-      document.getElementById('preDroneArrow').classList.add('open');
+      setCollapsibleState('preDroneBody', 'preDroneArrow', true);
     }
   } else {
     document.getElementById('cargoBeforeText').value = '';
@@ -1250,12 +1253,18 @@ async function checkForUpdates() {
   btn.disabled = false;
 }
 
-function toggleCollapsible(bodyId, arrowId, hintId) {
+function setCollapsibleState(bodyId, arrowId, isOpen) {
   const body = document.getElementById(bodyId);
   const arrow = document.getElementById(arrowId);
-  const isOpen = body.classList.contains('open');
-  body.classList.toggle('open', !isOpen);
-  arrow.classList.toggle('open', !isOpen);
+  body.classList.toggle('open', isOpen);
+  arrow.classList.toggle('open', isOpen);
+  const trigger = document.querySelector(`[data-action="toggle-collapsible"][aria-controls="${bodyId}"]`);
+  if (trigger) trigger.setAttribute('aria-expanded', String(isOpen));
+}
+
+function toggleCollapsible(bodyId, arrowId) {
+  const body = document.getElementById(bodyId);
+  setCollapsibleState(bodyId, arrowId, !body.classList.contains('open'));
 }
 
 function updatePasteHint(textareaId, hintId) {
@@ -1617,7 +1626,10 @@ async function renderHistory() {
   for (const col of cols) {
     if (col.key === '_detail') { html += `<th></th>`; continue; }
     const cls = S.sortCol === col.key ? (S.sortDir === 'asc' ? 'sort-asc' : 'sort-desc') : '';
-    html += `<th class="${cls}" data-action="sort-history" data-sort-column="${esc(col.key)}">${esc(col.label)}</th>`;
+    const ariaSort = S.sortCol === col.key
+      ? (S.sortDir === 'asc' ? 'ascending' : 'descending')
+      : 'none';
+    html += `<th class="${cls}" aria-sort="${ariaSort}"><button class="table-sort" data-action="sort-history" data-sort-column="${esc(col.key)}">${esc(col.label)}</button></th>`;
   }
   html += `</tr></thead><tbody>`;
 
@@ -1690,19 +1702,19 @@ async function showRunDetail(runId) {
   if (run.outcome === 'Survived') {
     html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
       <div>
-        <div class="field-label">Pre-Run Cargo</div>
+        <label class="field-label" for="detailCargoBefore">Pre-Run Cargo</label>
         <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px">${esc(run.cargo_before || '')}</textarea>
-        <div class="field-label" style="margin-top:8px">Pre-Run Drone Bay</div>
+        <label class="field-label" for="detailDroneBefore" style="margin-top:8px">Pre-Run Drone Bay</label>
         <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px">${esc(run.drone_before || '')}</textarea>
       </div>
       <div>
-        <div class="field-label">Post-Run Cargo</div>
+        <label class="field-label" for="detailCargoAfter">Post-Run Cargo</label>
         <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px">${esc(run.cargo_after || '')}</textarea>
-        <div class="field-label" style="margin-top:8px">Post-Run Drone Bay</div>
+        <label class="field-label" for="detailDroneAfter" style="margin-top:8px">Post-Run Drone Bay</label>
         <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px">${esc(run.drone_after || '')}</textarea>
       </div>
     </div>
-    <div id="reappraise-status-${run.id}" style="margin-bottom:8px"></div>
+    <div id="reappraise-status-${run.id}" role="status" aria-live="polite" style="margin-bottom:8px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
       <button class="btn gold sm" data-action="reappraise-run" data-run-id="${esc(run.id)}"><span id="reappraise-spinner-${esc(run.id)}" style="display:none" class="spinner"></span> Re-Appraise Loot</button>
       <button class="btn sm ghost" data-action="edit-run" data-run-id="${esc(run.id)}">✎ Edit Run</button>
@@ -1712,11 +1724,11 @@ async function showRunDetail(runId) {
     // Died — only pre-run cargo, no post-run
     html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
       <div>
-        <div class="field-label">Pre-Run Cargo (at time of death)</div>
+        <label class="field-label" for="detailCargoBefore">Pre-Run Cargo (at time of death)</label>
         <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
       </div>
       <div>
-        <div class="field-label">Pre-Run Drone Bay (at time of death)</div>
+        <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay (at time of death)</label>
         <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.drone_before || '')}</textarea>
       </div>
     </div>
@@ -2172,6 +2184,7 @@ function toggleJaniceKey(btn) {
   const show = input.type === 'password';
   input.type = show ? 'text' : 'password';
   btn.textContent = show ? 'Hide' : 'Show';
+  btn.setAttribute('aria-pressed', String(show));
 }
 
 async function removeJaniceKey() {
@@ -2360,8 +2373,55 @@ function openExternal(url) {
   window.api.shell.openExternal(url);
 }
 
-function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+const modalReturnFocus = new Map();
+const MODAL_FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  'a[href]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function getModalFocusableElements(overlay) {
+  return [...overlay.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)]
+    .filter(element => element.getClientRects().length > 0);
+}
+
+function openModal(id) {
+  const overlay = document.getElementById(id);
+  if (!overlay) return;
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && !overlay.contains(activeElement)) {
+    modalReturnFocus.set(id, activeElement);
+  }
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  document.querySelector('.app').inert = true;
+  requestAnimationFrame(() => {
+    const initialFocus = overlay.querySelector('[data-initial-focus]')
+      || getModalFocusableElements(overlay)[0]
+      || overlay.querySelector('.modal');
+    initialFocus?.focus();
+  });
+}
+
+function closeModal(id) {
+  const overlay = document.getElementById(id);
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  const anotherModalIsOpen = document.querySelector('.modal-overlay.open');
+  document.querySelector('.app').inert = Boolean(anotherModalIsOpen);
+  const returnFocus = modalReturnFocus.get(id);
+  modalReturnFocus.delete(id);
+  if (!anotherModalIsOpen && returnFocus?.isConnected) returnFocus.focus();
+}
+
+function requestCloseModal(id) {
+  if (id === 'manualEntryModal') closeManualEntryModal();
+  else closeModal(id);
+}
 
 function getSelectedCapabilities() {
   return [
@@ -2404,7 +2464,37 @@ function openAddCharModal() {
 }
 
 document.querySelectorAll('.modal-overlay').forEach(el => {
-  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+  el.addEventListener('click', event => {
+    if (event.target === el) requestCloseModal(el.id);
+  });
+});
+
+document.addEventListener('keydown', event => {
+  const openModals = [...document.querySelectorAll('.modal-overlay.open')];
+  const overlay = openModals.at(-1);
+  if (!overlay) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    requestCloseModal(overlay.id);
+    return;
+  }
+  if (event.key !== 'Tab') return;
+
+  const focusable = getModalFocusableElements(overlay);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    overlay.querySelector('.modal')?.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 });
 
 const clickActions = {
