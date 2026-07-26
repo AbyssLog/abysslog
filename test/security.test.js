@@ -176,9 +176,28 @@ test('ESI and OAuth responses are reduced to bounded schemas', () => {
     ship_type_id: 17_918,
     ignored: '<script>',
   }), {
+    ship_item_id: 99,
     ship_name: 'Reliable Gila',
     ship_type_id: 17_918,
   });
+  assert.deepEqual(security.validateEsiAssets([{
+    item_id: 100,
+    is_singleton: true,
+    location_flag: 'HiSlot0',
+    location_id: 99,
+    location_type: 'item',
+    quantity: 1,
+    type_id: 12_345,
+    ignored: '<script>',
+  }]), [{
+    item_id: 100,
+    is_singleton: true,
+    location_flag: 'HiSlot0',
+    location_id: 99,
+    location_type: 'item',
+    quantity: 1,
+    type_id: 12_345,
+  }]);
   assert.deepEqual(security.validateEsiFitting({
     ship_type_id: 17_918,
     items: [{
@@ -213,6 +232,45 @@ test('ESI and OAuth responses are reduced to bounded schemas', () => {
     access_token: 'access',
     expires_in: 1_200,
   }, { requireRefreshToken: true }), /refresh token/i);
+});
+
+test('ESI feature selections map to least-privilege scopes and capabilities', () => {
+  assert.deepEqual(
+    security.validateEsiCapabilitySelection(['implants', 'tracking']),
+    ['tracking', 'implants']
+  );
+  assert.deepEqual(security.getEsiScopesForCapabilities(['tracking', 'fitting']), [
+    'esi-location.read_location.v1',
+    'esi-location.read_ship_type.v1',
+    'esi-assets.read_assets.v1',
+  ]);
+  assert.deepEqual(security.getEsiCapabilitiesForScopes([
+    'esi-location.read_ship_type.v1',
+    'esi-assets.read_assets.v1',
+  ]), {
+    tracking: false,
+    fitting: true,
+    implants: false,
+  });
+  assert.deepEqual(security.getEsiCapabilitiesForScopes([]), {
+    tracking: false,
+    fitting: false,
+    implants: false,
+  });
+  assert.deepEqual(security.getEsiCapabilitiesForScopes([
+    'esi-location.read_location.v1',
+    'esi-location.read_ship_type.v1',
+    'esi-location.read_online.v1',
+    'esi-fittings.read_fittings.v1',
+    'esi-clones.read_implants.v1',
+  ]), {
+    tracking: true,
+    fitting: false,
+    implants: true,
+  });
+  assert.throws(() => security.validateEsiCapabilitySelection(['tracking', 'tracking']));
+  assert.throws(() => security.validateEsiCapabilitySelection(['wallet']));
+  assert.throws(() => security.validateEsiScopes(['esi-wallet.read_character_wallet.v1']));
 });
 
 test('Janice responses are reduced to a safe renderer-facing schema', () => {
@@ -287,9 +345,13 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /setInterval\(pollESI/);
   assert.match(appJs, /runESIPollLoop/);
   assert.match(appJs, /calculateBackoffDelay/);
+  assert.match(appJs, /getSelectedCapabilities/);
+  assert.match(appJs, /S\.capabilities\.tracking/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
   assert.match(esi, /validateEsiShip/);
+  assert.match(esi, /characters\/\$\{characterId\}\/assets/);
+  assert.doesNotMatch(esi, /characters\/\$\{characterId\}\/fit\//);
   assert.doesNotMatch(preload, /getTokens|saveTokens|refreshToken|verifyToken/);
 });
 
@@ -311,6 +373,9 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /if \(!validateIpcSender\(event\)\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);
+  assert.match(main, /security\.validateEsiCapabilitySelection/);
+  assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
+  assert.match(main, /tokens\.scopes = transaction\.scopes/);
   assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);[\s\S]*db\.finishStartup\(\);/);
   assert.match(database, /secure_delete = ON/);
   assert.match(database, /quick_check/);

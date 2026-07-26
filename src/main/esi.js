@@ -2,6 +2,7 @@ const { createHttpClient } = require('./http-client');
 const security = require('../shared/security');
 
 const ESI_BASE = 'https://esi.evetech.net/latest';
+const ESI_COMPATIBILITY_DATE = '2026-07-25';
 const SSO_TOKEN_URL = 'https://login.eveonline.com/v2/oauth/token';
 const SSO_VERIFY_URL = 'https://login.eveonline.com/oauth/verify';
 const USER_AGENT = 'AbyssLog/1.0';
@@ -29,9 +30,13 @@ function authenticatedHeaders(accessToken) {
   };
 }
 
-function getJson(url, headers = {}) {
+function getJson(url, headers = {}, options = {}) {
+  const compatibilityHeaders = url.startsWith(ESI_BASE)
+    ? { 'X-Compatibility-Date': ESI_COMPATIBILITY_DATE }
+    : {};
   return http.requestJson(url, {
-    headers: { 'User-Agent': USER_AGENT, ...headers },
+    ...options,
+    headers: { 'User-Agent': USER_AGENT, ...compatibilityHeaders, ...headers },
     label: 'ESI',
   });
 }
@@ -43,6 +48,7 @@ function postJson(url, body, headers = {}) {
     headers: {
       'Content-Type': 'application/json',
       'User-Agent': USER_AGENT,
+      'X-Compatibility-Date': ESI_COMPATIBILITY_DATE,
       ...headers,
     },
     body: serialized,
@@ -83,11 +89,55 @@ async function getShip(characterId, accessToken) {
 }
 
 async function getFitting(characterId, accessToken) {
-  const response = await getJson(
-    `${ESI_BASE}/characters/${characterId}/fit/`,
-    authenticatedHeaders(accessToken)
-  );
-  return security.validateEsiFitting(response);
+  const headers = authenticatedHeaders(accessToken);
+  const ship = await getShip(characterId, accessToken);
+  const fittedItems = [];
+  let assetLastModified = null;
+
+  for (let page = 1, pageCount = 1; page <= pageCount; page++) {
+    const response = await getJson(
+      `${ESI_BASE}/characters/${characterId}/assets/?page=${page}`,
+      headers,
+      { includeResponseMetadata: true }
+    );
+    const assets = security.validateEsiAssets(response.data);
+    const responseLastModified = response.headers?.['last-modified'] ?? null;
+    if (page === 1) {
+      assetLastModified = responseLastModified;
+      const rawPageCount = Number(response.headers?.['x-pages'] ?? 1);
+      pageCount = security.requireInteger(rawPageCount, 'ESI asset page count', {
+        min: 1,
+        max: 1000,
+      });
+    } else if (
+      assetLastModified !== null
+      && responseLastModified !== null
+      && responseLastModified !== assetLastModified
+    ) {
+      throw new Error('ESI assets changed during fitting capture; please retry');
+    }
+    for (const asset of assets) {
+      if (
+        asset.location_id === ship.ship_item_id
+        && asset.location_type === 'item'
+        && (
+          /^(HiSlot|MedSlot|LoSlot|RigSlot|SubSystemSlot)\d$/.test(asset.location_flag)
+          || asset.location_flag === 'DroneBay'
+        )
+      ) {
+        fittedItems.push({
+          type_id: asset.type_id,
+          quantity: Math.max(1, asset.quantity),
+          flag: asset.location_flag,
+        });
+      }
+    }
+  }
+
+  return security.validateEsiFitting({
+    ship_type_id: ship.ship_type_id,
+    items: fittedItems,
+  });
 }
 
 async function getImplants(characterId, accessToken) {

@@ -15,6 +15,32 @@
     'default_tier',
     'default_weather',
   ]);
+  const ESI_CAPABILITY_DEFINITIONS = Object.freeze({
+    tracking: Object.freeze({
+      scopes: Object.freeze([
+        'esi-location.read_location.v1',
+        'esi-location.read_ship_type.v1',
+      ]),
+    }),
+    fitting: Object.freeze({
+      scopes: Object.freeze([
+        'esi-location.read_ship_type.v1',
+        'esi-assets.read_assets.v1',
+      ]),
+    }),
+    implants: Object.freeze({
+      scopes: Object.freeze([
+        'esi-clones.read_implants.v1',
+      ]),
+    }),
+  });
+  const ESI_CAPABILITY_IDS = new Set(Object.keys(ESI_CAPABILITY_DEFINITIONS));
+  const KNOWN_ESI_SCOPES = new Set([
+    ...Object.values(ESI_CAPABILITY_DEFINITIONS).flatMap(definition => definition.scopes),
+    // Accepted only for tokens issued by older AbyssLog releases.
+    'esi-location.read_online.v1',
+    'esi-fittings.read_fittings.v1',
+  ]);
   const RUN_TIERS = new Set(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'Unknown']);
   const RUN_WEATHERS = new Set([
     'Electrical',
@@ -177,6 +203,43 @@
       throw new TypeError('Default weather is invalid');
     }
     return stringValue;
+  }
+
+  function validateEsiCapabilitySelection(value) {
+    const capabilities = requireArray(value, 'ESI capabilities', ESI_CAPABILITY_IDS.size)
+      .map((capability, index) =>
+        requireEnum(capability, `ESI capability ${index + 1}`, ESI_CAPABILITY_IDS));
+    if (new Set(capabilities).size !== capabilities.length) {
+      throw new TypeError('ESI capabilities must not contain duplicates');
+    }
+    return Object.keys(ESI_CAPABILITY_DEFINITIONS)
+      .filter(capability => capabilities.includes(capability));
+  }
+
+  function getEsiScopesForCapabilities(value) {
+    const capabilities = validateEsiCapabilitySelection(value);
+    return [...new Set(capabilities.flatMap(
+      capability => ESI_CAPABILITY_DEFINITIONS[capability].scopes
+    ))];
+  }
+
+  function validateEsiScopes(value) {
+    const scopes = requireArray(value, 'ESI scopes', KNOWN_ESI_SCOPES.size)
+      .map((scope, index) => requireEnum(scope, `ESI scope ${index + 1}`, KNOWN_ESI_SCOPES));
+    if (new Set(scopes).size !== scopes.length) {
+      throw new TypeError('ESI scopes must not contain duplicates');
+    }
+    return [...scopes];
+  }
+
+  function getEsiCapabilitiesForScopes(value) {
+    const grantedScopes = new Set(validateEsiScopes(value));
+    return Object.fromEntries(Object.entries(ESI_CAPABILITY_DEFINITIONS).map(
+      ([capability, definition]) => [
+        capability,
+        definition.scopes.every(scope => grantedScopes.has(scope)),
+      ]
+    ));
   }
 
   function validateAppraisalItems(items) {
@@ -368,11 +431,43 @@
   function validateEsiShip(value) {
     if (!isPlainObject(value)) throw new TypeError('ESI ship response is invalid');
     return {
+      ship_item_id: requireInteger(value.ship_item_id, 'Ship item ID'),
       ship_type_id: requireInteger(value.ship_type_id, 'Ship type ID'),
       ship_name: requireText(value.ship_name ?? '', 'Ship name', 256, {
         multiline: false,
       }),
     };
+  }
+
+  function validateEsiAssets(value) {
+    return requireArray(value, 'ESI assets', 1000).map((item, index) => {
+      if (!isPlainObject(item)) throw new TypeError(`ESI asset ${index + 1} is invalid`);
+      if (typeof item.is_singleton !== 'boolean') {
+        throw new TypeError(`ESI asset ${index + 1} singleton status must be a boolean`);
+      }
+      return {
+        item_id: requireInteger(item.item_id, `ESI asset ${index + 1} item ID`),
+        location_id: requireInteger(item.location_id, `ESI asset ${index + 1} location ID`),
+        location_type: requireText(
+          item.location_type,
+          `ESI asset ${index + 1} location type`,
+          32,
+          { multiline: false }
+        ),
+        location_flag: requireText(
+          item.location_flag,
+          `ESI asset ${index + 1} location flag`,
+          64,
+          { multiline: false }
+        ),
+        type_id: requireInteger(item.type_id, `ESI asset ${index + 1} type ID`),
+        quantity: requireInteger(item.quantity, `ESI asset ${index + 1} quantity`, {
+          min: -2,
+          max: 1_000_000_000,
+        }),
+        is_singleton: item.is_singleton,
+      };
+    });
   }
 
   function validateEsiFitting(value) {
@@ -616,9 +711,12 @@
   }
 
   return {
+    ESI_CAPABILITY_DEFINITIONS,
     PUBLIC_SETTING_KEYS,
     escapeCsvCell,
     escapeHtml,
+    getEsiCapabilitiesForScopes,
+    getEsiScopesForCapabilities,
     isAllowedExternalUrl,
     isPlainObject,
     parseOAuthCallback,
@@ -632,11 +730,14 @@
     validateAppraisalItems,
     validateAppraisalUpdate,
     validateCargoUpdate,
+    validateEsiAssets,
+    validateEsiCapabilitySelection,
     validateEsiFitting,
     validateEsiImplants,
     validateEsiLocation,
     validateEsiNames,
     validateEsiShip,
+    validateEsiScopes,
     validateEsiSystem,
     validateEsiTokenIdentity,
     validateEsiType,

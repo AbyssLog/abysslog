@@ -146,3 +146,21 @@ test('HTTP client does not retry authentication failures', async () => {
   );
   assert.equal(transport.requests.length, 1);
 });
+
+test('HTTP client exposes bounded response metadata only when requested', async () => {
+  const client = createHttpClient({
+    transport: createTransport([{
+      statusCode: 200,
+      headers: { 'x-pages': '3' },
+      data: [{ id: 1 }],
+    }]),
+  });
+
+  assert.deepEqual(await client.requestJson('https://example.test/assets', {
+    includeResponseMetadata: true,
+  }), {
+    data: [{ id: 1 }],
+    headers: { 'x-pages': '3' },
+    statusCode: 200,
+  });
+});

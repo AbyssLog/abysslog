@@ -6,7 +6,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 
 - **ESI auto-detection** — polls every 5 seconds, auto-starts/stops timer on abyssal entry/exit
 - **Ship loss detection** — detects pod on exit, triggers loss appraisal automatically
-- **Fitting & implant capture** — captures ship fit and pod implants at run start for loss valuation
+- **Optional fitting & implant capture** — captures authorized loss details at run start for loss valuation
 - **Cargo diffing** — paste pre/post cargo, app diffs to separate loot gained from items consumed
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
 - **Run history** — filterable, sortable table with net ISK and total loss columns
@@ -26,7 +26,13 @@ Unsigned preview builds for Windows, macOS, and Linux are available from the [Gi
 
 ### 2. EVE Online Sign-In
 
-AbyssLog includes its EVE OAuth client configuration. Use **Add Character** in Settings and approve the requested ESI scopes in the browser.
+AbyssLog includes its EVE OAuth client configuration. Use **Add Character** in Settings, choose the features you want, and approve their ESI permissions in the browser:
+
+- **Automatic run tracking** reads the current solar system and active ship type.
+- **Ship fitting loss capture** reads character assets and the active ship type.
+- **Implant loss capture** reads the active clone's implants.
+
+These choices are stored per character. You can change them later with **Permissions** in Settings. Selecting no optional features leaves manual run entry available without ESI data access.
 
 ### 3. Janice API Key
 
@@ -47,7 +53,7 @@ Janice API keys are available by filing a ticket in the [Janice Discord](https:/
 1. **Awaiting** — paste your pre-run cargo hold contents, select tier and weather
 2. **In Abyss** — ESI detects entry, timer starts automatically
 3. **Survived** — ESI detects exit, timer stops. Paste post-run cargo, click **Appraise Loot**, review, click **Save Run**
-4. **Died** — ESI detects pod, loss is appraised automatically from pre-run cargo + fitting + implants. Click **Save Run**
+4. **Died** — ESI detects pod, then appraises pre-run cargo and any fitting or implant details you authorized. Click **Save Run**
 
 After saving a survived run, your post-run cargo is automatically promoted to pre-run cargo for the next run.
 

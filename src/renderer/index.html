@@ -230,6 +230,15 @@ input, select, textarea { font-family: var(--font); }
 .char-info { flex: 1; }
 .char-name { font-size: 13px; font-weight: 500; }
 .char-id { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+.capability-list { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.capability-badge { padding: 2px 5px; border: 1px solid var(--border-bright); color: var(--text-dim); font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; }
+.capability-badge.enabled { border-color: var(--cyan-dim); color: var(--cyan); }
+.permission-list { display: grid; gap: 8px; margin: 14px 0 18px; }
+.permission-choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; }
+.permission-choice:hover { border-color: var(--border-bright); }
+.permission-choice input { margin-top: 2px; accent-color: var(--cyan); }
+.permission-title { color: var(--text); font-size: 12px; font-weight: 600; }
+.permission-note { color: var(--text-dim); font-size: 11px; line-height: 1.5; margin-top: 2px; }
 
 /* ── Modal ────────────────────────────────────────────────────────────── */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; align-items: center; justify-content: center; z-index: 200; }
@@ -618,13 +627,37 @@ input, select, textarea { font-family: var(--font); }
 <div class="modal-overlay" id="addCharModal">
   <div class="modal">
     <div class="modal-title">
-      Add Character
+      <span id="addCharModalTitle">Add Character</span>
       <button class="modal-close" data-action="close-modal" data-modal="addCharModal">✕</button>
     </div>
     <p style="color:var(--text-dim);margin-bottom:16px;font-size:13px;line-height:1.7">
-      Click the button below to open EVE Online SSO in your browser. After authorising,
-      the app will detect the callback automatically.
+      Choose which features this character may use. EVE SSO will show the corresponding
+      permissions before you approve them.
     </p>
+    <div class="permission-list">
+      <label class="permission-choice">
+        <input type="checkbox" id="permissionTracking" checked>
+        <span>
+          <span class="permission-title">Automatic run tracking</span>
+          <span class="permission-note">Reads your current solar system and active ship type to detect Abyssal entry, exit, and ship loss.</span>
+        </span>
+      </label>
+      <label class="permission-choice">
+        <input type="checkbox" id="permissionFitting">
+        <span>
+          <span class="permission-title">Ship fitting loss capture</span>
+          <span class="permission-note">Reads character assets to capture the active ship's hull, fitted modules, rigs, and drones. This permission can also reveal your other character assets to the app.</span>
+        </span>
+      </label>
+      <label class="permission-choice">
+        <input type="checkbox" id="permissionImplants">
+        <span>
+          <span class="permission-title">Implant loss capture</span>
+          <span class="permission-note">Reads the implants installed in the character's active clone.</span>
+        </span>
+      </label>
+    </div>
+    <div id="permissionSummary" class="field-note" style="margin-bottom:14px"></div>
     <button class="btn gold" data-action="start-sso"><span id="ssoSpinner" style="display:none" class="spinner"></span>Login with EVE SSO</button>
     <div id="ssoStatus" style="margin-top:12px;font-size:12px;color:var(--text-dim)"></div>
   </div>

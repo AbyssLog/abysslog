@@ -19,13 +19,13 @@ const security = require('../shared/security');
 
 const CLIENT_ID = 'c74d7418579645ebbad0665c93e47900';
 const OAUTH_REDIRECT_URI = 'eveauth-abysslog://callback';
-const OAUTH_SCOPES = [
+const LEGACY_OAUTH_SCOPES = [
   'esi-location.read_location.v1',
   'esi-location.read_ship_type.v1',
   'esi-location.read_online.v1',
   'esi-fittings.read_fittings.v1',
   'esi-clones.read_implants.v1',
-].join(' ');
+];
 const SECRET_PREFIX = 'safe:v1:';
 const JANICE_SECRET_KEY = 'secret_janice_api_key';
 const MAX_IPC_JSON_BYTES = 2 * 1024 * 1024;
@@ -100,7 +100,13 @@ function saveTokens(characterId, tokens) {
     min: Date.now() - 60_000,
     max: Number.MAX_SAFE_INTEGER,
   });
-  const safeTokens = { access_token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
+  const scopes = security.validateEsiScopes(tokens.scopes);
+  const safeTokens = {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_at: expiresAt,
+    scopes,
+  };
   db.setSetting(tokenKey(characterId), encryptSecret(JSON.stringify(safeTokens)));
 }
 
@@ -110,6 +116,9 @@ function loadTokens(characterId) {
   try {
     const tokens = JSON.parse(json);
     if (!security.isPlainObject(tokens)) return null;
+    const scopes = tokens.scopes == null
+      ? [...LEGACY_OAUTH_SCOPES]
+      : security.validateEsiScopes(tokens.scopes);
     return {
       access_token: security.requireString(tokens.access_token, 'Access token', 16 * 1024),
       refresh_token: security.requireString(tokens.refresh_token, 'Refresh token', 16 * 1024),
@@ -117,6 +126,7 @@ function loadTokens(characterId) {
         min: 0,
         max: Number.MAX_SAFE_INTEGER,
       }),
+      scopes,
     };
   } catch {
     return null;
@@ -201,25 +211,34 @@ function safeEqual(left, right) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-async function startSso() {
+function getCharacterCapabilities(characterId) {
+  const tokens = loadTokens(characterId);
+  return tokens
+    ? security.getEsiCapabilitiesForScopes(tokens.scopes)
+    : { tracking: false, fitting: false, implants: false };
+}
+
+async function startSso(selectedCapabilities) {
   if (!isSecureStorageAvailable()) {
     throw new Error('Secure credential storage is required before adding a character');
   }
 
+  const capabilities = security.validateEsiCapabilitySelection(selectedCapabilities);
+  const scopes = security.getEsiScopesForCapabilities(capabilities);
   const verifier = base64Url(crypto.randomBytes(32));
   const challenge = base64Url(crypto.createHash('sha256').update(verifier).digest());
   const state = base64Url(crypto.randomBytes(32));
-  pendingAuth = { verifier, state, createdAt: Date.now() };
+  pendingAuth = { verifier, state, scopes, createdAt: Date.now() };
 
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: CLIENT_ID,
     redirect_uri: OAUTH_REDIRECT_URI,
-    scope: OAUTH_SCOPES,
     code_challenge: challenge,
     code_challenge_method: 'S256',
     state,
   });
+  if (scopes.length > 0) params.set('scope', scopes.join(' '));
   const authorizationUrl = `https://login.eveonline.com/v2/oauth/authorize?${params}`;
   if (!security.isAllowedExternalUrl(authorizationUrl)) throw new Error('OAuth destination is not allowed');
   await shell.openExternal(authorizationUrl);
@@ -252,6 +271,7 @@ async function handleOAuthCallback(callbackUrl) {
       min: 1,
       max: 86_400,
     }) * 1000;
+    tokens.scopes = transaction.scopes;
 
     const accessToken = security.requireString(tokens.access_token, 'Access token', 16 * 1024);
     const characterInfo = await esi.verifyToken(accessToken);
@@ -272,8 +292,12 @@ async function handleOAuthCallback(callbackUrl) {
   }
 }
 
-async function withCharacterToken(characterId, operation) {
+async function withCharacterCapability(characterId, capability, operation) {
   const id = security.requireInteger(characterId, 'Character ID');
+  const capabilities = getCharacterCapabilities(id);
+  if (!capabilities[capability]) {
+    throw new Error(`Character authorization does not include the ${capability} capability`);
+  }
   return tokenCoordinator.runWithToken(id, operation);
 }
 
@@ -363,7 +387,9 @@ app.on('activate', () => {
 
 secureHandle('auth:get-characters', () => db.getCharacters());
 secureHandle('auth:has-tokens', characterId => Boolean(loadTokens(characterId)));
-secureHandle('auth:start-sso', () => startSso());
+secureHandle('auth:get-capabilities', characterId =>
+  getCharacterCapabilities(security.requireInteger(characterId, 'Character ID')));
+secureHandle('auth:start-sso', selectedCapabilities => startSso(selectedCapabilities));
 secureHandle('auth:delete-character', characterId => {
   const id = security.requireInteger(characterId, 'Character ID');
   db.deleteSetting(tokenKey(id));
@@ -393,13 +419,13 @@ secureHandle('secrets:delete-janice-key', () => {
 });
 
 secureHandle('esi:get-location', characterId =>
-  withCharacterToken(characterId, (id, token) => esi.getLocation(id, token)));
+  withCharacterCapability(characterId, 'tracking', (id, token) => esi.getLocation(id, token)));
 secureHandle('esi:get-ship', characterId =>
-  withCharacterToken(characterId, (id, token) => esi.getShip(id, token)));
+  withCharacterCapability(characterId, 'tracking', (id, token) => esi.getShip(id, token)));
 secureHandle('esi:get-fitting', characterId =>
-  withCharacterToken(characterId, (id, token) => esi.getFitting(id, token)));
+  withCharacterCapability(characterId, 'fitting', (id, token) => esi.getFitting(id, token)));
 secureHandle('esi:get-implants', characterId =>
-  withCharacterToken(characterId, (id, token) => esi.getImplants(id, token)));
+  withCharacterCapability(characterId, 'implants', (id, token) => esi.getImplants(id, token)));
 secureHandle('esi:get-type-names', typeIds => {
   if (!Array.isArray(typeIds) || typeIds.length > 1000) throw new TypeError('Type ID list is invalid');
   return esi.getTypeNames(typeIds.map(id => security.requireInteger(id, 'Type ID')));

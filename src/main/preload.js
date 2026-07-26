@@ -4,7 +4,8 @@ contextBridge.exposeInMainWorld('api', {
   auth: {
     getCharacters: () => ipcRenderer.invoke('auth:get-characters'),
     hasTokens: characterId => ipcRenderer.invoke('auth:has-tokens', characterId),
-    startSso: () => ipcRenderer.invoke('auth:start-sso'),
+    getCapabilities: characterId => ipcRenderer.invoke('auth:get-capabilities', characterId),
+    startSso: capabilities => ipcRenderer.invoke('auth:start-sso', capabilities),
     deleteCharacter: characterId => ipcRenderer.invoke('auth:delete-character', characterId),
     onComplete: callback => {
       const listener = (_event, character) => callback(character);

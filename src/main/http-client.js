@@ -176,6 +176,7 @@ function createHttpClient({
     timeoutMs = DEFAULT_TIMEOUT_MS,
     retries = 2,
     retryBaseMs = 250,
+    includeResponseMetadata = false,
   } = {}) {
     if (!Number.isSafeInteger(retries) || retries < 0 || retries > 5) {
       throw new TypeError('HTTP retries must be an integer between 0 and 5');
@@ -185,6 +186,9 @@ function createHttpClient({
     }
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
       throw new TypeError('HTTP timeout must be a positive integer');
+    }
+    if (typeof includeResponseMetadata !== 'boolean') {
+      throw new TypeError('HTTP response metadata option must be a boolean');
     }
 
     for (let attempt = 0; ; attempt++) {
@@ -199,7 +203,7 @@ function createHttpClient({
           timeoutMs,
         });
         updateRateLimit(result.headers);
-        return result.data;
+        return includeResponseMetadata ? result : result.data;
       } catch (error) {
         updateRateLimit(error.headers);
         if (!(error instanceof HttpError) || !error.retryable || attempt >= retries) {

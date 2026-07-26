@@ -5,6 +5,8 @@ const S = {
   characters: [],
   activeCharId: null,
   hasAuth: false,
+  capabilities: { tracking: false, fitting: false, implants: false },
+  characterCapabilities: {},
   hasJaniceKey: false,
   secureStorage: { available: false, backend: 'unknown' },
   dataStatus: null,
@@ -31,6 +33,7 @@ async function init() {
     window.api.secrets.hasJaniceKey(),
     window.api.data.getStatus(),
   ]);
+  await refreshCharacterCapabilities();
 
   loadSettingsPage();
   await populateCharSelect();
@@ -59,6 +62,26 @@ function showPage(name) {
 }
 
 // ── Character Management ──────────────────────────────────────────────────
+function normalizeCapabilities(value) {
+  return {
+    tracking: value?.tracking === true,
+    fitting: value?.fitting === true,
+    implants: value?.implants === true,
+  };
+}
+
+async function refreshCharacterCapabilities() {
+  const entries = await Promise.all(S.characters.map(async character => {
+    try {
+      const capabilities = await window.api.auth.getCapabilities(character.id);
+      return [character.id, normalizeCapabilities(capabilities)];
+    } catch {
+      return [character.id, normalizeCapabilities(null)];
+    }
+  }));
+  S.characterCapabilities = Object.fromEntries(entries);
+}
+
 async function populateCharSelect() {
   const sel = document.getElementById('charSelect');
   sel.innerHTML = '<option value="">No character</option>';
@@ -94,7 +117,7 @@ async function performCharacterSwitch(charId, save = true) {
       await persistActiveRun();
     } catch (error) {
       run.suspended = false;
-      if (S.hasAuth) startESIPoll();
+      if (S.capabilities.tracking) startESIPoll();
       throw error;
     }
   }
@@ -109,6 +132,8 @@ async function performCharacterSwitch(charId, save = true) {
   document.getElementById('charSelect').value = normalizedCharacterId || '';
 
   if (!normalizedCharacterId) {
+    S.hasAuth = false;
+    S.capabilities = normalizeCapabilities(null);
     showNoCharPrompt();
     return;
   }
@@ -116,6 +141,10 @@ async function performCharacterSwitch(charId, save = true) {
   if (save) await window.api.settings.set('active_character', normalizedCharacterId);
 
   S.hasAuth = await window.api.auth.hasTokens(normalizedCharacterId);
+  S.capabilities = S.hasAuth
+    ? normalizeCapabilities(await window.api.auth.getCapabilities(normalizedCharacterId))
+    : normalizeCapabilities(null);
+  S.characterCapabilities[normalizedCharacterId] = S.capabilities;
 
   document.getElementById('no-char-prompt').style.display = 'none';
   document.getElementById('tracker-ui').style.display = 'block';
@@ -125,12 +154,15 @@ async function performCharacterSwitch(charId, save = true) {
   const restored = await restoreActiveRun(normalizedCharacterId);
   resetTransitionTracker(restored?.state === 'in-abyss' ? 'inside' : 'outside');
 
-  if (S.hasAuth) {
+  if (S.capabilities.tracking) {
     startESIPoll();
     document.getElementById('statusDot').className = 'status-dot online';
   } else {
     document.getElementById('statusDot').className = 'status-dot';
-    document.getElementById('hudEsiVal').textContent = 'No Token';
+    document.getElementById('hudEsiVal').textContent = S.hasAuth ? 'Manual Mode' : 'No Token';
+    document.getElementById('hudEsiVal').title = S.hasAuth
+      ? 'Automatic tracking was not authorized for this character'
+      : '';
   }
 
   renderCharList();
@@ -151,7 +183,7 @@ async function startSSO() {
   try {
     document.getElementById('ssoStatus').textContent = 'Browser opened — waiting for authorisation...';
     document.getElementById('ssoSpinner').style.display = 'inline-block';
-    await window.api.auth.startSso();
+    await window.api.auth.startSso(getSelectedCapabilities());
   } catch (error) {
     document.getElementById('ssoStatus').textContent = 'Error: ' + error.message;
     document.getElementById('ssoSpinner').style.display = 'none';
@@ -160,6 +192,7 @@ async function startSSO() {
 
 async function handleAuthComplete(character) {
   S.characters = await window.api.auth.getCharacters();
+  await refreshCharacterCapabilities();
   await populateCharSelect();
   await switchCharacter(character.id);
   document.getElementById('ssoStatus').textContent = `✓ Logged in as ${character.name}`;
@@ -188,7 +221,7 @@ function isCurrentPoll(generation, characterId) {
   return (
     generation === S.pollGeneration
     && characterId === S.activeCharId
-    && S.hasAuth
+    && S.capabilities.tracking
   );
 }
 
@@ -486,20 +519,36 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
 async function captureActiveRunDetails(run, shipTypeId) {
   const characterId = run.character_id;
   try {
-    const [shipClass, fitData, implantIds] = await Promise.all([
-      classifyShip(shipTypeId),
-      S.hasAuth ? window.api.esi.getFitting(characterId) : null,
-      S.hasAuth ? window.api.esi.getImplants(characterId) : [],
+    const capabilities = { ...S.capabilities };
+    const [fitResult, implantResult] = await Promise.allSettled([
+      capabilities.fitting
+        ? window.api.esi.getFitting(characterId)
+        : Promise.resolve(null),
+      capabilities.implants
+        ? window.api.esi.getImplants(characterId)
+        : Promise.resolve(null),
     ]);
     if (S.activeRun !== run || run.finalizing || run.suspended) return;
-    run.ship_class = shipClass;
+    const fitData = fitResult.status === 'fulfilled' ? fitResult.value : null;
+    const implantIds = implantResult.status === 'fulfilled' && implantResult.value
+      ? implantResult.value
+      : [];
+    const resolvedShipTypeId = fitData?.ship_type_id || shipTypeId;
+    run.ship_class = await classifyShip(resolvedShipTypeId);
+    if (S.activeRun !== run || run.finalizing || run.suspended) return;
+
+    const typeIds = [
+      ...(fitData
+        ? [fitData.ship_type_id, ...fitData.items.map(item => item.type_id)]
+        : []),
+      ...implantIds,
+    ];
+    const typeNames = typeIds.length > 0
+      ? await window.api.esi.getTypeNames([...new Set(typeIds)])
+      : {};
+    if (S.activeRun !== run || run.finalizing || run.suspended) return;
 
     if (fitData) {
-      const fitTypeIds = [fitData.ship_type_id, ...fitData.items.map(i => i.type_id)];
-      const allTypeIds = [...new Set([...fitTypeIds, ...implantIds])];
-      const typeNames = await window.api.esi.getTypeNames(allTypeIds);
-      if (S.activeRun !== run || run.finalizing || run.suspended) return;
-
       run.ship_name = typeNames[fitData.ship_type_id] || run.ship_name;
       run.fitting = [
         { type_id: fitData.ship_type_id, type_name: typeNames[fitData.ship_type_id] || `Type ${fitData.ship_type_id}`, qty: 1, slot: 'hull' },
@@ -510,12 +559,28 @@ async function captureActiveRunDetails(run, shipTypeId) {
           slot: i.flag || 'unknown'
         }))
       ];
+    }
+    if (implantResult.status === 'fulfilled' && implantResult.value) {
       run.implants = implantIds.map(id => ({
         type_id: id,
         type_name: typeNames[id] || `Type ${id}`,
       }));
-      run.fitCaptured = true;
+    }
+
+    const capturedFeatures = [];
+    if (fitResult.status === 'fulfilled' && fitResult.value) capturedFeatures.push('ship fitting');
+    if (implantResult.status === 'fulfilled' && implantResult.value) capturedFeatures.push('implants');
+    run.fitCaptured = capturedFeatures.length > 0;
+    if (run.fitCaptured) {
+      document.getElementById('fitCaptured').textContent =
+        `✓ ${capturedFeatures.join(' and ')} captured for loss tracking`;
       document.getElementById('fitCaptured').style.display = 'block';
+    }
+    if (fitResult.status === 'rejected') {
+      console.error('Failed to capture fitting:', fitResult.reason);
+    }
+    if (implantResult.status === 'rejected') {
+      console.error('Failed to capture implants:', implantResult.reason);
     }
     if (S.activeRun === run && !run.finalizing && !run.suspended) await persistActiveRun();
   } catch (e) {
@@ -1988,18 +2053,29 @@ function renderCharList() {
     el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">No characters added yet.</div>';
     return;
   }
-  el.innerHTML = S.characters.map(c => `
-    <div class="char-item">
-      <img class="char-portrait" src="${esc(characterPortraitUrl(c.portrait_url))}" alt="" data-hide-on-error>
-      <div class="char-info">
-        <div class="char-name">${esc(c.name)}</div>
-        <div class="char-id">${esc(c.id)}</div>
-      </div>
-      <div style="display:flex;gap:6px;margin-left:auto">
-        <button class="btn sm ghost" data-action="reauth-character" data-character-id="${esc(c.id)}">Re-authenticate</button>
-        <button class="btn sm red" data-action="remove-character" data-character-id="${esc(c.id)}">Remove</button>
-      </div>
-    </div>`).join('');
+  el.innerHTML = S.characters.map(c => {
+    const capabilities = normalizeCapabilities(S.characterCapabilities[c.id]);
+    const badges = [
+      ['tracking', 'Tracking'],
+      ['fitting', 'Fitting'],
+      ['implants', 'Implants'],
+    ].filter(([capability]) => capabilities[capability])
+      .map(([, label]) => `<span class="capability-badge enabled">${label}</span>`)
+      .join('');
+    return `
+      <div class="char-item">
+        <img class="char-portrait" src="${esc(characterPortraitUrl(c.portrait_url))}" alt="" data-hide-on-error>
+        <div class="char-info">
+          <div class="char-name">${esc(c.name)}</div>
+          <div class="char-id">${esc(c.id)}</div>
+          <div class="capability-list">${badges || '<span class="capability-badge">Manual only</span>'}</div>
+        </div>
+        <div style="display:flex;gap:6px;margin-left:auto">
+          <button class="btn sm ghost" data-action="reauth-character" data-character-id="${esc(c.id)}">Permissions</button>
+          <button class="btn sm red" data-action="remove-character" data-character-id="${esc(c.id)}">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function characterPortraitUrl(value) {
@@ -2012,13 +2088,14 @@ function characterPortraitUrl(value) {
 }
 
 async function reauthCharacter(charId) {
-  // Switch to this character, open SSO modal and trigger login
-  // Existing run data is preserved — only tokens are replaced
+  // Existing run data is preserved; only the authorization is replaced.
   await switchCharacter(charId);
-  showPage('tracker');
+  document.getElementById('addCharModalTitle').textContent = 'Character Permissions';
+  setSelectedCapabilities(S.characterCapabilities[charId]);
+  document.getElementById('ssoSpinner').style.display = 'none';
+  document.getElementById('ssoStatus').textContent =
+    'Adjust the features, then continue to EVE SSO to replace this character authorization.';
   openModal('addCharModal');
-  document.getElementById('ssoStatus').textContent = 'Re-authenticating — your run history will be kept.';
-  startSSO();
 }
 
 async function removeCharacter(charId) {
@@ -2031,6 +2108,7 @@ async function removeCharacter(charId) {
   }
   await window.api.auth.deleteCharacter(charId);
   S.characters = await window.api.auth.getCharacters();
+  await refreshCharacterCapabilities();
   await populateCharSelect();
   renderCharList();
   if (String(S.activeCharId) === String(charId)) {
@@ -2095,7 +2173,39 @@ function openExternal(url) {
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-function openAddCharModal() { openModal('addCharModal'); }
+
+function getSelectedCapabilities() {
+  return [
+    ['tracking', 'permissionTracking'],
+    ['fitting', 'permissionFitting'],
+    ['implants', 'permissionImplants'],
+  ].filter(([, id]) => document.getElementById(id).checked)
+    .map(([capability]) => capability);
+}
+
+function setSelectedCapabilities(capabilities) {
+  const selected = normalizeCapabilities(capabilities);
+  document.getElementById('permissionTracking').checked = selected.tracking;
+  document.getElementById('permissionFitting').checked = selected.fitting;
+  document.getElementById('permissionImplants').checked = selected.implants;
+  updatePermissionSummary();
+}
+
+function updatePermissionSummary() {
+  const selected = getSelectedCapabilities();
+  const summary = document.getElementById('permissionSummary');
+  summary.textContent = selected.length === 0
+    ? 'No ESI data permissions will be requested. This character can use manual run entry only.'
+    : `${selected.length} optional feature${selected.length === 1 ? '' : 's'} selected. EVE SSO requires approval for every corresponding permission.`;
+}
+
+function openAddCharModal() {
+  document.getElementById('addCharModalTitle').textContent = 'Add Character';
+  document.getElementById('ssoStatus').textContent = '';
+  document.getElementById('ssoSpinner').style.display = 'none';
+  setSelectedCapabilities({ tracking: true, fitting: false, implants: false });
+  openModal('addCharModal');
+}
 
 document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
@@ -2148,7 +2258,9 @@ document.addEventListener('click', event => {
 
 document.addEventListener('change', event => {
   const element = event.target;
-  if (element.dataset.changeAction === 'switch-character') {
+  if (['permissionTracking', 'permissionFitting', 'permissionImplants'].includes(element.id)) {
+    updatePermissionSummary();
+  } else if (element.dataset.changeAction === 'switch-character') {
     void switchCharacter(element.value).catch(error => {
       console.error('Character switch failed:', error);
     });

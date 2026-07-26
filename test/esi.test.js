@@ -69,6 +69,64 @@ test('ESI caches stable system and type metadata', async () => {
   assert.deepEqual(JSON.parse(calls[2].options.body), [12_345]);
 });
 
+test('ESI derives the active fitting from paginated character assets', async () => {
+  responses.push({
+    ship_item_id: 9001,
+    ship_name: 'Reliable Gila',
+    ship_type_id: 17_918,
+  });
+  responses.push({
+    data: [
+      {
+        item_id: 101,
+        is_singleton: true,
+        location_flag: 'HiSlot0',
+        location_id: 9001,
+        location_type: 'item',
+        quantity: 1,
+        type_id: 12_345,
+      },
+      {
+        item_id: 102,
+        is_singleton: false,
+        location_flag: 'Cargo',
+        location_id: 9001,
+        location_type: 'item',
+        quantity: 50,
+        type_id: 34,
+      },
+    ],
+    headers: { 'x-pages': '2' },
+    statusCode: 200,
+  });
+  responses.push({
+    data: [{
+      item_id: 103,
+      is_singleton: false,
+      location_flag: 'DroneBay',
+      location_id: 9001,
+      location_type: 'item',
+      quantity: 5,
+      type_id: 21_638,
+    }],
+    headers: { 'x-pages': '2' },
+    statusCode: 200,
+  });
+
+  assert.deepEqual(await esi.getFitting(123, 'token'), {
+    ship_type_id: 17_918,
+    items: [
+      { flag: 'HiSlot0', quantity: 1, type_id: 12_345 },
+      { flag: 'DroneBay', quantity: 5, type_id: 21_638 },
+    ],
+  });
+  assert.match(calls[0].url, /\/characters\/123\/ship\/$/);
+  assert.match(calls[1].url, /\/characters\/123\/assets\/\?page=1$/);
+  assert.match(calls[2].url, /\/characters\/123\/assets\/\?page=2$/);
+  assert.equal(calls[1].options.includeResponseMetadata, true);
+  assert.equal(calls[1].options.headers['X-Compatibility-Date'], '2026-07-25');
+});
+
 test('OAuth token calls disable automatic replay and validate refresh tokens', async () => {
   responses.push({
     access_token: 'access',
