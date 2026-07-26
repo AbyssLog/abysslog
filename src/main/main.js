@@ -4,13 +4,21 @@ const {
   dialog,
   ipcMain,
   Menu,
+  net,
+  protocol,
   safeStorage,
   shell,
 } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
+const {
+  APP_PROTOCOL_SCHEME,
+  APP_RENDERER_URL,
+  resolveAppAssetPath,
+} = require('./app-protocol');
 const db = require('./database');
 const esi = require('./esi');
 const janice = require('./janice');
@@ -33,6 +41,16 @@ const MAX_CSV_BYTES = 10 * 1024 * 1024;
 
 let mainWindow;
 let pendingAuth = null;
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: APP_PROTOCOL_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    codeCache: true,
+  },
+}]);
 
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
@@ -295,7 +313,19 @@ async function withCharacterCapability(characterId, capability, operation) {
   return tokenCoordinator.runWithToken(id, operation);
 }
 
-function createWindow() {
+function registerAppProtocol() {
+  const appRoot = app.getAppPath();
+  protocol.handle(APP_PROTOCOL_SCHEME, request => {
+    if (request.method !== 'GET') {
+      return new Response('Method not allowed', { status: 405 });
+    }
+    const assetPath = resolveAppAssetPath(appRoot, request.url);
+    if (!assetPath) return new Response('Not found', { status: 404 });
+    return net.fetch(pathToFileURL(assetPath).toString());
+  });
+}
+
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -317,8 +347,6 @@ function createWindow() {
       : path.join(__dirname, '../../assets/icon.png'),
   });
 
-  const rendererFile = path.join(__dirname, '../renderer/index.html');
-  mainWindow.loadFile(rendererFile);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
     if (targetUrl !== mainWindow.webContents.getURL()) event.preventDefault();
@@ -331,6 +359,7 @@ function createWindow() {
     mainWindow = null;
     pendingAuth = null;
   });
+  await mainWindow.loadURL(APP_RENDERER_URL);
 }
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -346,15 +375,16 @@ if (!gotTheLock) {
     if (callbackUrl) void handleOAuthCallback(callbackUrl);
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    registerAppProtocol();
     db.init();
     migrateLegacyJaniceKey();
     if (!db.getSetting('janice_api_key')) {
       db.hardenSensitiveStorage();
       db.finishStartup();
     }
-    createWindow();
+    await createWindow();
   }).catch(error => {
     const message = error instanceof Error ? error.message : 'Unknown startup error';
     dialog.showErrorBox('AbyssLog could not start safely', message);
@@ -376,7 +406,13 @@ app.on('before-quit', () => {
 });
 
 app.on('activate', () => {
-  if (mainWindow === null) createWindow();
+  if (mainWindow === null) {
+    void createWindow().catch(error => {
+      const message = error instanceof Error ? error.message : 'Unknown startup error';
+      dialog.showErrorBox('AbyssLog could not open its window', message);
+      app.quit();
+    });
+  }
 });
 
 secureHandle('auth:get-characters', () => db.getCharacters());

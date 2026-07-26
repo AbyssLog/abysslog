@@ -499,6 +499,10 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.deepEqual([...invokedChannels].sort(), [...handlerChannels].sort());
   assert.match(main, /sandbox:\s*true/);
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
+  assert.match(main, /protocol\.registerSchemesAsPrivileged/);
+  assert.match(main, /protocol\.handle\(APP_PROTOCOL_SCHEME/);
+  assert.match(main, /await mainWindow\.loadURL\(APP_RENDERER_URL\)/);
+  assert.doesNotMatch(main, /\.loadFile\(/);
   assert.match(main, /if \(!validateIpcSender\(event\)\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);

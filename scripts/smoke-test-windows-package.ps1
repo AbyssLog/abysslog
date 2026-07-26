@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$AppPath,
+  [string]$NodePath = 'node',
   [ValidateRange(5, 120)]
   [int]$TimeoutSeconds = 30
 )
@@ -45,6 +46,7 @@ if (($smokeParent -ne $tempRoot) -or (-not $hasSafeName)) {
 
 $databasePath = Join-Path $normalizedSmokeDirectory 'abysslog.db'
 $backupDirectory = Join-Path $normalizedSmokeDirectory 'backups'
+$devToolsPortPath = Join-Path $normalizedSmokeDirectory 'DevToolsActivePort'
 $executableName = [IO.Path]::GetFileName($resolvedAppPath)
 $smokeProcess = $null
 
@@ -65,14 +67,16 @@ try {
   $profileArgument = "--user-data-dir=`"$normalizedSmokeDirectory`""
   $smokeProcess = Start-Process `
     -FilePath $resolvedAppPath `
-    -ArgumentList @($profileArgument, '--disable-gpu') `
+    -ArgumentList @($profileArgument, '--disable-gpu', '--remote-debugging-port=0') `
     -WindowStyle Hidden `
     -PassThru
 
   $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
   $databaseReady = $false
   $backupReady = $false
+  $rendererDebugReady = $false
   $processCount = 0
+  $startupReady = $false
 
   do {
     Start-Sleep -Milliseconds 250
@@ -91,22 +95,31 @@ try {
           -File `
           -ErrorAction SilentlyContinue
       ).Count -gt 0
+    $rendererDebugReady = Test-Path -LiteralPath $devToolsPortPath -PathType Leaf
     $processCount = @(Get-SmokeProcesses).Count
-  } while (
-    (-not $databaseReady -or -not $backupReady -or $processCount -lt 2) -and
-    [DateTime]::UtcNow -lt $deadline
-  )
+    $startupReady = $databaseReady `
+      -and $backupReady `
+      -and $rendererDebugReady `
+      -and $processCount -ge 2
+  } while (-not $startupReady -and [DateTime]::UtcNow -lt $deadline)
 
-  if (-not $databaseReady -or -not $backupReady -or $processCount -lt 2) {
+  if (-not $startupReady) {
     throw (
       'Packaged application did not finish a clean startup within ' +
       "$TimeoutSeconds seconds (database=$databaseReady, backup=$backupReady, " +
-      "processes=$processCount)"
+      "rendererDebug=$rendererDebugReady, processes=$processCount)"
     )
   }
 
+  $devToolsPort = Get-Content -LiteralPath $devToolsPortPath | Select-Object -First 1
+  $rendererVerifier = Join-Path $PSScriptRoot 'verify-packaged-renderer.js'
+  & $NodePath $rendererVerifier $devToolsPort
+  if ($LASTEXITCODE -ne 0) {
+    throw "Packaged renderer verification failed with exit code $LASTEXITCODE"
+  }
+
   Write-Host (
-    "Packaged application smoke test passed: database and backup created; " +
+    "Packaged application smoke test passed: renderer, database, and backup ready; " +
     "$processCount Electron processes running"
   )
 } finally {
