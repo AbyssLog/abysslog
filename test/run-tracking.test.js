@@ -6,7 +6,10 @@ const {
   createSingleFlight,
   createTokenCoordinator,
   createTransitionTracker,
+  diffInventoryPastes,
   inferAbyssalFilament,
+  mergeInventoryItems,
+  parseInventoryPaste,
 } = require('../src/shared/run-tracking');
 
 test('poll backoff grows exponentially and respects its cap', () => {
@@ -40,6 +43,40 @@ test('filament names infer tier and weather only when unambiguous', () => {
     { name: 'Calm Gamma Filament', qty: 1 },
     { name: 'Raging Firestorm Filament', qty: 1 },
   ]).ambiguous, true);
+});
+
+test('inventory pastes parse, merge, and diff cargo and drone stacks safely', () => {
+  assert.deepEqual(parseInventoryPaste([
+    'Vespa II\t5\tDrone',
+    'Vespa II x 2',
+    'Abyssal Loot\tMaterial',
+    '__proto__\t3\tMaterial',
+  ].join('\n')), [
+    { name: 'Vespa II', qty: 7 },
+    { name: 'Abyssal Loot', qty: 1 },
+    { name: '__proto__', qty: 3 },
+  ]);
+
+  assert.deepEqual(mergeInventoryItems(
+    [{ name: 'Vespa II', qty: 5 }],
+    [{ name: 'Vespa II', qty: 2 }, { name: 'Hammerhead II', qty: 1 }]
+  ), [
+    { name: 'Vespa II', qty: 7 },
+    { name: 'Hammerhead II', qty: 1 },
+  ]);
+
+  assert.deepEqual(diffInventoryPastes(
+    'Vespa II\t5\nNanite Repair Paste\t20',
+    'Vespa II\t4\nTriglavian Survey Database\t2'
+  ), {
+    gained: [{ name: 'Triglavian Survey Database', qty: 2 }],
+    consumed: [
+      { name: 'Vespa II', qty: 1 },
+      { name: 'Nanite Repair Paste', qty: 20 },
+    ],
+  });
+  assert.throws(() => parseInventoryPaste('Tritanium\t1,000,000,001'), /too large/);
+  assert.throws(() => mergeInventoryItems([{ name: 'Vespa II', qty: -1 }]), /invalid/);
 });
 
 test('single-flight work is shared per key and cleared after completion', async () => {

@@ -502,8 +502,8 @@ function getStats(characterId) {
       SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
       SUM(CASE WHEN outcome = 'Died' THEN 1 ELSE 0 END) as died,
       AVG(CASE WHEN outcome = 'Survived' THEN duration END) as avg_duration_survived,
-      AVG(CASE WHEN outcome = 'Survived' THEN net_isk END) as avg_net_isk,
-      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE 0 END) as total_net_isk,
+      AVG(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as avg_net_isk,
+      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as total_net_isk,
       AVG(CASE WHEN outcome = 'Died' THEN total_loss END) as avg_loss,
       SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss,
       MIN(started_at) as first_run,
@@ -516,7 +516,7 @@ function getStats(characterId) {
       COUNT(*) as total_runs,
       SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
       AVG(CASE WHEN outcome = 'Survived' THEN duration END) as avg_duration,
-      AVG(CASE WHEN outcome = 'Survived' THEN net_isk END) as avg_net_isk
+      AVG(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as avg_net_isk
     FROM runs ${where}
     GROUP BY tier ORDER BY tier
   `).all(...params);
@@ -525,21 +525,24 @@ function getStats(characterId) {
     SELECT weather,
       COUNT(*) as total_runs,
       SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-      AVG(CASE WHEN outcome = 'Survived' THEN net_isk END) as avg_net_isk
+      AVG(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as avg_net_isk
     FROM runs ${where}
     GROUP BY weather ORDER BY weather
   `).all(...params);
 
-  // ISK/hour based on last 20 survived runs
+  // Profit/hour based on the last 20 runs, including ship losses.
   const recentRuns = db.prepare(`
-    SELECT net_isk, duration FROM runs
-    ${where ? where + ' AND' : 'WHERE'} outcome = 'Survived' AND duration > 0
+    SELECT
+      CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END as profit,
+      duration
+    FROM runs
+    ${where ? where + ' AND' : 'WHERE'} duration > 0
     ORDER BY started_at DESC LIMIT 20
   `).all(...params);
 
   let iskPerHour = 0;
   if (recentRuns.length > 0) {
-    const totalIsk = recentRuns.reduce((s, r) => s + r.net_isk, 0);
+    const totalIsk = recentRuns.reduce((sum, run) => sum + run.profit, 0);
     const totalHours = recentRuns.reduce((s, r) => s + r.duration, 0) / 3600;
     iskPerHour = totalHours > 0 ? totalIsk / totalHours : 0;
   }
@@ -596,16 +599,19 @@ function getDailyStats(characterId) {
   const where = characterId ? 'WHERE character_id = ?' : '';
   const params = characterId ? [characterId] : [];
   return db.prepare(`
-    SELECT
-      date(started_at, 'unixepoch', 'localtime') as day,
-      COUNT(*) as total_runs,
-      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE 0 END) as net_isk,
-      SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss
-    FROM runs ${where}
-    GROUP BY day
+    SELECT * FROM (
+      SELECT
+        date(started_at, 'unixepoch', 'localtime') as day,
+        COUNT(*) as total_runs,
+        SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
+        SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as net_isk,
+        SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss
+      FROM runs ${where}
+      GROUP BY day
+      ORDER BY day DESC
+      LIMIT 60
+    )
     ORDER BY day ASC
-    LIMIT 60
   `).all(...params);
 }
 

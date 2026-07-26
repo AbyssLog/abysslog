@@ -238,11 +238,118 @@
     return { ambiguous: true, candidates };
   }
 
+  function parseInventoryPaste(raw) {
+    if (typeof raw !== 'string') throw new TypeError('Inventory paste must be text');
+    if (!raw.trim()) return [];
+
+    const items = new Map();
+    const addItem = (name, quantity) => {
+      const nextQuantity = (items.get(name) || 0) + quantity;
+      if (!Number.isSafeInteger(nextQuantity) || nextQuantity > 1_000_000_000) {
+        throw new RangeError(`Inventory quantity for ${name} is too large`);
+      }
+      items.set(name, nextQuantity);
+    };
+
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const columns = trimmed.split(/\t/);
+      if (columns.length >= 2) {
+        const name = columns[0].trim();
+        const quantityText = columns[1]
+          .trim()
+          .replace(/^x/i, '')
+          .replace(/,/g, '')
+          .replace(/\s.*$/, '');
+        if (name && /^\d+$/.test(quantityText)) {
+          const quantity = Number(quantityText);
+          if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+            throw new RangeError(`Inventory quantity for ${name} is invalid`);
+          }
+          addItem(name, quantity);
+          continue;
+        }
+        if (name.length > 2) {
+          addItem(name, 1);
+          continue;
+        }
+      }
+
+      if (columns.length === 1) {
+        const quantityMatch = trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
+        if (quantityMatch) {
+          const name = quantityMatch[1].trim();
+          const quantity = Number(quantityMatch[2].replace(/,/g, ''));
+          if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+            throw new RangeError(`Inventory quantity for ${name} is invalid`);
+          }
+          addItem(name, quantity);
+          continue;
+        }
+        if (trimmed.length > 2) addItem(trimmed, 1);
+      }
+    }
+
+    return [...items.entries()].map(([name, qty]) => ({ name, qty }));
+  }
+
+  function mergeInventoryItems(...groups) {
+    const items = new Map();
+    for (const group of groups) {
+      if (!Array.isArray(group)) throw new TypeError('Inventory items must be arrays');
+      for (const item of group) {
+        if (
+          !item
+          || typeof item.name !== 'string'
+          || !item.name.trim()
+          || !Number.isSafeInteger(item.qty)
+          || item.qty <= 0
+        ) {
+          throw new TypeError('Inventory item is invalid');
+        }
+        const nextQuantity = (items.get(item.name) || 0) + item.qty;
+        if (!Number.isSafeInteger(nextQuantity) || nextQuantity > 1_000_000_000) {
+          throw new RangeError(`Inventory quantity for ${item.name} is too large`);
+        }
+        items.set(item.name, nextQuantity);
+      }
+    }
+    return [...items.entries()].map(([name, qty]) => ({ name, qty }));
+  }
+
+  function diffInventoryPastes(beforeRaw, afterRaw) {
+    const before = new Map(
+      parseInventoryPaste(beforeRaw).map(item => [item.name, item.qty])
+    );
+    const after = new Map(
+      parseInventoryPaste(afterRaw).map(item => [item.name, item.qty])
+    );
+    const gained = [];
+    const consumed = [];
+    const names = new Set([...before.keys(), ...after.keys()]);
+
+    for (const name of names) {
+      const beforeQuantity = before.get(name) || 0;
+      const afterQuantity = after.get(name) || 0;
+      if (afterQuantity > beforeQuantity) {
+        gained.push({ name, qty: afterQuantity - beforeQuantity });
+      } else if (beforeQuantity > afterQuantity) {
+        consumed.push({ name, qty: beforeQuantity - afterQuantity });
+      }
+    }
+    return { gained, consumed };
+  }
+
   return {
     calculateBackoffDelay,
     createSingleFlight,
     createTokenCoordinator,
     createTransitionTracker,
+    diffInventoryPastes,
     inferAbyssalFilament,
+    mergeInventoryItems,
+    parseInventoryPaste,
   };
 });

@@ -822,6 +822,11 @@ async function appraiseRun() {
 
 async function appraiseLoss() {
   const cargoItems = parseCargo(S.activeRun.cargoBefore);
+  const droneItems = parseCargo(S.activeRun.droneBefore || '');
+  const manuallyTrackedInventory = mergeDiffItems(cargoItems, droneItems);
+  const fittingItems = droneItems.length > 0
+    ? S.activeRun.fitting.filter(item => item.slot !== 'DroneBay')
+    : S.activeRun.fitting;
 
   try {
     const results = { killmail: null, cargo: null, fitting: null, implants: null };
@@ -837,12 +842,12 @@ async function appraiseLoss() {
         );
       }
     } else {
-      if (cargoItems.length > 0 && S.hasJaniceKey) {
-        results.cargo = await window.api.janice.appraise(cargoItems, 'sell');
+      if (manuallyTrackedInventory.length > 0 && S.hasJaniceKey) {
+        results.cargo = await window.api.janice.appraise(manuallyTrackedInventory, 'sell');
       }
-      if (S.activeRun.fitting.length > 0 && S.hasJaniceKey) {
+      if (fittingItems.length > 0 && S.hasJaniceKey) {
         results.fitting = await window.api.janice.appraise(
-          S.activeRun.fitting.map(f => ({ name: f.type_name, qty: f.qty })), 'sell'
+          fittingItems.map(f => ({ name: f.type_name, qty: f.qty })), 'sell'
         );
       }
       if (S.activeRun.implants.length > 0 && S.hasJaniceKey) {
@@ -931,7 +936,7 @@ function renderLossResults(results, cargoLoss, fittingLoss, implantLoss, killmai
   let html = '';
   const sections = [
     { label: 'Verified Killmail Loss', result: results.killmail, total: killmailLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
-    { label: 'Cargo Lost', result: results.cargo, total: cargoLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
+    { label: 'Cargo & Drones Lost', result: results.cargo, total: cargoLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
     { label: 'Fitting Lost', result: results.fitting, total: fittingLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
     { label: 'Implants Lost', result: results.implants, total: implantLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
   ];
@@ -1118,9 +1123,11 @@ async function saveCurrentRunSafely() {
 // ── Manual Entry & Run Editing ────────────────────────────────────────────
 
 let manualEditRunId = null; // null = new entry, number = editing existing
+let manualEditOriginal = null;
 
 function openManualEntryModal(runToEdit = null) {
   manualEditRunId = null;
+  manualEditOriginal = null;
   document.getElementById('manualEntryTitle').textContent = 'Enter Run Manually';
   document.getElementById('manualSubmitLabel').textContent = 'Appraise & Save';
   document.getElementById('saveWithoutAppraiseBtn').style.display = 'none';
@@ -1145,6 +1152,10 @@ async function openEditRunModal(runId) {
   const run = await window.api.runs.getById(runId);
   if (!run) return;
   manualEditRunId = runId;
+  manualEditOriginal = {
+    outcome: run.outcome,
+    total_loss: run.total_loss || 0,
+  };
   document.getElementById('manualEntryTitle').textContent = 'Edit Run';
   document.getElementById('manualSubmitLabel').textContent = 'Re-Appraise & Save';
   document.getElementById('saveWithoutAppraiseBtn').style.display = 'inline-flex';
@@ -1184,6 +1195,7 @@ function updateManualOutcomeUI() {
 function closeManualEntryModal() {
   closeModal('manualEntryModal');
   manualEditRunId = null;
+  manualEditOriginal = null;
 }
 
 async function initAboutPage() {
@@ -1284,8 +1296,19 @@ async function submitManualEntry(doAppraise = true) {
     statusEl.innerHTML = '<div class="alert err">Janice API key not set — go to Settings.</div>';
     return;
   }
+  if (
+    !doAppraise
+    && manualEditRunId
+    && outcome !== manualEditOriginal?.outcome
+  ) {
+    statusEl.innerHTML =
+      '<div class="alert warn">Changing the outcome requires re-appraisal so the saved totals and item records remain consistent.</div>';
+    return;
+  }
 
   const started_at = dateVal ? Math.floor(new Date(dateVal).getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const savedCargoAfter = outcome === 'Survived' ? cargoAfter : '';
+  const savedDroneAfter = outcome === 'Survived' ? droneAfter : '';
   document.getElementById('manualSpinner').style.display = 'inline-block';
   statusEl.innerHTML = '';
 
@@ -1295,9 +1318,22 @@ async function submitManualEntry(doAppraise = true) {
 
     if (!doAppraise && manualEditRunId) {
       // Save metadata only — preserve existing appraisal values
-      await window.api.runs.updateMeta(manualEditRunId, { tier, weather, outcome, duration, started_at, total_loss: 0, ship_class: shipClass });
+      await window.api.runs.updateMeta(manualEditRunId, {
+        tier,
+        weather,
+        outcome,
+        duration,
+        started_at,
+        total_loss: manualEditOriginal?.total_loss || 0,
+        ship_class: shipClass,
+      });
       // Update cargo text only (so future re-appraise uses corrected pastes)
-      await window.api.runs.updateCargoOnly(manualEditRunId, { cargo_before: cargoBefore, cargo_after: cargoAfter, drone_before: droneBefore, drone_after: droneAfter });
+      await window.api.runs.updateCargoOnly(manualEditRunId, {
+        cargo_before: cargoBefore,
+        cargo_after: savedCargoAfter,
+        drone_before: droneBefore,
+        drone_after: savedDroneAfter,
+      });
       closeManualEntryModal();
       renderHistory();
       updateRecentRuns();
@@ -1307,8 +1343,8 @@ async function submitManualEntry(doAppraise = true) {
     }
 
     if (outcome === 'Survived') {
-      const _cd = diffCargo(cargoBefore, cargoAfter);
-      const _dd = diffCargo(droneBefore, droneAfter);
+      const _cd = diffCargo(cargoBefore, savedCargoAfter);
+      const _dd = diffCargo(droneBefore, savedDroneAfter);
       const diff = { gained: mergeDiffItems(_cd.gained, _dd.gained), consumed: mergeDiffItems(_cd.consumed, _dd.consumed) };
       let lootResult = null, consumedResult = null;
 
@@ -1336,10 +1372,13 @@ async function submitManualEntry(doAppraise = true) {
         }
       }
     } else {
-      // Died — appraise pre-run cargo as loss
-      const cargoItems = parseCargo(cargoBefore);
-      if (cargoItems.length > 0) {
-        const lossResult = await window.api.janice.appraise(cargoItems, 'sell');
+      // Died — appraise all manually supplied pre-run inventory as loss
+      const lossItems = mergeDiffItems(
+        parseCargo(cargoBefore),
+        parseCargo(droneBefore)
+      );
+      if (lossItems.length > 0) {
+        const lossResult = await window.api.janice.appraise(lossItems, 'sell');
         total_loss = lossResult ? lossResult.totalSellPrice : 0;
         if (lossResult) {
           for (const item of lossResult.items) {
@@ -1362,9 +1401,9 @@ async function submitManualEntry(doAppraise = true) {
       net_isk,
       total_loss,
       cargo_before: cargoBefore,
-      cargo_after: cargoAfter,
+      cargo_after: savedCargoAfter,
       drone_before: droneBefore,
-      drone_after: droneAfter,
+      drone_after: savedDroneAfter,
       ship_name: '',
       ship_class: shipClass,
       items,
@@ -1379,7 +1418,9 @@ async function submitManualEntry(doAppraise = true) {
         consumed_cost,
         net_isk,
         cargo_before: cargoBefore,
-        cargo_after: cargoAfter,
+        cargo_after: savedCargoAfter,
+        drone_before: droneBefore,
+        drone_after: savedDroneAfter,
         items
       });
       // Also update metadata (tier, weather, outcome, duration, date)
@@ -1525,74 +1566,15 @@ function updateFilamentInference() {
 }
 
 function parseCargo(raw) {
-  if (!raw || !raw.trim()) return [];
-  const items = {};
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    // EVE multi-column paste: Name \t Qty \t Category \t Volume \t ISK
-    // The second column is the quantity when it parses as a positive integer.
-    // If it doesn't (e.g. second col is a category name like "Exotic Plasma Charge Blueprint"),
-    // treat the item as qty 1 — EVE omits the qty column for single-item stacks.
-    const cols = trimmed.split(/\t/);
-    if (cols.length >= 2) {
-      const name = cols[0].trim();
-      const qtyRaw = cols[1].trim().replace(/^x/i, '').replace(/,/g, '').replace(/\s.*$/, '');
-      const qty = parseInt(qtyRaw);
-      if (name && !isNaN(qty) && qty > 0) {
-        items[name] = (items[name] || 0) + qty;
-        continue;
-      }
-      // Second col wasn't a number — single item, qty 1 (e.g. blueprint with category as col 2)
-      if (name && name.length > 2) {
-        items[name] = (items[name] || 0) + 1;
-        continue;
-      }
-    }
-
-    // Single column line: plain item name, qty 1
-    if (cols.length === 1) {
-      // Try "Item Name x 100" format first
-      const m = trimmed.match(/^(.+?)\s+x\s*([0-9,]+)\s*$/i);
-      if (m) {
-        const name = m[1].trim();
-        const qty = parseInt(m[2].replace(/,/g, ''));
-        if (name && qty > 0) { items[name] = (items[name] || 0) + qty; continue; }
-      }
-      // Plain name, qty 1
-      if (trimmed.length > 2) items[trimmed] = (items[trimmed] || 0) + 1;
-    }
-  }
-  return Object.entries(items).map(([name, qty]) => ({ name, qty }));
+  return runTracking.parseInventoryPaste(raw || '');
 }
 
 function mergeDiffItems(a, b) {
-  const map = {};
-  for (const item of [...a, ...b]) {
-    map[item.name] = (map[item.name] || 0) + item.qty;
-  }
-  return Object.entries(map).map(([name, qty]) => ({ name, qty }));
+  return runTracking.mergeInventoryItems(a, b);
 }
 
 function diffCargo(beforeRaw, afterRaw) {
-  const before = {};
-  for (const { name, qty } of parseCargo(beforeRaw)) before[name] = qty;
-  const after = {};
-  for (const { name, qty } of parseCargo(afterRaw)) after[name] = qty;
-
-  const gained = [];
-  const consumed = [];
-  const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
-
-  for (const key of allKeys) {
-    const b = before[key] || 0;
-    const a = after[key] || 0;
-    if (a > b) gained.push({ name: key, qty: a - b });
-    else if (b > a) consumed.push({ name: key, qty: b - a });
-    // equal = carry-over, excluded
-  }
-  return { gained, consumed };
+  return runTracking.diffInventoryPastes(beforeRaw || '', afterRaw || '');
 }
 
 // ── History ───────────────────────────────────────────────────────────────
@@ -1769,7 +1751,12 @@ async function reappraiseRun(runId) {
   spinner.style.display = 'inline-block';
   statusEl.innerHTML = '';
 
-  const diff = diffCargo(cargoBefore, cargoAfter);
+  const cargoDiff = diffCargo(cargoBefore, cargoAfter);
+  const droneDiff = diffCargo(droneBefore, droneAfter);
+  const diff = {
+    gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
+    consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed),
+  };
 
   try {
     let lootResult = null, consumedResult = null;
@@ -1897,10 +1884,10 @@ async function renderStats() {
   let html = `<div class="stat-grid">
     <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
     <div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">${survRate}%</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Duration</div><div class="stat-card-value">${fmtDuration(Math.round(o.avg_duration_survived || 0))}</div></div>
-    <div class="stat-card"><div class="stat-card-label">ISK / Hour</div><div class="stat-card-value gold">${fmtIsk(stats.iskPerHour)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Total Net ISK</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${fmtIsk(o.total_net_isk || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Net ISK / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${fmtIsk(o.avg_net_isk || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Survival Duration</div><div class="stat-card-value">${fmtDuration(Math.round(o.avg_duration_survived || 0))}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Profit / Hour</div><div class="stat-card-value ${stats.iskPerHour >= 0 ? 'gold' : 'red'}">${fmtIsk(stats.iskPerHour)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Profit / Loss</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${fmtIsk(o.total_net_isk || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Profit / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${fmtIsk(o.avg_net_isk || 0)}</div></div>
     <div class="stat-card"><div class="stat-card-label">Avg Loss on Death</div><div class="stat-card-value red">${fmtIsk(o.avg_loss || 0)}</div></div>
     <div class="stat-card"><div class="stat-card-label">Total Losses</div><div class="stat-card-value red">${fmtIsk(o.total_loss || 0)}</div></div>
   </div>`;
@@ -1912,7 +1899,7 @@ async function renderStats() {
   if (stats.byTier.length) {
     html += `<div class="section-title">By Tier</div>
     <table class="data-table" style="margin-bottom:16px"><thead><tr>
-      <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Duration</th><th>Avg Net ISK</th>
+      <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Survival Duration</th><th>Avg Profit</th>
     </tr></thead><tbody>`;
     for (const t of stats.byTier) {
       const sr = t.total_runs > 0 ? Math.round(t.survived / t.total_runs * 100) : 0;
@@ -1932,7 +1919,7 @@ async function renderStats() {
   if (stats.byWeather.length) {
     html += `<div class="section-title">By Weather</div>
     <table class="data-table"><thead><tr>
-      <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Net ISK</th>
+      <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Profit</th>
     </tr></thead><tbody>`;
     for (const w of stats.byWeather) {
       const sr = w.total_runs > 0 ? Math.round(w.survived / w.total_runs * 100) : 0;
@@ -2060,13 +2047,13 @@ function renderDailyChart(daily) {
     const x = Math.round(i * cw / n);
     const w = Math.round(cw / n);
     const iskStr = d.net_isk >= 0 ? '+' + fmtIsk(d.net_isk) : '-' + fmtIsk(Math.abs(d.net_isk));
-    const title = `${d.day}  |  ${d.total_runs} runs  |  Net ISK: ${iskStr}`;
+    const title = `${d.day}  |  ${d.total_runs} runs  |  Profit/Loss: ${iskStr}`;
     svg += `<rect x="${x}" y="0" width="${w}" height="${ch}" fill="transparent"><title>${title}</title></rect>`;
   });
 
   // Legend
   svg += `<circle cx="${cw - 120}" cy="-4" r="4" fill="#66bb6a"/>
-    <text x="${cw - 112}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Net ISK</text>
+    <text x="${cw - 112}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Profit/Loss</text>
     <rect x="${cw - 54}" y="-8" width="8" height="8" fill="#4fc3f7" opacity="0.4" rx="1"/>
     <text x="${cw - 42}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Runs</text>`;
 
@@ -2340,8 +2327,9 @@ async function updateIskPerHour() {
   if (!S.activeCharId) return;
   const stats = await window.api.runs.getStats(S.activeCharId);
   const el = document.getElementById('iskPerHourDisplay');
-  if (stats.iskPerHour > 0) {
-    el.innerHTML = `<span style="color:var(--text-muted)">ISK/hr (recent 20):</span> <span style="color:var(--gold);font-family:var(--font-mono)">${fmtIsk(stats.iskPerHour)}</span>`;
+  if (stats.overall?.total_runs > 0) {
+    const color = stats.iskPerHour >= 0 ? 'var(--gold)' : 'var(--red)';
+    el.innerHTML = `<span style="color:var(--text-muted)">Profit/hr (recent 20):</span> <span style="color:${color};font-family:var(--font-mono)">${fmtIsk(stats.iskPerHour)}</span>`;
   } else {
     el.textContent = '';
   }

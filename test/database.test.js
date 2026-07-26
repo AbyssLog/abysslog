@@ -199,3 +199,79 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(database.completeActiveRun(completedRun), completedId);
   assert.equal(database.getRuns({ character_id: 9003 }).length, 1);
 });
+
+test('statistics include death losses and daily activity keeps the latest 60 days', () => {
+  database.saveCharacter({
+    id: 9010,
+    name: 'Profit Pilot',
+    portrait_url: '',
+    client_id: 'profit-client',
+  });
+
+  const baseRun = {
+    character_id: 9010,
+    started_at: Math.floor(Date.UTC(2025, 0, 1, 12) / 1000),
+    duration: 100,
+    tier: 'T4',
+    weather: 'Electrical',
+    ship_name: 'Gila',
+    ship_class: 'Cruiser',
+    loot_value: 0,
+    consumed_cost: 0,
+    net_isk: 0,
+    total_loss: 0,
+    cargo_before: '',
+    cargo_after: '',
+    drone_before: '',
+    drone_after: '',
+    items: [],
+    fitting: [],
+    implants: [],
+  };
+  database.saveRun({
+    ...baseRun,
+    outcome: 'Survived',
+    net_isk: 100,
+  });
+  database.saveRun({
+    ...baseRun,
+    started_at: baseRun.started_at + 300,
+    outcome: 'Died',
+    total_loss: 50,
+  });
+
+  const stats = database.getStats(9010);
+  assert.equal(stats.overall.total_net_isk, 50);
+  assert.equal(stats.overall.avg_net_isk, 25);
+  assert.equal(stats.byTier[0].avg_net_isk, 25);
+  assert.equal(stats.byWeather[0].avg_net_isk, 25);
+  assert.equal(stats.iskPerHour, 900);
+  assert.deepEqual(database.getDailyStats(9010), [{
+    day: '2025-01-01',
+    total_runs: 2,
+    survived: 1,
+    net_isk: 50,
+    total_loss: 50,
+  }]);
+
+  database.saveCharacter({
+    id: 9011,
+    name: 'Daily Pilot',
+    portrait_url: '',
+    client_id: 'daily-client',
+  });
+  for (let day = 0; day < 70; day++) {
+    database.saveRun({
+      ...baseRun,
+      character_id: 9011,
+      started_at: baseRun.started_at + day * 86_400,
+      outcome: 'Survived',
+      net_isk: day,
+    });
+  }
+
+  const daily = database.getDailyStats(9011);
+  assert.equal(daily.length, 60);
+  assert.equal(daily[0].day, '2025-01-11');
+  assert.equal(daily.at(-1).day, '2025-03-11');
+});

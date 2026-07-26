@@ -13,7 +13,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Remembered inventory baseline** — carries a survived run's post-run cargo and drones into the next run
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
 - **Run history** — filterable, sortable table with net ISK and total loss columns
-- **Statistics** — survival rate, ISK/hour, avg net ISK, avg loss on death, breakdown by tier and weather
+- **Statistics** — survival rate, death-adjusted profit/hour, average profit, losses, and breakdowns by tier and weather
 - **Multi-character** — add multiple characters, switch between them
 - **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
 
