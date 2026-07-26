@@ -60,6 +60,12 @@ contextBridge.exposeInMainWorld('api', {
     getDailyStats: characterId => ipcRenderer.invoke('runs:get-daily-stats', characterId),
   },
 
+  data: {
+    getStatus: () => ipcRenderer.invoke('data:get-status'),
+    createBackup: () => ipcRenderer.invoke('data:create-backup'),
+    openBackupFolder: () => ipcRenderer.invoke('data:open-backup-folder'),
+  },
+
   shell: {
     openExternal: url => ipcRenderer.invoke('shell:open-external', url),
   },

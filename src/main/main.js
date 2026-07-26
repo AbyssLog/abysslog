@@ -337,8 +337,15 @@ if (!gotTheLock) {
     Menu.setApplicationMenu(null);
     db.init();
     migrateLegacyJaniceKey();
-    if (!db.getSetting('janice_api_key')) db.hardenSensitiveStorage();
+    if (!db.getSetting('janice_api_key')) {
+      db.hardenSensitiveStorage();
+      db.finishStartup();
+    }
     createWindow();
+  }).catch(error => {
+    const message = error instanceof Error ? error.message : 'Unknown startup error';
+    dialog.showErrorBox('AbyssLog could not start safely', message);
+    app.quit();
   });
 }
 
@@ -349,6 +356,10 @@ app.on('open-url', (event, callbackUrl) => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  db.close();
 });
 
 app.on('activate', () => {
@@ -442,6 +453,23 @@ secureHandle('runs:update-cargo-only', (runId, data) =>
   ));
 secureHandle('runs:get-daily-stats', characterId =>
   db.getDailyStats(validateOptionalCharacterId(characterId)));
+
+secureHandle('data:get-status', () => ({
+  ...db.getDataStatus(),
+  automaticBackupsEnabled: !db.getSetting('janice_api_key'),
+}));
+secureHandle('data:create-backup', () => {
+  if (db.getSetting('janice_api_key')) {
+    throw new Error('Backup is unavailable until the legacy API key can be migrated securely');
+  }
+  return db.createManualBackup();
+});
+secureHandle('data:open-backup-folder', async () => {
+  const { backupDirectory } = db.getDataStatus();
+  const error = await shell.openPath(backupDirectory);
+  if (error) throw new Error(`Could not open backup folder: ${error}`);
+  return true;
+});
 
 secureHandle('shell:open-external', async url => {
   if (!security.isAllowedExternalUrl(url)) throw new Error('External URL is not allowed');

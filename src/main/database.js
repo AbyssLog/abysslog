@@ -1,19 +1,179 @@
+const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const { parseCsv } = require('../shared/csv');
 const security = require('../shared/security');
 
 let db;
+let Database;
+let databasePath;
+let backupDirectory;
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
+const SCHEMA_VERSION = 1;
+const AUTOMATIC_BACKUP_RETENTION = 7;
 
 function init() {
-  const Database = require('better-sqlite3');
-  const dbPath = path.join(app.getPath('userData'), 'abysslog.db');
-  db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('secure_delete = ON');
-  db.pragma('foreign_keys = ON');
-  createSchema();
-  migrateSchema();
+  Database ||= require('better-sqlite3');
+  const userDataDirectory = app.getPath('userData');
+  databasePath = path.join(userDataDirectory, 'abysslog.db');
+  backupDirectory = path.join(userDataDirectory, 'backups');
+  fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+
+  try {
+    db = new Database(databasePath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('secure_delete = ON');
+    db.pragma('foreign_keys = ON');
+    assertDatabaseIntegrity();
+
+    const currentVersion = db.pragma('user_version', { simple: true });
+    if (currentVersion > SCHEMA_VERSION) {
+      throw new Error('Database was created by a newer version of AbyssLog');
+    }
+
+    db.transaction(() => {
+      createSchema();
+      migrateSchema(currentVersion);
+    })();
+    assertDatabaseIntegrity();
+  } catch (error) {
+    if (db && db.open) db.close();
+    db = null;
+    const message = error instanceof Error ? error.message : 'Unknown database error';
+    throw new Error(
+      `AbyssLog could not safely open its database: ${message}. `
+      + `The original file was left in place. Backups are stored in ${backupDirectory}.`
+    );
+  }
+}
+
+function assertConnectionIntegrity(connection) {
+  const results = connection.pragma('quick_check');
+  if (
+    results.length !== 1
+    || Object.values(results[0]).length !== 1
+    || Object.values(results[0])[0] !== 'ok'
+  ) {
+    throw new Error('Database integrity check failed');
+  }
+}
+
+function assertDatabaseIntegrity() {
+  assertConnectionIntegrity(db);
+}
+
+function backupTimestamp() {
+  return new Date().toISOString().replace(/[-:.]/g, '');
+}
+
+function localDateStamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function copyDatabaseToBackup(fileName) {
+  fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+  db.pragma('wal_checkpoint(FULL)');
+  const destination = path.join(backupDirectory, fileName);
+  const temporary = path.join(backupDirectory, `.${fileName}.${process.pid}.tmp`);
+  try {
+    fs.copyFileSync(databasePath, temporary, fs.constants.COPYFILE_EXCL);
+    if (fs.statSync(temporary).size === 0) throw new Error('Database backup was empty');
+    verifyBackup(temporary);
+    fs.renameSync(temporary, destination);
+  } catch (error) {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    throw error;
+  }
+  return destination;
+}
+
+function verifyBackup(filePath) {
+  let backupDb;
+  try {
+    backupDb = new Database(filePath, { readonly: true, fileMustExist: true });
+    assertConnectionIntegrity(backupDb);
+  } finally {
+    if (backupDb?.open) backupDb.close();
+    for (const suffix of ['-shm', '-wal']) {
+      const sidecarPath = `${filePath}${suffix}`;
+      if (fs.existsSync(sidecarPath)) fs.unlinkSync(sidecarPath);
+    }
+  }
+}
+
+function listBackups() {
+  fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+  return fs.readdirSync(backupDirectory, { withFileTypes: true })
+    .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z)\.db$/.test(entry.name))
+    .map(entry => {
+      const filePath = path.join(backupDirectory, entry.name);
+      const stat = fs.statSync(filePath);
+      return {
+        name: entry.name,
+        filePath,
+        createdAt: stat.mtimeMs,
+        size: stat.size,
+        automatic: entry.name.startsWith('abysslog-auto-'),
+      };
+    })
+    .sort((left, right) => right.createdAt - left.createdAt);
+}
+
+function pruneAutomaticBackups() {
+  const automatic = listBackups().filter(backup => backup.automatic);
+  for (const backup of automatic.slice(AUTOMATIC_BACKUP_RETENTION)) {
+    fs.unlinkSync(backup.filePath);
+  }
+}
+
+function finishStartup() {
+  const date = localDateStamp();
+  const fileName = `abysslog-auto-${date}.db`;
+  const destination = path.join(backupDirectory, fileName);
+  if (fs.existsSync(destination)) {
+    try {
+      verifyBackup(destination);
+    } catch {
+      fs.unlinkSync(destination);
+    }
+  }
+  if (!fs.existsSync(destination)) copyDatabaseToBackup(fileName);
+  pruneAutomaticBackups();
+  return getDataStatus();
+}
+
+function createManualBackup() {
+  const fileName = `abysslog-manual-${backupTimestamp()}.db`;
+  const filePath = copyDatabaseToBackup(fileName);
+  return { filePath, ...getDataStatus() };
+}
+
+function getDataStatus() {
+  const backups = listBackups();
+  const latest = backups[0] || null;
+  return {
+    databasePath,
+    backupDirectory,
+    databaseSize: fs.statSync(databasePath).size,
+    schemaVersion: db.pragma('user_version', { simple: true }),
+    latestBackup: latest
+      ? { filePath: latest.filePath, createdAt: latest.createdAt, size: latest.size }
+      : null,
+    automaticBackupRetention: AUTOMATIC_BACKUP_RETENTION,
+  };
+}
+
+function close() {
+  if (!db) return;
+  try {
+    if (db.open) db.pragma('wal_checkpoint(TRUNCATE)');
+  } finally {
+    if (db.open) db.close();
+    db = null;
+  }
 }
 
 function hardenSensitiveStorage() {
@@ -97,7 +257,9 @@ function createSchema() {
 }
 
 
-function migrateSchema() {
+function migrateSchema(currentVersion) {
+  if (currentVersion >= 1) return;
+
   // Add cargo columns to existing databases that predate this feature
   const cols = db.pragma('table_info(runs)').map(c => c.name);
   if (!cols.includes('cargo_before')) {
@@ -118,6 +280,7 @@ function migrateSchema() {
   if (!cols.includes('ship_class')) {
     db.exec("ALTER TABLE runs ADD COLUMN ship_class TEXT");
   }
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
 // ── Characters ────────────────────────────────────────────────────────────
@@ -395,7 +558,7 @@ function exportRunsCSV(characterId) {
   `).all(...params);
 
   const headers = [
-    'id','character_name','started_at','duration','tier','weather','outcome',
+    'id','character_id','character_name','started_at','duration','tier','weather','outcome',
     'ship_name','ship_class','loot_value','consumed_cost','net_isk','total_loss',
     'cargo_before','cargo_after','drone_before','drone_after','notes'
   ];
@@ -405,50 +568,38 @@ function exportRunsCSV(characterId) {
 }
 
 function importRunsCSV(csvText, characterId) {
-  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return { imported: 0, skipped: 0, errors: [] };
-  if (lines.length > 50_001) throw new TypeError('CSV contains too many rows');
+  const rows = parseCsv(csvText).filter(row => row.some(cell => cell.trim()));
+  if (rows.length < 2) return { imported: 0, skipped: 0, errors: [] };
 
-  // Parse headers from first line
-  const parseCSVLine = (line) => {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i+1] === '"') { current += '"'; i++; }
-        else inQuotes = !inQuotes;
-      } else if (ch === ',' && !inQuotes) {
-        result.push(current); current = '';
-      } else {
-        current += ch;
-      }
-    }
-    result.push(current);
-    return result;
-  };
-
-  const headers = parseCSVLine(lines[0]);
+  const headers = rows[0].map((header, index) =>
+    index === 0 ? header.replace(/^\uFEFF/, '') : header);
   const idx = (name) => headers.indexOf(name);
+  for (const required of ['started_at', 'tier', 'weather', 'outcome']) {
+    if (idx(required) === -1) throw new TypeError(`CSV is missing required column: ${required}`);
+  }
 
   const insertRun = db.prepare(`
-    INSERT OR IGNORE INTO runs
+    INSERT INTO runs
       (character_id, started_at, duration, tier, weather, outcome,
        ship_name, ship_class, loot_value, consumed_cost, net_isk, total_loss,
        cargo_before, cargo_after, drone_before, drone_after, notes)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
+  const runExists = db.prepare(
+    'SELECT 1 FROM runs WHERE character_id = ? AND started_at = ? LIMIT 1'
+  );
 
   let imported = 0, skipped = 0;
   const errors = [];
 
   const transaction = db.transaction(() => {
-    for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
+    for (let i = 1; i < rows.length; i++) {
       try {
-        const cols = parseCSVLine(lines[i]);
-        const get = (name) => cols[idx(name)] || null;
+        const cols = rows[i];
+        const get = (name) => {
+          const index = idx(name);
+          return index === -1 ? null : security.unescapeCsvCell(cols[index] ?? '');
+        };
         const charId = characterId || get('character_id');
         if (!charId) { skipped++; continue; }
         const number = (name) => {
@@ -477,8 +628,12 @@ function importRunsCSV(csvText, characterId) {
           fitting: [],
           implants: [],
         });
+        if (runExists.get(run.character_id, run.started_at)) {
+          skipped++;
+          continue;
+        }
 
-        const info = insertRun.run(
+        insertRun.run(
           run.character_id, run.started_at, run.duration,
           run.tier, run.weather, run.outcome,
           run.ship_name || null, run.ship_class,
@@ -486,9 +641,9 @@ function importRunsCSV(csvText, characterId) {
           run.cargo_before || null, run.cargo_after || null,
           run.drone_before || null, run.drone_after || null, run.notes || null
         );
-        if (info.changes > 0) imported++; else skipped++;
+        imported++;
       } catch(e) {
-        errors.push(`Row ${i}: ${e.message}`);
+        if (errors.length < 100) errors.push(`Row ${i + 1}: ${e.message}`);
         skipped++;
       }
     }
@@ -497,4 +652,29 @@ function importRunsCSV(csvText, characterId) {
   return { imported, skipped, errors };
 }
 
-module.exports = { init, hardenSensitiveStorage, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, updateCargoOnly, getRuns, getRunById, deleteRun, getStats, getDailyStats, exportRunsCSV, importRunsCSV };
+module.exports = {
+  init,
+  close,
+  finishStartup,
+  createManualBackup,
+  getDataStatus,
+  hardenSensitiveStorage,
+  getCharacters,
+  saveCharacter,
+  deleteCharacter,
+  getSetting,
+  setSetting,
+  deleteSetting,
+  getAllSettings,
+  saveRun,
+  updateAppraisal,
+  updateMeta,
+  updateCargoOnly,
+  getRuns,
+  getRunById,
+  deleteRun,
+  getStats,
+  getDailyStats,
+  exportRunsCSV,
+  importRunsCSV,
+};

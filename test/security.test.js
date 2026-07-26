@@ -174,6 +174,12 @@ test('CSV cells neutralize spreadsheet formulas without changing numeric values'
   assert.equal(security.escapeCsvCell('  @SUM(1,2)'), `"'  @SUM(1,2)"`);
   assert.equal(security.escapeCsvCell(-42), '-42');
   assert.equal(security.escapeCsvCell('ordinary'), 'ordinary');
+  assert.equal(security.unescapeCsvCell("'=SUM(1,2)"), '=SUM(1,2)');
+  assert.equal(security.unescapeCsvCell("''literal"), "'literal");
+  assert.equal(
+    security.unescapeCsvCell(security.escapeCsvCell("'=literal")),
+    "'=literal"
+  );
 });
 
 test('renderer policy blocks inline script and inline event handlers', () => {
@@ -209,9 +215,12 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /if \(!validateIpcSender\(event\)\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);
-  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) db\.hardenSensitiveStorage\(\)/);
+  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);[\s\S]*db\.finishStartup\(\);/);
   assert.match(database, /secure_delete = ON/);
+  assert.match(database, /quick_check/);
+  assert.match(database, /user_version/);
   assert.match(database, /wal_checkpoint\(TRUNCATE\)/);
+  assert.match(database, /AUTOMATIC_BACKUP_RETENTION = 7/);
 });
 
 test('CI uses read-only permissions, immutable Actions, and no build token', () => {

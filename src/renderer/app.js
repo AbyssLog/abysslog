@@ -5,6 +5,7 @@ const S = {
   hasAuth: false,
   hasJaniceKey: false,
   secureStorage: { available: false, backend: 'unknown' },
+  dataStatus: null,
   settings: {},
   runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraising | appraisal | died | loss
   activeRun: null,
@@ -19,11 +20,12 @@ async function init() {
   window.api.auth.onComplete(handleAuthComplete);
   window.api.auth.onError(handleAuthError);
 
-  [S.settings, S.characters, S.secureStorage, S.hasJaniceKey] = await Promise.all([
+  [S.settings, S.characters, S.secureStorage, S.hasJaniceKey, S.dataStatus] = await Promise.all([
     window.api.settings.getAll(),
     window.api.auth.getCharacters(),
     window.api.secrets.status(),
     window.api.secrets.hasJaniceKey(),
+    window.api.data.getStatus(),
   ]);
 
   loadSettingsPage();
@@ -1546,6 +1548,60 @@ function loadSettingsPage() {
   if (S.settings.default_tier) document.getElementById('defaultTierInput').value = S.settings.default_tier;
   if (S.settings.default_weather) document.getElementById('defaultWeatherInput').value = S.settings.default_weather;
   renderCharList();
+  renderDataStatus();
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderDataStatus() {
+  if (!S.dataStatus) return;
+  const summary = document.getElementById('backupSummary');
+  const location = document.getElementById('backupLocation');
+  const createButton = document.getElementById('createBackupBtn');
+
+  if (!S.dataStatus.automaticBackupsEnabled) {
+    summary.textContent = 'Automatic backups are paused until secure credential storage is available.';
+  } else if (S.dataStatus.latestBackup) {
+    const backupDate = new Date(S.dataStatus.latestBackup.createdAt);
+    summary.textContent = `Latest full backup: ${backupDate.toLocaleString()} (${formatBytes(S.dataStatus.latestBackup.size)}).`;
+  } else {
+    summary.textContent = 'No full database backup has been created yet.';
+  }
+  location.textContent = `Backup folder: ${S.dataStatus.backupDirectory}`;
+  createButton.disabled = !S.dataStatus.automaticBackupsEnabled;
+}
+
+async function createFullBackup() {
+  const status = document.getElementById('backupActionStatus');
+  status.textContent = 'Creating backup...';
+  status.className = 'alert';
+  status.style.display = 'block';
+  try {
+    await window.api.data.createBackup();
+    S.dataStatus = await window.api.data.getStatus();
+    renderDataStatus();
+    status.textContent = 'Full database backup created successfully.';
+    status.className = 'alert success';
+  } catch (error) {
+    status.textContent = `Backup failed: ${error.message}`;
+    status.className = 'alert err';
+  }
+}
+
+async function openBackupFolder() {
+  const status = document.getElementById('backupActionStatus');
+  try {
+    await window.api.data.openBackupFolder();
+  } catch (error) {
+    status.textContent = `Could not open backup folder: ${error.message}`;
+    status.className = 'alert err';
+    status.style.display = 'block';
+  }
 }
 
 async function testJaniceKey() {
@@ -1779,6 +1835,8 @@ const clickActions = {
   'save-settings': () => saveSettings(),
   'export-csv': () => exportCSV(),
   'import-csv': () => importCSV(),
+  'create-full-backup': () => createFullBackup(),
+  'open-backup-folder': () => openBackupFolder(),
   'close-modal': element => closeModal(element.dataset.modal),
   'start-sso': () => startSSO(),
   'close-manual-entry': () => closeManualEntryModal(),

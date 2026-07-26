@@ -449,9 +449,20 @@
   function escapeCsvCell(value) {
     if (value == null) return '';
     let text = String(value);
-    if (typeof value === 'string' && /^\s*[=+\-@]/.test(text)) text = `'${text}`;
+    if (typeof value === 'string' && text.startsWith("'")) {
+      text = `'${text}`;
+    } else if (typeof value === 'string' && /^\s*[=+\-@]/.test(text)) {
+      text = `'${text}`;
+    }
     if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
     return text;
+  }
+
+  function unescapeCsvCell(value) {
+    if (typeof value !== 'string') return value;
+    if (value.startsWith("''")) return value.slice(1);
+    if (value.startsWith("'") && /^\s*[=+\-@]/.test(value.slice(1))) return value.slice(1);
+    return value;
   }
 
   return {
@@ -466,6 +477,7 @@
     requireString,
     requireText,
     requireTrimmedText,
+    unescapeCsvCell,
     validateAppraisalItems,
     validateAppraisalUpdate,
     validateCargoUpdate,
