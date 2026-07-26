@@ -2,14 +2,24 @@
   "name": "abysslog",
   "version": "1.0.0",
   "description": "EVE Online Abyssal Deadspace run tracker",
+  "author": "Erinys",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AbyssLog/abysslog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AbyssLog/abysslog/issues"
+  },
+  "homepage": "https://github.com/AbyssLog/abysslog#readme",
   "main": "src/main/main.js",
   "scripts": {
+    "setup": "node node_modules/electron/install.js",
+    "test": "node --test",
     "start": "electron .",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
-    "build:all": "electron-builder --win --mac --linux",
-    "postinstall": "electron-builder install-app-deps"
+    "build:all": "electron-builder --win --mac --linux"
   },
   "build": {
     "appId": "com.abysslog.app",
@@ -45,13 +55,23 @@
       "node_modules/**/*",
       "package.json"
     ],
-    "npmRebuild": true
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "npmRebuild": false
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "^13.0.1"
   },
   "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
   }
 }

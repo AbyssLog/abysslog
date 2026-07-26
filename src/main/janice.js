@@ -1,6 +1,8 @@
 const https = require('https');
 
 const JANICE_BASE = 'https://janice.e-351.com';
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Appraise a list of items via Janice API v2
@@ -42,10 +44,16 @@ function appraise(items, pricing, apiKey) {
 
     const req = https.request(options, (res) => {
       let data = '';
-      res.on('data', chunk => data += chunk);
+      res.setEncoding('utf8');
+      res.on('data', chunk => {
+        data += chunk;
+        if (data.length > MAX_RESPONSE_BYTES) {
+          res.destroy(new Error('Janice response is too large'));
+        }
+      });
       res.on('end', () => {
         if (res.statusCode >= 400) {
-          reject(new Error(`Janice API error ${res.statusCode}: ${data}`));
+          reject(new Error(`Janice request failed with HTTP ${res.statusCode}`));
           return;
         }
         try {
@@ -78,6 +86,7 @@ function appraise(items, pricing, apiKey) {
     });
 
     req.on('error', reject);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('Janice request timed out')));
     req.write(bodyBuf);
     req.end();
   });

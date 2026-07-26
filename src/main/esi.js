@@ -3,22 +3,36 @@ const https = require('https');
 const ESI_BASE = 'https://esi.evetech.net/latest';
 const SSO_TOKEN_URL = 'https://login.eveonline.com/v2/oauth/token';
 const SSO_VERIFY_URL = 'https://login.eveonline.com/oauth/verify';
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function readJsonResponse(res, resolve, reject, label) {
+  let data = '';
+  res.setEncoding('utf8');
+  res.on('data', chunk => {
+    data += chunk;
+    if (data.length > MAX_RESPONSE_BYTES) res.destroy(new Error(`${label} response is too large`));
+  });
+  res.on('end', () => {
+    if (res.statusCode >= 400) {
+      reject(new Error(`${label} request failed with HTTP ${res.statusCode}`));
+      return;
+    }
+    try {
+      resolve(JSON.parse(data));
+    } catch {
+      reject(new Error(`${label} returned invalid JSON`));
+    }
+  });
+  res.on('error', reject);
+}
 
 function httpGet(url, headers = {}) {
   return new Promise((resolve, reject) => {
     const options = { headers: { 'User-Agent': 'AbyssLog/1.0', ...headers } };
-    https.get(url, options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-        } else {
-          try { resolve(JSON.parse(data)); }
-          catch (e) { reject(new Error('Invalid JSON: ' + data)); }
-        }
-      });
-    }).on('error', reject);
+    const req = https.get(url, options, res => readJsonResponse(res, resolve, reject, 'ESI'));
+    req.on('error', reject);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('ESI request timed out')));
   });
 }
 
@@ -28,7 +42,7 @@ function httpPost(url, body, headers = {}) {
     const urlObj = new URL(url);
     const options = {
       hostname: urlObj.hostname,
-      path: urlObj.pathname,
+      path: urlObj.pathname + urlObj.search,
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -37,19 +51,9 @@ function httpPost(url, body, headers = {}) {
         ...headers
       }
     };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-        } else {
-          try { resolve(JSON.parse(data)); }
-          catch (e) { reject(new Error('Invalid JSON: ' + data)); }
-        }
-      });
-    });
+    const req = https.request(options, res => readJsonResponse(res, resolve, reject, 'EVE SSO'));
     req.on('error', reject);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('EVE SSO request timed out')));
     req.write(postData);
     req.end();
   });
@@ -111,21 +115,27 @@ async function getTypeNames(typeIds) {
         'User-Agent': 'AbyssLog/1.0'
       }
     };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const items = JSON.parse(data);
-          const map = {};
-          for (const item of items) map[item.id] = item.name;
-          resolve(map);
-        } catch (e) { reject(e); }
-      });
+    const req = https.request(options, res => {
+      readJsonResponse(res, items => {
+        const map = {};
+        for (const item of items) map[item.id] = item.name;
+        resolve(map);
+      }, reject, 'ESI');
     });
     req.on('error', reject);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('ESI request timed out')));
     req.write(body);
     req.end();
+  });
+}
+
+async function exchangeAuthorizationCode(code, clientId, codeVerifier, redirectUri) {
+  return httpPost(SSO_TOKEN_URL, {
+    grant_type: 'authorization_code',
+    code,
+    client_id: clientId,
+    code_verifier: codeVerifier,
+    redirect_uri: redirectUri,
   });
 }
 
@@ -153,6 +163,7 @@ module.exports = {
   getTypeInfo,
   getSystemName,
   getTypeNames,
+  exchangeAuthorizationCode,
   refreshToken,
   verifyToken
 };
