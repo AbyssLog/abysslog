@@ -136,14 +136,8 @@ function loadTokens(characterId) {
 const tokenCoordinator = runTracking.createTokenCoordinator({
   loadTokens,
   saveTokens,
-  refreshTokens: async refreshToken => {
-    try {
-      return await esi.refreshToken(refreshToken, CLIENT_ID);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Character authorization refresh failed: ${detail}`);
-    }
-  },
+  clearTokens: characterId => db.deleteSetting(tokenKey(characterId)),
+  refreshTokens: refreshToken => esi.refreshToken(refreshToken, CLIENT_ID),
   validateAccessToken: token =>
     security.requireString(token, 'Access token', 16 * 1024),
   validateLifetime: lifetime =>

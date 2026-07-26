@@ -48,6 +48,30 @@ test('ESI boundary validates and minimizes renderer-facing responses', async () 
   await assert.rejects(esi.getLocation(123, 'token'), /Solar system ID/);
 });
 
+test('ESI uses current unversioned routes and the v2 token verifier', async () => {
+  responses.push({ solar_system_id: 30_000_142 });
+  await esi.getLocation(123, 'token');
+  assert.equal(
+    calls[0].url,
+    'https://esi.evetech.net/characters/123/location/'
+  );
+  assert.equal(calls[0].options.headers['X-Compatibility-Date'], '2026-07-25');
+  assert.match(
+    calls[0].options.headers['User-Agent'],
+    /github\.com\/AbyssLog\/abysslog/
+  );
+
+  responses.push({ CharacterID: 123, CharacterName: 'Capsuleer' });
+  assert.deepEqual(await esi.verifyToken('token'), {
+    CharacterID: 123,
+    CharacterName: 'Capsuleer',
+  });
+  assert.equal(
+    calls[1].url,
+    'https://login.eveonline.com/v2/oauth/verify'
+  );
+});
+
 test('ESI caches stable system and type metadata', async () => {
   responses.push({ name: 'Jita', ignored: '<script>' });
   assert.equal(await esi.getSystemName(30_000_142), 'Jita');

@@ -487,6 +487,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'src/main/main.js'), 'utf8');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
+  const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
 
   const handlerChannels = new Set(
     [...main.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
@@ -506,6 +507,8 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
   assert.match(main, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
+  assert.match(main, /clearTokens: characterId => db\.deleteSetting\(tokenKey\(characterId\)\)/);
+  assert.match(appJs, /if \(result\?\.authError\) return;/);
   assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);[\s\S]*db\.finishStartup\(\);/);
   assert.match(database, /secure_delete = ON/);
   assert.match(database, /quick_check/);

@@ -1,11 +1,12 @@
 const { createHttpClient } = require('./http-client');
 const security = require('../shared/security');
+const { version: APP_VERSION } = require('../../package.json');
 
-const ESI_BASE = 'https://esi.evetech.net/latest';
+const ESI_BASE = 'https://esi.evetech.net';
 const ESI_COMPATIBILITY_DATE = '2026-07-25';
 const SSO_TOKEN_URL = 'https://login.eveonline.com/v2/oauth/token';
-const SSO_VERIFY_URL = 'https://login.eveonline.com/oauth/verify';
-const USER_AGENT = 'AbyssLog/1.0';
+const SSO_VERIFY_URL = 'https://login.eveonline.com/v2/oauth/verify';
+const USER_AGENT = `AbyssLog/${APP_VERSION} (+https://github.com/AbyssLog/abysslog)`;
 const CACHE_LIMIT = 5000;
 const ABYSSAL_SYSTEM_MIN = 32_000_000;
 const CAPSULE_TYPE_IDS = new Set([670, 33_328]);

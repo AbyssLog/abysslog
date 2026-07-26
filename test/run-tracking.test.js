@@ -121,6 +121,9 @@ test('token coordinator refreshes expired tokens once for concurrent callers', a
     saveTokens: (_characterId, tokens) => {
       stored = tokens;
     },
+    clearTokens: () => {
+      stored = null;
+    },
     refreshTokens: async () => {
       refreshCalls++;
       await Promise.resolve();
@@ -158,6 +161,9 @@ test('token coordinator refreshes and retries once after HTTP 401', async () => 
     saveTokens: (_characterId, tokens) => {
       stored = tokens;
     },
+    clearTokens: () => {
+      stored = null;
+    },
     refreshTokens: async () => {
       refreshCalls++;
       return { access_token: 'replacement', expires_in: 3_600 };
@@ -176,6 +182,109 @@ test('token coordinator refreshes and retries once after HTTP 401', async () => 
   assert.equal(result, 'replacement');
   assert.equal(attempts, 2);
   assert.equal(refreshCalls, 1);
+});
+
+test('token coordinator clears a definitively revoked authorization', async () => {
+  let stored = {
+    access_token: 'expired',
+    refresh_token: 'revoked-refresh',
+    expires_at: 900,
+  };
+  let clearCalls = 0;
+  const coordinator = createTokenCoordinator({
+    loadTokens: () => stored,
+    saveTokens: (_characterId, tokens) => {
+      stored = tokens;
+    },
+    clearTokens: () => {
+      clearCalls++;
+      stored = null;
+    },
+    refreshTokens: async () => {
+      const error = new Error('EVE SSO request failed with HTTP 400');
+      error.errorCode = 'invalid_grant';
+      throw error;
+    },
+    validateAccessToken: token => token,
+    validateLifetime: lifetime => lifetime,
+    now: () => 1_000,
+    refreshSkewMs: 60,
+  });
+
+  await assert.rejects(
+    coordinator.getAccessToken(42),
+    /authorization expired or was revoked/
+  );
+  assert.equal(clearCalls, 1);
+  assert.equal(stored, null);
+});
+
+test('failed stale refresh cannot erase a newer authorization', async () => {
+  let stored = {
+    access_token: 'expired',
+    refresh_token: 'old-refresh',
+    expires_at: 900,
+  };
+  let clearCalls = 0;
+  const coordinator = createTokenCoordinator({
+    loadTokens: () => stored,
+    saveTokens: (_characterId, tokens) => {
+      stored = tokens;
+    },
+    clearTokens: () => {
+      clearCalls++;
+      stored = null;
+    },
+    refreshTokens: async () => {
+      stored = {
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        expires_at: 100_000,
+      };
+      const error = new Error('EVE SSO request failed with HTTP 400');
+      error.errorCode = 'invalid_grant';
+      throw error;
+    },
+    validateAccessToken: token => token,
+    validateLifetime: lifetime => lifetime,
+    now: () => 1_000,
+    refreshSkewMs: 60,
+  });
+
+  await assert.rejects(
+    coordinator.getAccessToken(42),
+    /authorization expired or was revoked/
+  );
+  assert.equal(clearCalls, 0);
+  assert.equal(stored.refresh_token, 'new-refresh');
+});
+
+test('token coordinator preserves authorization during transient refresh failures', async () => {
+  const stored = {
+    access_token: 'expired',
+    refresh_token: 'valid-refresh',
+    expires_at: 900,
+  };
+  let clearCalls = 0;
+  const coordinator = createTokenCoordinator({
+    loadTokens: () => stored,
+    saveTokens: () => {},
+    clearTokens: () => {
+      clearCalls++;
+    },
+    refreshTokens: async () => {
+      const error = new Error('EVE SSO request failed with HTTP 503');
+      error.statusCode = 503;
+      throw error;
+    },
+    validateAccessToken: token => token,
+    validateLifetime: lifetime => lifetime,
+    now: () => 1_000,
+    refreshSkewMs: 60,
+  });
+
+  await assert.rejects(coordinator.getAccessToken(42), /HTTP 503/);
+  assert.equal(clearCalls, 0);
 });
 
 test('transition tracker requires consecutive entry observations', () => {

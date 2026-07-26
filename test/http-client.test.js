@@ -147,6 +147,28 @@ test('HTTP client does not retry authentication failures', async () => {
   assert.equal(transport.requests.length, 1);
 });
 
+test('HTTP client retains only a bounded machine-readable OAuth error code', async () => {
+  const client = createHttpClient({
+    transport: createTransport([{
+      statusCode: 400,
+      data: {
+        error: 'invalid_grant',
+        error_description: 'sensitive provider detail',
+      },
+    }]),
+  });
+
+  await assert.rejects(
+    client.requestJson('https://example.test/token'),
+    error => {
+      assert.equal(error.statusCode, 400);
+      assert.equal(error.errorCode, 'invalid_grant');
+      assert.doesNotMatch(error.message, /sensitive provider detail/);
+      return true;
+    }
+  );
+});
+
 test('HTTP client exposes bounded response metadata only when requested', async () => {
   const client = createHttpClient({
     transport: createTransport([{

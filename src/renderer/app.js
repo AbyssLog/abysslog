@@ -325,10 +325,27 @@ async function pollESI(generation, characterId) {
 
   } catch (e) {
     if (!isCurrentPoll(generation, characterId)) return null;
-    const authError = /authorization|token|\bHTTP (?:401|403)\b/i.test(e.message || '');
-    document.getElementById('hudEsiVal').textContent = authError ? 'Auth Error' : 'Reconnecting…';
+    const authError = /character authorization|\bHTTP (?:401|403)\b/i.test(e.message || '');
+    let authorizationAvailable = true;
+    if (authError) {
+      try {
+        authorizationAvailable = await window.api.auth.hasTokens(characterId);
+      } catch {
+        authorizationAvailable = true;
+      }
+      if (!isCurrentPoll(generation, characterId)) return null;
+      if (!authorizationAvailable) {
+        S.hasAuth = false;
+        S.capabilities = normalizeCapabilities(null);
+        S.characterCapabilities[characterId] = S.capabilities;
+        renderCharList();
+      }
+    }
+    document.getElementById('hudEsiVal').textContent = !authorizationAvailable
+      ? 'Authorization Required'
+      : authError ? 'Auth Error' : 'Reconnecting…';
     document.getElementById('hudEsiVal').title = authError
-      ? 'Go to Settings → Re-authenticate to fix this'
+      ? 'Go to Settings → Permissions to authorize this character again'
       : 'ESI is temporarily unavailable; AbyssLog will retry automatically';
     document.getElementById('statusDot').className = 'status-dot';
     return { success: false, authError };
@@ -338,6 +355,7 @@ async function pollESI(generation, characterId) {
 async function runESIPollLoop(generation, characterId, interval) {
   const result = await pollESI(generation, characterId);
   if (!isCurrentPoll(generation, characterId)) return;
+  if (result?.authError) return;
   let delay = interval;
   if (result?.success) {
     S.pollFailureCount = 0;

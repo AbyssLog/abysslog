@@ -23,21 +23,25 @@
   function createTokenCoordinator({
     loadTokens,
     saveTokens,
+    clearTokens,
     refreshTokens,
     validateAccessToken,
     validateLifetime,
     now = () => Date.now(),
     refreshSkewMs = 60_000,
     isUnauthorizedError = error => /\bHTTP 401\b/.test(error?.message || ''),
+    isInvalidRefreshError = error => error?.errorCode === 'invalid_grant',
   }) {
     for (const [label, operation] of Object.entries({
       loadTokens,
       saveTokens,
+      clearTokens,
       refreshTokens,
       validateAccessToken,
       validateLifetime,
       now,
       isUnauthorizedError,
+      isInvalidRefreshError,
     })) {
       if (typeof operation !== 'function') throw new TypeError(`${label} must be a function`);
     }
@@ -70,7 +74,22 @@
           return validateAccessToken(current.access_token);
         }
 
-        const refreshed = await refreshTokens(current.refresh_token);
+        let refreshed;
+        try {
+          refreshed = await refreshTokens(current.refresh_token);
+        } catch (error) {
+          if (isInvalidRefreshError(error)) {
+            const latest = loadTokens(characterId);
+            if (latest?.refresh_token === current.refresh_token) {
+              await clearTokens(characterId);
+            }
+            throw new Error(
+              'Character authorization expired or was revoked; re-authenticate in Settings',
+              { cause: error }
+            );
+          }
+          throw error;
+        }
         const merged = {
           ...current,
           ...refreshed,

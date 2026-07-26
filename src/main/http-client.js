@@ -9,12 +9,28 @@ class HttpError extends Error {
     statusCode = null,
     headers = {},
     retryable = false,
+    errorCode = null,
   } = {}) {
     super(message);
     this.name = 'HttpError';
     this.statusCode = statusCode;
     this.headers = headers;
     this.retryable = retryable;
+    this.errorCode = errorCode;
+  }
+}
+
+function parseErrorCode(text) {
+  try {
+    const value = JSON.parse(text);
+    return (
+      value
+      && typeof value === 'object'
+      && typeof value.error === 'string'
+      && /^[A-Za-z0-9_.-]{1,64}$/.test(value.error)
+    ) ? value.error : null;
+  } catch {
+    return null;
   }
 }
 
@@ -134,6 +150,7 @@ function createHttpClient({
                 statusCode,
                 headers: responseHeaders,
                 retryable: isRetryableStatus(statusCode),
+                errorCode: parseErrorCode(text),
               }
             ));
             return;
