@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release version
+        run: npm run release:verify -- "$GITHUB_REF_NAME"
+
+      - name: Verify release source
+        run: |
+          if [ "$(git cat-file -t "$GITHUB_REF")" != "tag" ]; then
+            echo "::error::Release tags must be annotated tags"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Release commit must be part of main"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: npm test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  build-signed-windows:
+    needs: verify
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Electron runtime
+        run: npm run setup
+
+      - name: Require Windows signing credentials
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) {
+            throw 'WIN_CSC_LINK is not configured in the release environment'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
+            throw 'WIN_CSC_KEY_PASSWORD is not configured in the release environment'
+          }
+
+      - name: Build signed Windows installer
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npm run build:win:release
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $targets = @(Get-ChildItem -Path dist -Recurse -File -Filter '*.exe')
+          if ($targets.Count -lt 3) {
+            throw 'Expected the installer and all packaged application executables'
+          }
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target.FullName
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid Authenticode signature on $($target.Name): $($signature.Status)"
+            }
+            if ($null -eq $signature.TimeStamperCertificate) {
+              throw "Authenticode signature is not timestamped: $($target.Name)"
+            }
+            Write-Host "Valid signature: $($target.Name) [$($signature.SignerCertificate.Subject)]"
+          }
+
+      - name: Create release checksums
+        run: npm run release:checksums
+
+      - name: Upload signed release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: AbyssLog-Windows-${{ github.ref_name }}
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: build-signed-windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed release assets
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: AbyssLog-Windows-${{ github.ref_name }}
+          path: release
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --generate-notes \
+            --title "AbyssLog ${GITHUB_REF_NAME#v}"
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false

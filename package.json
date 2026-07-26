@@ -16,16 +16,24 @@
     "setup": "node node_modules/electron/install.js",
     "test": "node --test",
     "start": "electron .",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "build:all": "electron-builder --win --mac --linux"
+    "build:win": "electron-builder --win --publish never",
+    "build:win:release": "electron-builder --win nsis --x64 --config.forceCodeSigning=true --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:linux": "electron-builder --linux --publish never",
+    "build:all": "electron-builder --win --mac --linux --publish never",
+    "release:verify": "node scripts/verify-release-tag.js",
+    "release:checksums": "node scripts/create-release-checksums.js"
   },
   "build": {
     "appId": "com.abysslog.app",
     "productName": "AbyssLog",
     "directories": {
       "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "AbyssLog",
+      "repo": "abysslog"
     },
     "protocols": {
       "name": "AbyssLog",

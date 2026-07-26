@@ -128,6 +128,28 @@ test('CI uses read-only permissions, immutable Actions, and no build token', () 
   }
 });
 
+test('release publishing fails closed and isolates its write token', () => {
+  const workflow = fs.readFileSync(
+    path.join(projectRoot, '.github/workflows/release.yml'),
+    'utf8'
+  );
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')
+  );
+  const beforePublishJob = workflow.split(/\n  publish:\s*\n/)[0];
+
+  assert.match(workflow, /environment: release/);
+  assert.match(packageJson.scripts['build:win:release'], /--config\.forceCodeSigning=true/);
+  assert.match(workflow, /Get-AuthenticodeSignature/);
+  assert.match(workflow, /TimeStamperCertificate/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/);
+  assert.doesNotMatch(beforePublishJob, /GH_TOKEN|GITHUB_TOKEN|github\.token/);
+  assert.match(workflow, /permissions:\s*\n\s+contents: write/);
+  for (const line of workflow.split(/\r?\n/).filter(value => value.includes('uses: actions/'))) {
+    assert.match(line, /@[0-9a-f]{40}(?:\s+#\s+v[\d.]+)?$/);
+  }
+});
+
 test('packaging locks security-sensitive Electron fuses', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')

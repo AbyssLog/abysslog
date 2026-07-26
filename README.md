@@ -19,10 +19,9 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 
 ### 1. Download
 
-Go to the [GitHub Actions page](https://github.com/AbyssLog/abysslog/actions), click the latest successful build, and download the artifact for your platform:
-- **Windows** — `AbyssLog-Windows` → `.exe` installer
-- **macOS** — `AbyssLog-macOS` → `.dmg`
-- **Linux** — `AbyssLog-Linux` → `.AppImage`
+Download production Windows installers from the [GitHub Releases page](https://github.com/AbyssLog/abysslog/releases/latest). Release builds are required to be Authenticode signed and include `SHA256SUMS.txt` so the downloaded files can be verified.
+
+Unsigned preview builds for Windows, macOS, and Linux are available from the [GitHub Actions page](https://github.com/AbyssLog/abysslog/actions). Preview builds are intended for testing, not normal installation.
 
 ### 2. EVE Online Sign-In
 
@@ -60,13 +59,42 @@ Requires Node.js 22.12+.
 ```bash
 git clone https://github.com/AbyssLog/abysslog.git
 cd abysslog
-npm install
+npm ci
 npm run setup      # download the pinned Electron runtime
 npm start          # run in dev mode
 npm run build:win  # build Windows .exe
 npm run build:mac  # build macOS .dmg
 npm run build:linux # build Linux .AppImage
 ```
+
+Dependency lifecycle scripts are disabled by default in `.npmrc`. `npm run setup` is the explicit, reviewable step that downloads the Electron runtime.
+
+---
+
+## Publishing a Windows Release
+
+Production Windows releases are built from version tags and must be Authenticode signed. Enable immutable releases in the repository settings. Configure a protected GitHub environment named `release`, require a reviewer, and add these environment secrets:
+
+- `WIN_CSC_LINK` — a base64-encoded `.pfx` code-signing certificate
+- `WIN_CSC_KEY_PASSWORD` — the certificate password
+
+Protect the `v*` tag pattern in the repository settings. Update both `package.json` and `version.json` to the same version, merge and validate the change on `main`, then create and push a matching annotated tag:
+
+```bash
+git tag -a v1.0.1 -m "AbyssLog v1.0.1"
+git push origin v1.0.1
+```
+
+The release workflow:
+
+1. verifies that the tag matches both version files;
+2. requires an annotated tag whose commit is already part of `main`;
+3. runs tests and audits production dependencies;
+4. refuses to build without signing credentials;
+5. verifies and timestamps every packaged Authenticode signature;
+6. publishes the installer, update metadata, and SHA-256 checksums to GitHub Releases.
+
+The signing certificate and password must only exist in GitHub secrets; never add either one to the repository.
 
 ---
 
