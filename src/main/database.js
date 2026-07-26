@@ -1,16 +1,26 @@
 const path = require('path');
 const { app } = require('electron');
+const security = require('../shared/security');
 
 let db;
+const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
 
 function init() {
   const Database = require('better-sqlite3');
   const dbPath = path.join(app.getPath('userData'), 'abysslog.db');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('secure_delete = ON');
   db.pragma('foreign_keys = ON');
   createSchema();
   migrateSchema();
+}
+
+function hardenSensitiveStorage() {
+  if (getSetting(STORAGE_HARDENING_KEY) === '1') return;
+  db.pragma('wal_checkpoint(TRUNCATE)');
+  db.exec('VACUUM');
+  setSetting(STORAGE_HARDENING_KEY, '1');
 }
 
 function createSchema() {
@@ -326,7 +336,7 @@ function updateCargoOnly(runId, { cargo_before, cargo_after, drone_before, drone
 function updateMeta(runId, { tier, weather, outcome, duration, started_at, total_loss, ship_name, ship_class }) {
   db.prepare(`
     UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?,
-      ship_name = ?, ship_class = ?
+      ship_name = COALESCE(?, ship_name), ship_class = COALESCE(?, ship_class)
     WHERE id = ?
   `).run(tier, weather, outcome, duration, started_at, total_loss || 0, ship_name || null, ship_class || null, runId);
   return true;
@@ -336,11 +346,13 @@ function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_befo
   const transaction = db.transaction(() => {
     db.prepare(`
       UPDATE runs SET loot_value = ?, consumed_cost = ?, net_isk = ?,
-        cargo_before = ?, cargo_after = ?, drone_before = ?, drone_after = ? WHERE id = ?
+        cargo_before = ?, cargo_after = ?,
+        drone_before = COALESCE(?, drone_before), drone_after = COALESCE(?, drone_after)
+        WHERE id = ?
     `).run(loot_value, consumed_cost, net_isk, cargo_before, cargo_after, drone_before || null, drone_after || null, runId);
 
-    // Replace gained/consumed items — keep lost items (from death) untouched
-    db.prepare("DELETE FROM run_items WHERE run_id = ? AND type IN ('gained','consumed')").run(runId);
+    // Appraisal updates provide the complete item set, including death-loss reappraisals.
+    db.prepare('DELETE FROM run_items WHERE run_id = ?').run(runId);
 
     const insertItem = db.prepare(`
       INSERT INTO run_items (run_id, item_name, qty, type, unit_price_buy, unit_price_sell)
@@ -388,22 +400,14 @@ function exportRunsCSV(characterId) {
     'cargo_before','cargo_after','drone_before','drone_after','notes'
   ];
 
-  const escape = (v) => {
-    if (v == null) return '';
-    const s = String(v);
-    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  };
-
-  const rows = runs.map(r => headers.map(h => escape(r[h])).join(','));
+  const rows = runs.map(r => headers.map(h => security.escapeCsvCell(r[h])).join(','));
   return [headers.join(','), ...rows].join('\n');
 }
 
 function importRunsCSV(csvText, characterId) {
   const lines = csvText.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return { imported: 0, skipped: 0, errors: [] };
+  if (lines.length > 50_001) throw new TypeError('CSV contains too many rows');
 
   // Parse headers from first line
   const parseCSVLine = (line) => {
@@ -432,8 +436,8 @@ function importRunsCSV(csvText, characterId) {
     INSERT OR IGNORE INTO runs
       (character_id, started_at, duration, tier, weather, outcome,
        ship_name, ship_class, loot_value, consumed_cost, net_isk, total_loss,
-       cargo_before, cargo_after, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       cargo_before, cargo_after, drone_before, drone_after, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
 
   let imported = 0, skipped = 0;
@@ -447,18 +451,40 @@ function importRunsCSV(csvText, characterId) {
         const get = (name) => cols[idx(name)] || null;
         const charId = characterId || get('character_id');
         if (!charId) { skipped++; continue; }
+        const number = (name) => {
+          const raw = get(name);
+          return raw == null || raw === '' ? 0 : Number(raw);
+        };
+        const run = security.validateRunData({
+          character_id: charId,
+          started_at: get('started_at') || String(Math.floor(Date.now() / 1000)),
+          duration: get('duration') || '0',
+          tier: get('tier') || 'Unknown',
+          weather: get('weather') || 'Unknown',
+          outcome: get('outcome') || 'Survived',
+          ship_name: get('ship_name') || '',
+          ship_class: get('ship_class') || 'Unknown',
+          loot_value: number('loot_value'),
+          consumed_cost: number('consumed_cost'),
+          net_isk: number('net_isk'),
+          total_loss: number('total_loss'),
+          cargo_before: get('cargo_before') || '',
+          cargo_after: get('cargo_after') || '',
+          drone_before: get('drone_before') || '',
+          drone_after: get('drone_after') || '',
+          notes: get('notes') || '',
+          items: [],
+          fitting: [],
+          implants: [],
+        });
 
         const info = insertRun.run(
-          charId,
-          parseInt(get('started_at')) || Math.floor(Date.now()/1000),
-          parseInt(get('duration')) || 0,
-          get('tier'), get('weather'), get('outcome') || 'Survived',
-          get('ship_name'), get('ship_class'),
-          parseFloat(get('loot_value')) || 0,
-          parseFloat(get('consumed_cost')) || 0,
-          parseFloat(get('net_isk')) || 0,
-          parseFloat(get('total_loss')) || 0,
-          get('cargo_before'), get('cargo_after'), get('notes')
+          run.character_id, run.started_at, run.duration,
+          run.tier, run.weather, run.outcome,
+          run.ship_name || null, run.ship_class,
+          run.loot_value, run.consumed_cost, run.net_isk, run.total_loss,
+          run.cargo_before || null, run.cargo_after || null,
+          run.drone_before || null, run.drone_after || null, run.notes || null
         );
         if (info.changes > 0) imported++; else skipped++;
       } catch(e) {
@@ -471,4 +497,4 @@ function importRunsCSV(csvText, characterId) {
   return { imported, skipped, errors };
 }
 
-module.exports = { init, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, updateCargoOnly, getRuns, getRunById, deleteRun, getStats, getDailyStats, exportRunsCSV, importRunsCSV };
+module.exports = { init, hardenSensitiveStorage, getCharacters, saveCharacter, deleteCharacter, getSetting, setSetting, deleteSetting, getAllSettings, saveRun, updateAppraisal, updateMeta, updateCargoOnly, getRuns, getRunById, deleteRun, getStats, getDailyStats, exportRunsCSV, importRunsCSV };

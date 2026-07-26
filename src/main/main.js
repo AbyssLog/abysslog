@@ -99,7 +99,7 @@ function saveTokens(characterId, tokens) {
     min: Date.now() - 60_000,
     max: Number.MAX_SAFE_INTEGER,
   });
-  const safeTokens = { ...tokens, access_token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
+  const safeTokens = { access_token: accessToken, refresh_token: refreshToken, expires_at: expiresAt };
   db.setSetting(tokenKey(characterId), encryptSecret(JSON.stringify(safeTokens)));
 }
 
@@ -108,7 +108,15 @@ function loadTokens(characterId) {
   if (!json) return null;
   try {
     const tokens = JSON.parse(json);
-    return security.isPlainObject(tokens) ? tokens : null;
+    if (!security.isPlainObject(tokens)) return null;
+    return {
+      access_token: security.requireString(tokens.access_token, 'Access token', 16 * 1024),
+      refresh_token: security.requireString(tokens.refresh_token, 'Refresh token', 16 * 1024),
+      expires_at: security.requireInteger(tokens.expires_at, 'Token expiry', {
+        min: 0,
+        max: Number.MAX_SAFE_INTEGER,
+      }),
+    };
   } catch {
     return null;
   }
@@ -116,7 +124,12 @@ function loadTokens(characterId) {
 
 function migrateLegacyJaniceKey() {
   const legacyKey = db.getSetting('janice_api_key');
-  if (!legacyKey || db.getSetting(JANICE_SECRET_KEY) || !isSecureStorageAvailable()) return;
+  if (!legacyKey) return;
+  if (db.getSetting(JANICE_SECRET_KEY)) {
+    db.deleteSetting('janice_api_key');
+    return;
+  }
+  if (!isSecureStorageAvailable()) return;
   db.setSetting(JANICE_SECRET_KEY, encryptSecret(legacyKey));
   db.deleteSetting('janice_api_key');
 }
@@ -222,7 +235,8 @@ async function handleOAuthCallback(callbackUrl) {
       max: 86_400,
     }) * 1000;
 
-    const characterInfo = await esi.verifyToken(tokens.access_token);
+    const accessToken = security.requireString(tokens.access_token, 'Access token', 16 * 1024);
+    const characterInfo = await esi.verifyToken(accessToken);
     const characterId = security.requireInteger(characterInfo.CharacterID, 'Character ID');
     const characterName = security.requireString(characterInfo.CharacterName, 'Character name', 128);
     const character = {
@@ -323,6 +337,7 @@ if (!gotTheLock) {
     Menu.setApplicationMenu(null);
     db.init();
     migrateLegacyJaniceKey();
+    if (!db.getSetting('janice_api_key')) db.hardenSensitiveStorage();
     createWindow();
   });
 }
@@ -360,7 +375,7 @@ secureHandle('settings:get-all', () => getPublicSettings());
 secureHandle('secrets:status', () => getSecureStorageStatus());
 secureHandle('secrets:has-janice-key', () => Boolean(getJaniceApiKey()));
 secureHandle('secrets:set-janice-key', apiKey => {
-  const key = security.requireString(apiKey, 'Janice API key', 4096).trim();
+  const key = security.requireTrimmedText(apiKey, 'Janice API key', 4096);
   db.setSetting(JANICE_SECRET_KEY, encryptSecret(key));
   db.deleteSetting('janice_api_key');
   return true;
@@ -398,26 +413,32 @@ secureHandle('janice:test-key', apiKey =>
   janice.appraise(
     [{ name: 'Tritanium', qty: 1 }],
     'buy',
-    security.requireString(apiKey, 'Janice API key', 4096).trim()
+    security.requireTrimmedText(apiKey, 'Janice API key', 4096)
   ));
 
-secureHandle('runs:save', runData => db.saveRun(validateObjectPayload(runData, 'Run')));
+secureHandle('runs:save', runData =>
+  db.saveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
 secureHandle('runs:get-all', filters =>
-  db.getRuns(filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)));
+  db.getRuns(security.validateRunFilters(
+    filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)
+  )));
 secureHandle('runs:get-by-id', runId => db.getRunById(security.requireInteger(runId, 'Run ID')));
 secureHandle('runs:delete', runId => db.deleteRun(security.requireInteger(runId, 'Run ID')));
 secureHandle('runs:get-stats', characterId => db.getStats(validateOptionalCharacterId(characterId)));
 secureHandle('runs:update-appraisal', (runId, data) =>
   db.updateAppraisal(
     security.requireInteger(runId, 'Run ID'),
-    validateObjectPayload(data, 'Appraisal update')
+    security.validateAppraisalUpdate(validateObjectPayload(data, 'Appraisal update'))
   ));
 secureHandle('runs:update-meta', (runId, data) =>
-  db.updateMeta(security.requireInteger(runId, 'Run ID'), validateObjectPayload(data, 'Run update')));
+  db.updateMeta(
+    security.requireInteger(runId, 'Run ID'),
+    security.validateRunMeta(validateObjectPayload(data, 'Run update'))
+  ));
 secureHandle('runs:update-cargo-only', (runId, data) =>
   db.updateCargoOnly(
     security.requireInteger(runId, 'Run ID'),
-    validateObjectPayload(data, 'Cargo update')
+    security.validateCargoUpdate(validateObjectPayload(data, 'Cargo update'))
   ));
 secureHandle('runs:get-daily-stats', characterId =>
   db.getDailyStats(validateOptionalCharacterId(characterId)));

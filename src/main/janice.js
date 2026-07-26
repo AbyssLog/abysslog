@@ -1,4 +1,5 @@
 const https = require('https');
+const security = require('../shared/security');
 
 const JANICE_BASE = 'https://janice.e-351.com';
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -57,7 +58,7 @@ function appraise(items, pricing, apiKey) {
           return;
         }
         try {
-          const result = JSON.parse(data);
+          const result = security.validateJaniceResponse(JSON.parse(data));
 
           // Detect unresolved items by comparing submitted names against returned names
           const returnedNames = new Set(result.items.map(i => i.itemType.name.toLowerCase()));
