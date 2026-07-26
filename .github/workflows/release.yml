@@ -91,6 +91,9 @@ jobs:
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npm run build:win:release
 
+      - name: Smoke test packaged application
+        run: npm run test:package:win
+
       - name: Verify Authenticode signatures
         shell: pwsh
         run: |

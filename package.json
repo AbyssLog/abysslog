@@ -21,6 +21,7 @@
     "build:mac": "electron-builder --mac --publish never",
     "build:linux": "electron-builder --linux --publish never",
     "build:all": "electron-builder --win --mac --linux --publish never",
+    "test:package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-test-windows-package.ps1",
     "release:verify": "node scripts/verify-release-tag.js",
     "release:checksums": "node scripts/create-release-checksums.js"
   },

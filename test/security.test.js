@@ -522,6 +522,8 @@ test('CI uses read-only permissions, immutable Actions, and no build token', () 
 
   assert.match(workflow, /permissions:\s*\n\s+contents: read/);
   assert.doesNotMatch(workflow, /GITHUB_TOKEN|GH_TOKEN/);
+  assert.match(workflow, /Build unsigned Windows preview[\s\S]*Smoke test packaged application/);
+  assert.match(workflow, /run: npm run test:package:win/);
   for (const line of workflow.split(/\r?\n/).filter(value => value.includes('uses: actions/'))) {
     assert.match(line, /@[0-9a-f]{40}(?:\s+#\s+v[\d.]+)?$/);
   }
@@ -541,6 +543,8 @@ test('release publishing fails closed and isolates its write token', () => {
   assert.match(packageJson.scripts['build:win:release'], /--config\.forceCodeSigning=true/);
   assert.match(workflow, /Get-AuthenticodeSignature/);
   assert.match(workflow, /TimeStamperCertificate/);
+  assert.match(workflow, /Build signed Windows installer[\s\S]*Smoke test packaged application/);
+  assert.match(workflow, /run: npm run test:package:win/);
   assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/);
   assert.doesNotMatch(beforePublishJob, /GH_TOKEN|GITHUB_TOKEN|github\.token/);
   assert.match(workflow, /permissions:\s*\n\s+contents: write/);
