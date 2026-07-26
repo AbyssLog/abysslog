@@ -1,5 +1,36 @@
 // ── State ─────────────────────────────────────────────────────────────────
 const runTracking = window.AbyssRunTracking;
+const uiErrors = window.AbyssUiErrors;
+
+function dismissGlobalError() {
+  const notice = document.getElementById('globalErrorNotice');
+  if (notice) notice.hidden = true;
+}
+
+function reportUiError(context, error) {
+  console.error(`${context}:`, error);
+  const notice = document.getElementById('globalErrorNotice');
+  const message = document.getElementById('globalErrorMessage');
+  if (!notice || !message) return;
+  message.textContent = uiErrors?.formatUiError(context, error)
+    || `${context}.`;
+  notice.hidden = false;
+}
+
+function runUiTask(context, operation, onFailure) {
+  return Promise.resolve()
+    .then(operation)
+    .catch(error => {
+      if (typeof onFailure === 'function') {
+        try {
+          onFailure();
+        } catch (recoveryError) {
+          console.error('UI recovery failed:', recoveryError);
+        }
+      }
+      reportUiError(context, error);
+    });
+}
 
 const S = {
   characters: [],
@@ -365,6 +396,18 @@ async function classifyShip(typeId) {
 
 let activeCheckpointTimer = null;
 let activeCheckpointChain = Promise.resolve();
+let activeCheckpointErrorReportedAt = 0;
+const ACTIVE_CHECKPOINT_ERROR_COOLDOWN_MS = 60_000;
+
+function reportActiveRunCheckpointError(error) {
+  const now = Date.now();
+  if (now - activeCheckpointErrorReportedAt < ACTIVE_CHECKPOINT_ERROR_COOLDOWN_MS) {
+    console.error('Failed to checkpoint active run:', error);
+    return;
+  }
+  activeCheckpointErrorReportedAt = now;
+  reportUiError('Could not save the current run recovery checkpoint', error);
+}
 
 function clearTrackerInputs() {
   for (const id of [
@@ -467,7 +510,11 @@ function persistActiveRun() {
   if (!snapshot) return activeCheckpointChain;
   activeCheckpointChain = activeCheckpointChain
     .catch(() => {})
-    .then(() => window.api.runs.saveActive(snapshot));
+    .then(() => window.api.runs.saveActive(snapshot))
+    .then(result => {
+      activeCheckpointErrorReportedAt = 0;
+      return result;
+    });
   return activeCheckpointChain;
 }
 
@@ -477,9 +524,7 @@ function scheduleActiveRunCheckpoint() {
   activeCheckpointTimer = setTimeout(() => {
     activeCheckpointTimer = null;
     syncActiveRunInputs();
-    void persistActiveRun().catch(error => {
-      console.error('Failed to checkpoint active run:', error);
-    });
+    void persistActiveRun().catch(reportActiveRunCheckpointError);
   }, 250);
 }
 
@@ -567,9 +612,7 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
   setRunState('in-abyss');
   startTimer();
   updateRunInfo();
-  void persistActiveRun().catch(error => {
-    console.error('Failed to checkpoint active run:', error);
-  });
+  void persistActiveRun().catch(reportActiveRunCheckpointError);
   void captureActiveRunDetails(S.activeRun, shipTypeId);
 }
 
@@ -633,15 +676,27 @@ async function captureActiveRunDetails(run, shipTypeId) {
         `✓ ${capturedFeatures.join(' and ')} captured for loss tracking`;
       document.getElementById('fitCaptured').style.display = 'block';
     }
+    const failedFeatures = [];
     if (fitResult.status === 'rejected') {
+      failedFeatures.push('the ship fitting');
       console.error('Failed to capture fitting:', fitResult.reason);
     }
     if (implantResult.status === 'rejected') {
+      failedFeatures.push('implants');
       console.error('Failed to capture implants:', implantResult.reason);
+    }
+    if (failedFeatures.length > 0) {
+      const firstFailure = fitResult.status === 'rejected'
+        ? fitResult.reason
+        : implantResult.reason;
+      reportUiError(
+        `Could not capture ${failedFeatures.join(' or ')} for loss tracking`,
+        firstFailure
+      );
     }
     if (S.activeRun === run && !run.finalizing && !run.suspended) await persistActiveRun();
   } catch (e) {
-    console.error('Failed to capture fitting/implants:', e);
+    reportUiError('Could not capture loss-tracking details', e);
   }
 }
 
@@ -679,9 +734,7 @@ function endRunSurvived(endedAt = Math.floor(Date.now() / 1000)) {
   document.getElementById('hudRunState').textContent = 'Survived';
   document.getElementById('infoOutcome').innerHTML = '<span class="badge survived">Survived</span>';
   setRunState('awaiting-cargo');
-  void persistActiveRun().catch(error => {
-    console.error('Failed to checkpoint completed run:', error);
-  });
+  void persistActiveRun().catch(reportActiveRunCheckpointError);
 }
 
 async function endRunDied(endedAt = Math.floor(Date.now() / 1000)) {
@@ -814,9 +867,7 @@ async function appraiseRun() {
 
     renderAppraisalResults(lootResult, consumedResult, diff);
     setRunState('appraisal');
-    void persistActiveRun().catch(error => {
-      console.error('Failed to checkpoint appraised run:', error);
-    });
+    void persistActiveRun().catch(reportActiveRunCheckpointError);
   } catch (e) {
     document.getElementById('appraise-error').innerHTML = `<div class="alert err">Appraisal failed: ${esc(e.message)} <button class="btn sm red" data-action="appraise-run">Retry</button></div>`;
     document.getElementById('appraise-error').style.display = 'block';
@@ -1473,9 +1524,7 @@ function backToAppraise() {
   document.getElementById('cargoAfterText').value = S.activeRun ? S.activeRun.cargoAfter : '';
   document.getElementById('droneAfterText').value = S.activeRun ? (S.activeRun.droneAfter || '') : '';
   setRunState('awaiting-cargo');
-  void persistActiveRun().catch(error => {
-    console.error('Failed to checkpoint active run:', error);
-  });
+  void persistActiveRun().catch(reportActiveRunCheckpointError);
 }
 
 function resetRunUI() {
@@ -2498,6 +2547,7 @@ document.addEventListener('keydown', event => {
 });
 
 const clickActions = {
+  'dismiss-global-error': () => dismissGlobalError(),
   'show-page': element => showPage(element.dataset.page),
   'toggle-collapsible': element =>
     toggleCollapsible(element.dataset.body, element.dataset.arrow, element.dataset.hint),
@@ -2535,13 +2585,48 @@ const clickActions = {
   'remove-character': element => removeCharacter(Number(element.dataset.characterId)),
 };
 
+const actionFailureContexts = Object.freeze({
+  'show-page': 'Could not open the requested page',
+  'manual-start': 'Could not start the run',
+  'open-manual-entry': 'Could not open manual run entry',
+  'manual-end-survived': 'Could not complete the run',
+  'manual-end-died': 'Could not record the ship loss',
+  'appraise-run': 'Could not appraise the run',
+  'cancel-run': 'Could not cancel the run',
+  'save-current-run': 'Could not save the run',
+  'retry-killmail': 'Could not check for the killmail',
+  'back-to-appraise': 'Could not return to the appraisal',
+  'render-history': 'Could not refresh run history',
+  'open-add-character': 'Could not open character sign-in',
+  'test-janice-key': 'Could not test the Janice API key',
+  'remove-janice-key': 'Could not remove the Janice API key',
+  'open-external': 'Could not open the external link',
+  'save-settings': 'Could not save settings',
+  'export-csv': 'Could not export run history',
+  'import-csv': 'Could not import run history',
+  'create-full-backup': 'Could not create a backup',
+  'open-backup-folder': 'Could not open the backup folder',
+  'clear-inventory-baseline': 'Could not clear the inventory baseline',
+  'start-sso': 'Could not start EVE sign-in',
+  'submit-manual-entry': 'Could not save the manual run',
+  'sort-history': 'Could not sort run history',
+  'show-run-detail': 'Could not open the run details',
+  'reappraise-run': 'Could not re-appraise the run',
+  'edit-run': 'Could not edit the run',
+  'delete-run': 'Could not delete the run',
+  'reauth-character': 'Could not change character permissions',
+  'remove-character': 'Could not remove the character',
+});
+
 document.addEventListener('click', event => {
   const element = event.target.closest('[data-action]');
   if (!element) return;
-  const handler = clickActions[element.dataset.action];
+  const action = element.dataset.action;
+  const handler = clickActions[action];
   if (!handler) return;
   event.preventDefault();
-  Promise.resolve(handler(element)).catch(error => console.error('Action failed:', error));
+  const context = actionFailureContexts[action] || 'AbyssLog could not complete the action';
+  void runUiTask(context, () => handler(element));
 });
 
 document.addEventListener('change', event => {
@@ -2552,15 +2637,17 @@ document.addEventListener('change', event => {
     'permissionImplants',
     'permissionKillmails',
   ].includes(element.id)) {
-    updatePermissionSummary();
+    void runUiTask('Could not update the permission selection', () => updatePermissionSummary());
   } else if (element.dataset.changeAction === 'switch-character') {
-    void switchCharacter(element.value).catch(error => {
-      console.error('Character switch failed:', error);
-    });
+    void runUiTask(
+      'Could not switch characters',
+      () => switchCharacter(element.value),
+      () => { element.value = S.activeCharId || ''; }
+    );
   } else if (element.dataset.changeAction === 'render-history') {
-    void renderHistory();
+    void runUiTask('Could not refresh run history', () => renderHistory());
   } else if (element.dataset.changeAction === 'manual-outcome') {
-    updateManualOutcomeUI();
+    void runUiTask('Could not update the manual run form', () => updateManualOutcomeUI());
   }
 });
 
@@ -2592,5 +2679,16 @@ document.addEventListener('error', event => {
   }
 }, true);
 
+window.addEventListener('unhandledrejection', event => {
+  event.preventDefault();
+  reportUiError('An unexpected background operation failed', event.reason);
+});
+
+window.addEventListener('error', event => {
+  if (!event.error) return;
+  event.preventDefault();
+  reportUiError('An unexpected application error occurred', event.error);
+});
+
 // Start
-init().catch(error => console.error('Initialization failed:', error));
+void runUiTask('AbyssLog could not finish starting', () => init());

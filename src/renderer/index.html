@@ -252,6 +252,21 @@ input, select, textarea { font-family: var(--font); }
 .modal-close { background: none; border: none; color: var(--text-dim); font-size: 18px; line-height: 1; cursor: pointer; }
 .modal-close:hover { color: var(--text); }
 
+.global-error-notice {
+  position: fixed; top: 68px; right: 18px; z-index: 400;
+  display: flex; align-items: flex-start; gap: 12px;
+  width: min(520px, calc(100vw - 36px)); padding: 14px 16px;
+  background: #251113; border: 1px solid var(--red); color: var(--text);
+  box-shadow: 0 10px 32px rgba(0,0,0,0.55);
+}
+.global-error-notice[hidden] { display: none; }
+.global-error-content { flex: 1; min-width: 0; }
+.global-error-title { color: var(--red); font-size: 11px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 5px; }
+.global-error-message { font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.global-error-hint { color: var(--text-dim); font-size: 10px; line-height: 1.5; margin-top: 5px; }
+.global-error-dismiss { background: transparent; border: 0; color: var(--text-dim); cursor: pointer; font-size: 18px; line-height: 1; padding: 2px; }
+.global-error-dismiss:hover { color: var(--text); }
+
 /* ── Setup / No Char ──────────────────────────────────────────────────── */
 .setup-card { max-width: 520px; margin: 40px auto; background: var(--panel); border: 1px solid var(--border-bright); padding: 28px; }
 .setup-card h2 { font-size: 18px; font-weight: 700; letter-spacing: 2px; color: var(--cyan); text-transform: uppercase; margin-bottom: 8px; }
@@ -272,6 +287,15 @@ input, select, textarea { font-family: var(--font); }
 </div>
 
 <script src="./splash.js"></script>
+
+<div id="globalErrorNotice" class="global-error-notice" role="alert" aria-live="assertive" aria-atomic="true" hidden>
+  <div class="global-error-content">
+    <div class="global-error-title">Something went wrong</div>
+    <div id="globalErrorMessage" class="global-error-message"></div>
+    <div class="global-error-hint">Retry the action. If the problem continues, restart AbyssLog.</div>
+  </div>
+  <button type="button" class="global-error-dismiss" data-action="dismiss-global-error" aria-label="Dismiss error">×</button>
+</div>
 
 <div class="app">
 
@@ -770,6 +794,7 @@ input, select, textarea { font-family: var(--font); }
 
 <script src="../shared/security.js"></script>
 <script src="../shared/run-tracking.js"></script>
+<script src="../shared/ui-errors.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

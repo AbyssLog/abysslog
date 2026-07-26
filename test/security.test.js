@@ -413,6 +413,12 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /aria-current/);
   assert.match(appJs, /aria-expanded/);
   assert.match(appJs, /class="table-sort"/);
+  assert.match(appJs, /function runUiTask/);
+  assert.match(appJs, /Promise\.resolve\(\)\s*\.then\(operation\)/);
+  assert.match(appJs, /window\.addEventListener\('unhandledrejection'/);
+  assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
+  assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
+  assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
   assert.match(esi, /validateEsiShip/);
@@ -428,6 +434,7 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
   assert.match(html, /<title>AbyssLog<\/title>/);
   assert.match(html, /role="dialog" aria-modal="true"/);
   assert.match(html, /role="status" aria-live="polite"/);
+  assert.match(html, /id="globalErrorNotice"[^>]+role="alert"[^>]+aria-live="assertive"/);
   assert.doesNotMatch(html, /<div class="collapsible-header"/);
   assert.match(html, /class="collapsible-header"[^>]+aria-expanded="true"/);
   for (const tag of html.match(/<(?:input|select|textarea)\b[^>]*>/g) || []) {
