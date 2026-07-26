@@ -416,7 +416,7 @@ input, select, textarea { font-family: var(--font); }
                   <span class="collapsible-arrow" id="postDroneArrow">▼</span>
                 </div>
                 <div class="collapsible-body" id="postDroneBody">
-                  <textarea class="field-textarea" id="droneAfterText" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here." style="min-height:70px" oninput="updatePasteHint('droneAfterText','postDroneHint')"></textarea>
+                  <textarea class="field-textarea" id="droneAfterText" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Only paste if you lost drones. Leave empty if all drones survived." style="min-height:70px" oninput="updatePasteHint('droneAfterText','postDroneHint')"></textarea>
                 </div>
               </div>
               <div class="action-row">
@@ -1131,12 +1131,6 @@ function endRunSurvived() {
   document.getElementById('timerDisplay').classList.add('survived');
   document.getElementById('hudRunState').textContent = 'Survived';
   document.getElementById('infoOutcome').innerHTML = '<span class="badge survived">Survived</span>';
-  // Pre-populate post-run drone bay with pre-run contents — user edits only if drones were lost
-  const droneBefore = document.getElementById('droneBeforeText').value;
-  if (droneBefore.trim()) {
-    document.getElementById('droneAfterText').value = droneBefore;
-    updatePasteHint('droneAfterText', 'postDroneHint');
-  }
   setRunState('awaiting-cargo');
 }
 
@@ -1405,10 +1399,19 @@ async function saveCurrentRun() {
 
   await window.api.runs.save(runData);
 
-  // Promote post-run cargo to pre-run if survived
+  // Promote post-run cargo and drone bay to pre-run for next run
   if (run.outcome === 'Survived') {
     document.getElementById('cargoBeforeText').value = run.cargoAfter;
-    document.getElementById('droneBeforeText').value = run.droneAfter || '';
+    // If post-run drone bay was pasted use it, otherwise carry pre-run forward unchanged
+    const nextDroneBefore = (run.droneAfter && run.droneAfter.trim())
+      ? run.droneAfter
+      : run.droneBefore || '';
+    document.getElementById('droneBeforeText').value = nextDroneBefore;
+    updatePasteHint('droneBeforeText', 'preDroneHint');
+    if (nextDroneBefore.trim()) {
+      document.getElementById('preDroneBody').classList.add('open');
+      document.getElementById('preDroneArrow').classList.add('open');
+    }
   } else {
     document.getElementById('cargoBeforeText').value = '';
     document.getElementById('droneBeforeText').value = '';
@@ -1732,7 +1735,6 @@ function resetRunUI() {
   document.getElementById('infoStarted').textContent = '—';
   document.getElementById('infoOutcome').textContent = '—';
   document.getElementById('cargoAfterText').value = '';
-  document.getElementById('droneBeforeText').value = '';
   document.getElementById('droneAfterText').value = '';
   document.getElementById('fitCaptured').style.display = 'none';
   document.getElementById('appraise-error').style.display = 'none';
