@@ -6,6 +6,7 @@ const {
   createSingleFlight,
   createTokenCoordinator,
   createTransitionTracker,
+  inferAbyssalFilament,
 } = require('../src/shared/run-tracking');
 
 test('poll backoff grows exponentially and respects its cap', () => {
@@ -14,6 +15,31 @@ test('poll backoff grows exponentially and respects its cap', () => {
   assert.equal(calculateBackoffDelay(5_000, 5), 60_000);
   assert.equal(calculateBackoffDelay(5_000, 20), 60_000);
   assert.throws(() => calculateBackoffDelay(0, 1));
+});
+
+test('filament names infer tier and weather only when unambiguous', () => {
+  assert.deepEqual(inferAbyssalFilament([
+    { name: 'Cataclysmic Electrical Filament', qty: 3 },
+    { name: 'Caldari Navy Missile', qty: 100 },
+  ]), {
+    tier: 'T6',
+    weather: 'Electrical',
+    name: 'Cataclysmic Electrical Filament',
+    ambiguous: false,
+  });
+  assert.deepEqual(inferAbyssalFilament([
+    { name: 'Tranquil Dark Filament', qty: 1 },
+  ]), {
+    tier: 'T0',
+    weather: 'Dark',
+    name: 'Tranquil Dark Filament',
+    ambiguous: false,
+  });
+  assert.equal(inferAbyssalFilament([{ name: 'Tritanium', qty: 1 }]), null);
+  assert.equal(inferAbyssalFilament([
+    { name: 'Calm Gamma Filament', qty: 1 },
+    { name: 'Raging Firestorm Filament', qty: 1 },
+  ]).ambiguous, true);
 });
 
 test('single-flight work is shared per key and cleared after completion', async () => {

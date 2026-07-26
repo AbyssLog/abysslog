@@ -215,7 +215,7 @@ function getCharacterCapabilities(characterId) {
   const tokens = loadTokens(characterId);
   return tokens
     ? security.getEsiCapabilitiesForScopes(tokens.scopes)
-    : { tracking: false, fitting: false, implants: false };
+    : { tracking: false, fitting: false, implants: false, killmails: false };
 }
 
 async function startSso(selectedCapabilities) {
@@ -426,6 +426,14 @@ secureHandle('esi:get-fitting', characterId =>
   withCharacterCapability(characterId, 'fitting', (id, token) => esi.getFitting(id, token)));
 secureHandle('esi:get-implants', characterId =>
   withCharacterCapability(characterId, 'implants', (id, token) => esi.getImplants(id, token)));
+secureHandle('esi:get-recent-abyss-loss', (characterId, startedAt, endedAt) =>
+  withCharacterCapability(characterId, 'killmails', (id, token) =>
+    esi.getRecentAbyssLoss(
+      id,
+      token,
+      security.requireInteger(startedAt, 'Run start time'),
+      security.requireInteger(endedAt, 'Run end time')
+    )));
 secureHandle('esi:get-type-names', typeIds => {
   if (!Array.isArray(typeIds) || typeIds.length > 1000) throw new TypeError('Type ID list is invalid');
   return esi.getTypeNames(typeIds.map(id => security.requireInteger(id, 'Type ID')));

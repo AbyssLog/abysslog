@@ -146,12 +146,20 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
       ship_class: 'Cruiser',
       fitting: [],
       implants: [],
+      killmailItems: [{ type_id: 12_345, type_name: 'Test Module', qty: 1 }],
+      killmailIds: [456],
       fitCaptured: false,
     },
   });
 
   assert.equal(snapshot.state, 'in-abyss');
   assert.equal(snapshot.run.character_id, 123);
+  assert.deepEqual(snapshot.run.killmailItems, [{
+    type_id: 12_345,
+    type_name: 'Test Module',
+    qty: 1,
+  }]);
+  assert.deepEqual(snapshot.run.killmailIds, [456]);
   assert.throws(() => security.validateActiveRunSnapshot({
     ...snapshot,
     state: 'died',
@@ -210,6 +218,38 @@ test('ESI and OAuth responses are reduced to bounded schemas', () => {
     ship_type_id: 17_918,
     items: [{ flag: 'HiSlot0', quantity: 1, type_id: 12_345 }],
   });
+  assert.deepEqual(security.validateEsiKillmailRefs([{
+    killmail_hash: 'safe_hash-123',
+    killmail_id: 456,
+    ignored: '<script>',
+  }]), [{
+    killmail_hash: 'safe_hash-123',
+    killmail_id: 456,
+  }]);
+  assert.deepEqual(security.validateEsiKillmail({
+    killmail_id: 456,
+    killmail_time: '2026-07-26T12:00:00Z',
+    solar_system_id: 32_000_001,
+    victim: {
+      character_id: 123,
+      ship_type_id: 17_918,
+      items: [{
+        item_type_id: 12_345,
+        quantity_destroyed: 2,
+        quantity_dropped: 1,
+      }],
+    },
+    ignored: '<script>',
+  }), {
+    killmail_id: 456,
+    killmail_time: '2026-07-26T12:00:00Z',
+    solar_system_id: 32_000_001,
+    victim: {
+      character_id: 123,
+      ship_type_id: 17_918,
+      items: [{ quantity: 3, type_id: 12_345 }],
+    },
+  });
   assert.deepEqual(security.validateOAuthTokenResponse({
     access_token: 'access',
     refresh_token: 'refresh',
@@ -228,6 +268,10 @@ test('ESI and OAuth responses are reduced to bounded schemas', () => {
     ship_type_id: 17_918,
     items: [{ flag: 'HiSlot0', quantity: 0, type_id: 12_345 }],
   }));
+  assert.throws(() => security.validateEsiKillmailRefs([{
+    killmail_hash: '../unsafe',
+    killmail_id: 456,
+  }]));
   assert.throws(() => security.validateOAuthTokenResponse({
     access_token: 'access',
     expires_in: 1_200,
@@ -251,11 +295,13 @@ test('ESI feature selections map to least-privilege scopes and capabilities', ()
     tracking: false,
     fitting: true,
     implants: false,
+    killmails: false,
   });
   assert.deepEqual(security.getEsiCapabilitiesForScopes([]), {
     tracking: false,
     fitting: false,
     implants: false,
+    killmails: false,
   });
   assert.deepEqual(security.getEsiCapabilitiesForScopes([
     'esi-location.read_location.v1',
@@ -267,6 +313,15 @@ test('ESI feature selections map to least-privilege scopes and capabilities', ()
     tracking: true,
     fitting: false,
     implants: true,
+    killmails: false,
+  });
+  assert.deepEqual(security.getEsiCapabilitiesForScopes([
+    'esi-killmails.read_killmails.v1',
+  ]), {
+    tracking: false,
+    fitting: false,
+    implants: false,
+    killmails: true,
   });
   assert.throws(() => security.validateEsiCapabilitySelection(['tracking', 'tracking']));
   assert.throws(() => security.validateEsiCapabilitySelection(['wallet']));
@@ -347,9 +402,13 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /calculateBackoffDelay/);
   assert.match(appJs, /getSelectedCapabilities/);
   assert.match(appJs, /S\.capabilities\.tracking/);
+  assert.match(appJs, /inferAbyssalFilament/);
+  assert.match(appJs, /restoreInventoryBaseline/);
+  assert.match(appJs, /S\.capabilities\.killmails/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
   assert.match(esi, /validateEsiShip/);
+  assert.match(esi, /killmails\/recent/);
   assert.match(esi, /characters\/\$\{characterId\}\/assets/);
   assert.doesNotMatch(esi, /characters\/\$\{characterId\}\/fit\//);
   assert.doesNotMatch(preload, /getTokens|saveTokens|refreshToken|verifyToken/);
@@ -375,6 +434,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /security\.validateAppraisalUpdate/);
   assert.match(main, /security\.validateEsiCapabilitySelection/);
   assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
+  assert.match(main, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
   assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);[\s\S]*db\.finishStartup\(\);/);
   assert.match(database, /secure_delete = ON/);

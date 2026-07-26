@@ -7,6 +7,8 @@ const SSO_TOKEN_URL = 'https://login.eveonline.com/v2/oauth/token';
 const SSO_VERIFY_URL = 'https://login.eveonline.com/oauth/verify';
 const USER_AGENT = 'AbyssLog/1.0';
 const CACHE_LIMIT = 5000;
+const ABYSSAL_SYSTEM_MIN = 32_000_000;
+const CAPSULE_TYPE_IDS = new Set([670, 33_328]);
 
 const http = createHttpClient();
 const systemNameCache = new Map();
@@ -148,6 +150,51 @@ async function getImplants(characterId, accessToken) {
   return security.validateEsiImplants(response);
 }
 
+async function getRecentAbyssLoss(characterId, accessToken, startedAt, endedAt) {
+  const runStartedAt = security.requireInteger(startedAt, 'Run start time');
+  const runEndedAt = security.requireInteger(endedAt, 'Run end time', {
+    min: runStartedAt,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+  const references = security.validateEsiKillmailRefs(await getJson(
+    `${ESI_BASE}/characters/${characterId}/killmails/recent/?page=1`,
+    authenticatedHeaders(accessToken)
+  ));
+  const detailResults = await Promise.allSettled(references.slice(0, 20).map(reference =>
+    getJson(
+      `${ESI_BASE}/killmails/${reference.killmail_id}/${reference.killmail_hash}/`
+    ).then(security.validateEsiKillmail)
+  ));
+  const matching = detailResults
+    .filter(result => result.status === 'fulfilled')
+    .map(result => result.value)
+    .filter(killmail => {
+      const killedAt = Math.floor(Date.parse(killmail.killmail_time) / 1000);
+      return killmail.victim.character_id === characterId
+        && killmail.solar_system_id >= ABYSSAL_SYSTEM_MIN
+        && killedAt >= runStartedAt - 60
+        && killedAt <= runEndedAt + 10 * 60;
+    });
+  if (matching.length === 0) return null;
+
+  const quantities = new Map();
+  const addItem = (typeId, quantity) => {
+    quantities.set(typeId, (quantities.get(typeId) || 0) + quantity);
+  };
+  for (const killmail of matching) {
+    if (!CAPSULE_TYPE_IDS.has(killmail.victim.ship_type_id)) {
+      addItem(killmail.victim.ship_type_id, 1);
+    }
+    for (const item of killmail.victim.items) {
+      addItem(item.type_id, item.quantity);
+    }
+  }
+  return {
+    killmail_ids: matching.map(killmail => killmail.killmail_id),
+    items: [...quantities.entries()].map(([type_id, quantity]) => ({ type_id, quantity })),
+  };
+}
+
 async function getTypeInfo(typeId) {
   if (typeInfoCache.has(typeId)) return typeInfoCache.get(typeId);
   const response = await getJson(`${ESI_BASE}/universe/types/${typeId}/`);
@@ -232,6 +279,7 @@ module.exports = {
   getShip,
   getFitting,
   getImplants,
+  getRecentAbyssLoss,
   getTypeInfo,
   getSystemName,
   getTypeNames,

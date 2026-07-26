@@ -198,10 +198,51 @@
     return Math.min(capMs, baseDelayMs * (2 ** Math.min(failureCount - 1, 20)));
   }
 
+  const FILAMENT_TIERS = Object.freeze({
+    tranquil: 'T0',
+    calm: 'T1',
+    agitated: 'T2',
+    fierce: 'T3',
+    raging: 'T4',
+    chaotic: 'T5',
+    cataclysmic: 'T6',
+  });
+  const FILAMENT_WEATHERS = Object.freeze({
+    electrical: 'Electrical',
+    dark: 'Dark',
+    exotic: 'Exotic',
+    firestorm: 'Firestorm',
+    gamma: 'Gamma',
+  });
+
+  function inferAbyssalFilament(items) {
+    if (!Array.isArray(items)) throw new TypeError('Cargo items must be an array');
+    const matches = new Map();
+    for (const item of items) {
+      if (!item || typeof item.name !== 'string') continue;
+      const match = item.name.trim().match(
+        /^(Tranquil|Calm|Agitated|Fierce|Raging|Chaotic|Cataclysmic) (Electrical|Dark|Exotic|Firestorm|Gamma) Filament$/i
+      );
+      if (!match) continue;
+      const tier = FILAMENT_TIERS[match[1].toLowerCase()];
+      const weather = FILAMENT_WEATHERS[match[2].toLowerCase()];
+      matches.set(`${tier}:${weather}`, {
+        tier,
+        weather,
+        name: `${match[1]} ${match[2]} Filament`,
+      });
+    }
+    const candidates = [...matches.values()];
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return { ...candidates[0], ambiguous: false };
+    return { ambiguous: true, candidates };
+  }
+
   return {
     calculateBackoffDelay,
     createSingleFlight,
     createTokenCoordinator,
     createTransitionTracker,
+    inferAbyssalFilament,
   };
 });

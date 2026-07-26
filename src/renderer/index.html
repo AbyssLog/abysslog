@@ -331,6 +331,10 @@ input, select, textarea { font-family: var(--font); }
             <!-- Always-visible pre-run paste section -->
             <div class="run-panel" style="margin-bottom:8px">
               <div class="panel-title">Pre-Run Contents</div>
+              <div id="inventoryBaselineStatus" class="alert warn" style="display:none;margin-bottom:8px">
+                <span id="inventoryBaselineText"></span>
+                <button class="btn sm ghost" data-action="clear-inventory-baseline" style="margin-left:8px">Clear baseline</button>
+              </div>
               <div class="collapsible-header" data-action="toggle-collapsible" data-body="preCargoBody" data-arrow="preCargoArrow" data-hint="preCargoHint">
                 <span class="collapsible-label">Cargo Hold</span>
                 <span class="collapsible-hint" id="preCargoHint"></span>
@@ -357,6 +361,7 @@ input, select, textarea { font-family: var(--font); }
                   <div class="field-label">Tier</div>
                   <select class="field-select" id="tierSelect">
                     <option value="">— Select —</option>
+                    <option value="T0">Tier 0</option>
                     <option value="T1">Tier 1</option>
                     <option value="T2">Tier 2</option>
                     <option value="T3">Tier 3</option>
@@ -377,6 +382,7 @@ input, select, textarea { font-family: var(--font); }
                   </select>
                 </div>
               </div>
+              <div id="filamentInferenceStatus" class="field-note" style="display:none;margin-bottom:10px"></div>
               <div id="fitCaptured" class="fit-capture">✓ Ship fitting and implants captured for loss tracking</div>
               <div class="action-row">
                 <button class="btn gold" id="startBtn" data-action="manual-start">▶ Start Run</button>
@@ -430,10 +436,12 @@ input, select, textarea { font-family: var(--font); }
             <div id="state-died" class="run-panel" style="display:none">
               <div class="panel-title">Run Failed — Loss Summary</div>
               <div class="alert err" style="margin-bottom:10px">Your ship and pod were destroyed. Calculating total loss from pre-run cargo, fitting, and implants...</div>
+              <div id="killmailStatus" class="alert" style="display:none;margin-bottom:10px"></div>
               <div id="loss-loading" style="text-align:center;padding:20px;color:var(--text-dim)"><span class="spinner"></span> Appraising losses via Janice...</div>
               <div id="loss-results" style="display:none"></div>
               <div class="action-row" id="loss-actions" style="display:none">
                 <button class="btn green" data-action="save-current-run">Save Run</button>
+                <button class="btn ghost sm" id="retryKillmailBtn" data-action="retry-killmail" style="display:none">Check Killmail</button>
                 <button class="btn ghost sm" data-action="cancel-run">Discard</button>
               </div>
             </div>
@@ -475,6 +483,7 @@ input, select, textarea { font-family: var(--font); }
       <div class="filter-row">
         <select class="field-select" id="filterTier" data-change-action="render-history">
           <option value="">All Tiers</option>
+          <option value="T0">T0</option>
           <option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option>
           <option value="T4">T4</option><option value="T5">T5</option><option value="T6">T6</option>
         </select>
@@ -533,6 +542,7 @@ input, select, textarea { font-family: var(--font); }
           <div class="field-label">Default Tier</div>
           <select class="field-select" id="defaultTierInput">
             <option value="">None</option>
+            <option value="T0">T0</option>
             <option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option>
             <option value="T4">T4</option><option value="T5">T5</option><option value="T6">T6</option>
           </select>
@@ -656,6 +666,13 @@ input, select, textarea { font-family: var(--font); }
           <span class="permission-note">Reads the implants installed in the character's active clone.</span>
         </span>
       </label>
+      <label class="permission-choice">
+        <input type="checkbox" id="permissionKillmails">
+        <span>
+          <span class="permission-title">Verified death losses</span>
+          <span class="permission-note">Reads recent killmails after a failed run to replace estimated losses with the exact destroyed and dropped items. Killmails may take up to five minutes to appear.</span>
+        </span>
+      </label>
     </div>
     <div id="permissionSummary" class="field-note" style="margin-bottom:14px"></div>
     <button class="btn gold" data-action="start-sso"><span id="ssoSpinner" style="display:none" class="spinner"></span>Login with EVE SSO</button>
@@ -675,6 +692,7 @@ input, select, textarea { font-family: var(--font); }
         <div class="field-label">Tier</div>
         <select class="field-select" id="manualTier">
           <option value="">— Select —</option>
+          <option value="T0">Tier 0</option>
           <option value="T1">Tier 1</option><option value="T2">Tier 2</option>
           <option value="T3">Tier 3</option><option value="T4">Tier 4</option>
           <option value="T5">Tier 5</option><option value="T6">Tier 6</option>

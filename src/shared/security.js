@@ -33,6 +33,11 @@
         'esi-clones.read_implants.v1',
       ]),
     }),
+    killmails: Object.freeze({
+      scopes: Object.freeze([
+        'esi-killmails.read_killmails.v1',
+      ]),
+    }),
   });
   const ESI_CAPABILITY_IDS = new Set(Object.keys(ESI_CAPABILITY_DEFINITIONS));
   const KNOWN_ESI_SCOPES = new Set([
@@ -41,7 +46,7 @@
     'esi-location.read_online.v1',
     'esi-fittings.read_fittings.v1',
   ]);
-  const RUN_TIERS = new Set(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'Unknown']);
+  const RUN_TIERS = new Set(['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'Unknown']);
   const RUN_WEATHERS = new Set([
     'Electrical',
     'Dark',
@@ -196,7 +201,7 @@
       const interval = requireInteger(stringValue, 'ESI polling interval', { min: 3, max: 300 });
       return String(interval);
     }
-    if (key === 'default_tier' && !/^$|^T[1-6]$/.test(stringValue)) {
+    if (key === 'default_tier' && !/^$|^T[0-6]$/.test(stringValue)) {
       throw new TypeError('Default tier is invalid');
     }
     if (key === 'default_weather' && !/^$|^(Electrical|Dark|Exotic|Firestorm|Gamma)$/.test(stringValue)) {
@@ -331,6 +336,29 @@
     });
   }
 
+  function validateKillmailLossItems(items) {
+    return requireArray(items, 'Killmail loss items', 1000).map((item, index) => {
+      if (!isPlainObject(item)) throw new TypeError(`Killmail loss item ${index + 1} is invalid`);
+      assertAllowedKeys(
+        item,
+        `Killmail loss item ${index + 1}`,
+        new Set(['type_id', 'type_name', 'qty'])
+      );
+      return {
+        type_id: requireInteger(item.type_id, `Killmail loss item ${index + 1} type ID`),
+        type_name: requireTrimmedText(
+          item.type_name,
+          `Killmail loss item ${index + 1} name`,
+          256
+        ),
+        qty: requireInteger(item.qty, `Killmail loss item ${index + 1} quantity`, {
+          min: 1,
+          max: 1_000_000_000,
+        }),
+      };
+    });
+  }
+
   function validateRunData(value) {
     if (!isPlainObject(value)) throw new TypeError('Run must be an object');
     assertAllowedKeys(value, 'Run', new Set([
@@ -378,6 +406,7 @@
       'character_id', 'started_at', 'duration', 'tier', 'weather', 'outcome',
       'system_id', 'cargoBefore', 'cargoAfter', 'droneBefore', 'droneAfter',
       'ship_name', 'ship_class', 'fitting', 'implants', 'fitCaptured',
+      'killmailItems', 'killmailIds',
     ]));
 
     const expectedOutcome = state === 'in-abyss'
@@ -417,6 +446,10 @@
         fitting: validateFitting(run.fitting ?? []),
         implants: validateImplants(run.implants ?? []),
         fitCaptured: run.fitCaptured,
+        killmailItems: validateKillmailLossItems(run.killmailItems ?? []),
+        killmailIds: requireArray(run.killmailIds ?? [], 'Killmail IDs', 20).map(
+          (killmailId, index) => requireInteger(killmailId, `Killmail ID ${index + 1}`)
+        ),
       },
     };
   }
@@ -468,6 +501,79 @@
         is_singleton: item.is_singleton,
       };
     });
+  }
+
+  function validateEsiKillmailRefs(value) {
+    return requireArray(value, 'ESI killmail references', 50).map((item, index) => {
+      if (!isPlainObject(item)) {
+        throw new TypeError(`ESI killmail reference ${index + 1} is invalid`);
+      }
+      const hash = requireTrimmedText(
+        item.killmail_hash,
+        `ESI killmail reference ${index + 1} hash`,
+        128
+      );
+      if (!/^[A-Za-z0-9_-]+$/.test(hash)) {
+        throw new TypeError(`ESI killmail reference ${index + 1} hash is invalid`);
+      }
+      return {
+        killmail_id: requireInteger(
+          item.killmail_id,
+          `ESI killmail reference ${index + 1} ID`
+        ),
+        killmail_hash: hash,
+      };
+    });
+  }
+
+  function validateEsiKillmail(value) {
+    if (!isPlainObject(value) || !isPlainObject(value.victim)) {
+      throw new TypeError('ESI killmail response is invalid');
+    }
+    const killmailTime = requireString(value.killmail_time, 'Killmail time', 64);
+    if (!Number.isFinite(Date.parse(killmailTime))) {
+      throw new TypeError('Killmail time is invalid');
+    }
+
+    let itemCount = 0;
+    const flattenItems = (items, depth = 0) => {
+      if (depth > 4) throw new TypeError('ESI killmail item nesting is too deep');
+      const flattened = [];
+      for (const [index, item] of requireArray(items ?? [], 'ESI killmail items', 10_000).entries()) {
+        if (!isPlainObject(item)) throw new TypeError(`ESI killmail item ${index + 1} is invalid`);
+        itemCount++;
+        if (itemCount > 10_000) throw new TypeError('ESI killmail contains too many items');
+        const destroyed = item.quantity_destroyed == null
+          ? 0
+          : requireInteger(item.quantity_destroyed, 'Destroyed item quantity', {
+            min: 0,
+            max: 1_000_000_000,
+          });
+        const dropped = item.quantity_dropped == null
+          ? 0
+          : requireInteger(item.quantity_dropped, 'Dropped item quantity', {
+            min: 0,
+            max: 1_000_000_000,
+          });
+        flattened.push({
+          type_id: requireInteger(item.item_type_id, 'Killmail item type ID'),
+          quantity: Math.max(1, destroyed + dropped),
+        });
+        flattened.push(...flattenItems(item.items, depth + 1));
+      }
+      return flattened;
+    };
+
+    return {
+      killmail_id: requireInteger(value.killmail_id, 'Killmail ID'),
+      killmail_time: killmailTime,
+      solar_system_id: requireInteger(value.solar_system_id, 'Killmail solar system ID'),
+      victim: {
+        character_id: requireInteger(value.victim.character_id, 'Killmail victim character ID'),
+        ship_type_id: requireInteger(value.victim.ship_type_id, 'Killmail victim ship type ID'),
+        items: flattenItems(value.victim.items),
+      },
+    };
   }
 
   function validateEsiFitting(value) {
@@ -734,6 +840,8 @@
     validateEsiCapabilitySelection,
     validateEsiFitting,
     validateEsiImplants,
+    validateEsiKillmail,
+    validateEsiKillmailRefs,
     validateEsiLocation,
     validateEsiNames,
     validateEsiShip,

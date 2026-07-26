@@ -5,7 +5,7 @@ const S = {
   characters: [],
   activeCharId: null,
   hasAuth: false,
-  capabilities: { tracking: false, fitting: false, implants: false },
+  capabilities: { tracking: false, fitting: false, implants: false, killmails: false },
   characterCapabilities: {},
   hasJaniceKey: false,
   secureStorage: { available: false, backend: 'unknown' },
@@ -67,6 +67,7 @@ function normalizeCapabilities(value) {
     tracking: value?.tracking === true,
     fitting: value?.fitting === true,
     implants: value?.implants === true,
+    killmails: value?.killmails === true,
   };
 }
 
@@ -152,6 +153,7 @@ async function performCharacterSwitch(charId, save = true) {
   loadDefaultSelects();
   updateRecentRuns();
   const restored = await restoreActiveRun(normalizedCharacterId);
+  if (!restored) await restoreInventoryBaseline(normalizedCharacterId);
   resetTransitionTracker(restored?.state === 'in-abyss' ? 'inside' : 'outside');
 
   if (S.capabilities.tracking) {
@@ -368,6 +370,52 @@ function clearTrackerInputs() {
   ]) {
     document.getElementById(id).value = '';
   }
+  hideInventoryBaselineStatus();
+  clearFilamentInference();
+}
+
+function hideInventoryBaselineStatus() {
+  document.getElementById('inventoryBaselineStatus').style.display = 'none';
+}
+
+function showInventoryBaselineStatus(startedAt) {
+  const date = new Date(startedAt * 1000);
+  document.getElementById('inventoryBaselineText').textContent =
+    `Prefilled from the run started ${date.toLocaleString()}. Clear or replace it if you docked, unloaded loot, restocked, or changed drones.`;
+  document.getElementById('inventoryBaselineStatus').style.display = 'block';
+}
+
+async function restoreInventoryBaseline(characterId) {
+  hideInventoryBaselineStatus();
+  const [latestRun] = await window.api.runs.getAll({
+    character_id: characterId,
+    limit: 1,
+  });
+  if (!latestRun || latestRun.outcome !== 'Survived') return;
+  const nextCargo = latestRun.cargo_after || '';
+  const nextDrones = latestRun.drone_after?.trim()
+    ? latestRun.drone_after
+    : latestRun.drone_before || '';
+  if (!nextCargo.trim() && !nextDrones.trim()) return;
+
+  document.getElementById('cargoBeforeText').value = nextCargo;
+  document.getElementById('droneBeforeText').value = nextDrones;
+  updatePasteHint('cargoBeforeText', 'preCargoHint');
+  updatePasteHint('droneBeforeText', 'preDroneHint');
+  if (nextDrones.trim()) {
+    document.getElementById('preDroneBody').classList.add('open');
+    document.getElementById('preDroneArrow').classList.add('open');
+  }
+  showInventoryBaselineStatus(latestRun.started_at);
+}
+
+function clearInventoryBaseline() {
+  document.getElementById('cargoBeforeText').value = '';
+  document.getElementById('droneBeforeText').value = '';
+  updatePasteHint('cargoBeforeText', 'preCargoHint');
+  updatePasteHint('droneBeforeText', 'preDroneHint');
+  hideInventoryBaselineStatus();
+  clearFilamentInference();
 }
 
 function syncActiveRunInputs() {
@@ -404,6 +452,8 @@ function activeRunSnapshot() {
       fitting: run.fitting || [],
       implants: run.implants || [],
       fitCaptured: Boolean(run.fitCaptured),
+      killmailItems: run.killmailItems || [],
+      killmailIds: run.killmailIds || [],
     },
   });
 }
@@ -444,6 +494,7 @@ async function restoreActiveRun(characterId) {
   const snapshot = await window.api.runs.getActive(characterId);
   if (!snapshot) return null;
 
+  hideInventoryBaselineStatus();
   S.activeRun = snapshot.run;
   lastSystemId = snapshot.run.system_id;
   document.getElementById('cargoBeforeText').value = snapshot.run.cargoBefore;
@@ -468,7 +519,7 @@ async function restoreActiveRun(characterId) {
     document.getElementById('hudRunState').textContent = 'Died';
     document.getElementById('infoOutcome').innerHTML = '<span class="badge died">Died</span>';
     setRunState('died');
-    void appraiseLoss();
+    void prepareDeathLoss();
   } else {
     document.getElementById('timerDisplay').textContent = fmtDuration(snapshot.run.duration);
     document.getElementById('timerDisplay').classList.add('survived');
@@ -503,7 +554,9 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
     outcome: null,
     fitting: [],
     implants: [],
-    fitCaptured: false
+    fitCaptured: false,
+    killmailItems: [],
+    killmailIds: [],
   };
 
   document.getElementById('recoveryStatus').style.display = 'none';
@@ -638,7 +691,75 @@ async function endRunDied(endedAt = Math.floor(Date.now() / 1000)) {
   document.getElementById('infoOutcome').innerHTML = '<span class="badge died">Died</span>';
   setRunState('died');
   await persistActiveRun();
+  await prepareDeathLoss();
+}
+
+async function prepareDeathLoss() {
+  if (!S.activeRun || S.activeRun.outcome !== 'Died') return;
+  await reconcileKillmailLoss();
   await appraiseLoss();
+}
+
+async function reconcileKillmailLoss({ reappraise = false } = {}) {
+  const run = S.activeRun;
+  if (!run || run.outcome !== 'Died' || !S.capabilities.killmails || run.killmailChecking) {
+    return false;
+  }
+
+  const status = document.getElementById('killmailStatus');
+  const retryButton = document.getElementById('retryKillmailBtn');
+  run.killmailChecking = true;
+  status.textContent = 'Checking ESI for the Abyssal loss killmail…';
+  status.className = 'alert';
+  status.style.display = 'block';
+  retryButton.style.display = 'none';
+  try {
+    const loss = await window.api.esi.getRecentAbyssLoss(
+      run.character_id,
+      run.started_at,
+      run.started_at + run.duration
+    );
+    if (!loss) {
+      status.textContent =
+        'Killmail is not available yet. ESI may take up to five minutes; the current estimate is still shown.';
+      status.className = 'alert warn';
+      retryButton.textContent = 'Check Killmail';
+      retryButton.style.display = 'inline-flex';
+      return false;
+    }
+
+    const names = await window.api.esi.getTypeNames(loss.items.map(item => item.type_id));
+    if (S.activeRun !== run) return false;
+    run.killmailItems = loss.items.map(item => ({
+      type_id: item.type_id,
+      type_name: names[item.type_id] || `Type ${item.type_id}`,
+      qty: item.quantity,
+    }));
+    run.killmailIds = loss.killmail_ids;
+    run.fitting = [];
+    run.implants = [];
+    run.fitCaptured = false;
+    status.textContent =
+      `Verified against ${loss.killmail_ids.length} Abyssal loss killmail${loss.killmail_ids.length === 1 ? '' : 's'}.`;
+    status.className = 'alert success';
+    retryButton.textContent = 'Refresh Killmail';
+    retryButton.style.display = 'inline-flex';
+    await persistActiveRun();
+    if (reappraise) await appraiseLoss();
+    return true;
+  } catch (error) {
+    status.textContent = `Killmail check failed: ${error.message}`;
+    status.className = 'alert warn';
+    retryButton.textContent = 'Retry Killmail';
+    retryButton.style.display = 'inline-flex';
+    return false;
+  } finally {
+    run.killmailChecking = false;
+  }
+}
+
+async function retryKillmailLoss() {
+  await reconcileKillmailLoss({ reappraise: true });
 }
 
 async function appraiseRun() {
@@ -703,29 +824,42 @@ async function appraiseLoss() {
   const cargoItems = parseCargo(S.activeRun.cargoBefore);
 
   try {
-    const results = { cargo: null, fitting: null, implants: null };
+    const results = { killmail: null, cargo: null, fitting: null, implants: null };
 
-    if (cargoItems.length > 0 && S.hasJaniceKey) {
-      results.cargo = await window.api.janice.appraise(cargoItems, 'sell');
-    }
-    if (S.activeRun.fitting.length > 0 && S.hasJaniceKey) {
-      results.fitting = await window.api.janice.appraise(
-        S.activeRun.fitting.map(f => ({ name: f.type_name, qty: f.qty })), 'sell'
-      );
-    }
-    if (S.activeRun.implants.length > 0 && S.hasJaniceKey) {
-      results.implants = await window.api.janice.appraise(
-        S.activeRun.implants.map(i => ({ name: i.type_name, qty: 1 })), 'sell'
-      );
+    if (S.activeRun.killmailItems?.length > 0) {
+      if (S.hasJaniceKey) {
+        results.killmail = await window.api.janice.appraise(
+          S.activeRun.killmailItems.map(item => ({
+            name: item.type_name,
+            qty: item.qty,
+          })),
+          'sell'
+        );
+      }
+    } else {
+      if (cargoItems.length > 0 && S.hasJaniceKey) {
+        results.cargo = await window.api.janice.appraise(cargoItems, 'sell');
+      }
+      if (S.activeRun.fitting.length > 0 && S.hasJaniceKey) {
+        results.fitting = await window.api.janice.appraise(
+          S.activeRun.fitting.map(f => ({ name: f.type_name, qty: f.qty })), 'sell'
+        );
+      }
+      if (S.activeRun.implants.length > 0 && S.hasJaniceKey) {
+        results.implants = await window.api.janice.appraise(
+          S.activeRun.implants.map(i => ({ name: i.type_name, qty: 1 })), 'sell'
+        );
+      }
     }
 
+    const killmailLoss = results.killmail ? results.killmail.totalSellPrice : 0;
     const cargoLoss = results.cargo ? results.cargo.totalSellPrice : 0;
     const fittingLoss = results.fitting ? results.fitting.totalSellPrice : 0;
     const implantLoss = results.implants ? results.implants.totalSellPrice : 0;
-    S.activeRun.total_loss = cargoLoss + fittingLoss + implantLoss;
+    S.activeRun.total_loss = killmailLoss + cargoLoss + fittingLoss + implantLoss;
     S.activeRun.lossResults = results;
 
-    renderLossResults(results, cargoLoss, fittingLoss, implantLoss);
+    renderLossResults(results, cargoLoss, fittingLoss, implantLoss, killmailLoss);
   } catch (e) {
     document.getElementById('loss-loading').textContent = 'Appraisal failed: ' + e.message;
     document.getElementById('loss-actions').style.display = 'flex';
@@ -790,12 +924,13 @@ function renderAppraisalResults(lootResult, consumedResult, diff) {
   el.innerHTML = html;
 }
 
-function renderLossResults(results, cargoLoss, fittingLoss, implantLoss) {
+function renderLossResults(results, cargoLoss, fittingLoss, implantLoss, killmailLoss = 0) {
   document.getElementById('loss-loading').style.display = 'none';
   const el = document.getElementById('loss-results');
 
   let html = '';
   const sections = [
+    { label: 'Verified Killmail Loss', result: results.killmail, total: killmailLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
     { label: 'Cargo Lost', result: results.cargo, total: cargoLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
     { label: 'Fitting Lost', result: results.fitting, total: fittingLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
     { label: 'Implants Lost', result: results.implants, total: implantLoss, priceField: 'sellPrice', totalField: 'sellPriceTotal', grandTotal: 'totalSellPrice' },
@@ -819,7 +954,7 @@ function renderLossResults(results, cargoLoss, fittingLoss, implantLoss) {
     html += `</tbody><tfoot><tr><td colspan="3" style="color:var(--text-dim)">Subtotal</td><td class="price consumed">−${fmtIsk(s.result[s.grandTotal])}</td></tr></tfoot></table></div>`;
   }
 
-  const total = cargoLoss + fittingLoss + implantLoss;
+  const total = killmailLoss + cargoLoss + fittingLoss + implantLoss;
   html += `<div class="net-isk-row">
     <div><div class="net-isk-label">Total Loss</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(S.activeRun.tier)} ${esc(S.activeRun.weather)} · ${fmtDuration(S.activeRun.duration)}</div></div>
     <div class="net-isk-value negative">−${fmtIsk(total)}</div>
@@ -871,6 +1006,19 @@ async function saveCurrentRun() {
           const p = item.effectivePrices;
           items.push({ item_name: item.itemType.name, qty: item.amount, type: 'lost', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
         }
+      }
+    }
+    // Preserve a verified killmail inventory even when no Janice key or price
+    // result is available. This keeps the loss record exact, with zero prices.
+    if (run.killmailItems?.length > 0 && !run.lossResults?.killmail) {
+      for (const item of run.killmailItems) {
+        items.push({
+          item_name: item.type_name,
+          qty: item.qty,
+          type: 'lost',
+          unit_price_buy: 0,
+          unit_price_sell: 0,
+        });
       }
     }
   }
@@ -935,6 +1083,17 @@ async function saveCurrentRun() {
 
   S.activeRun = null;
   resetRunUI();
+  if (run.outcome === 'Survived') {
+    clearFilamentInference();
+    if (
+      document.getElementById('cargoBeforeText').value.trim()
+      || document.getElementById('droneBeforeText').value.trim()
+    ) {
+      showInventoryBaselineStatus(run.started_at);
+    }
+  } else {
+    hideInventoryBaselineStatus();
+  }
   updateRecentRuns();
 }
 
@@ -1283,6 +1442,8 @@ function resetRunUI() {
   document.getElementById('fitCaptured').style.display = 'none';
   document.getElementById('appraise-error').style.display = 'none';
   document.getElementById('recoveryStatus').style.display = 'none';
+  document.getElementById('killmailStatus').style.display = 'none';
+  document.getElementById('retryKillmailBtn').style.display = 'none';
   setRunState('awaiting');
 }
 
@@ -1324,6 +1485,45 @@ function stopTimer() {
 }
 
 // ── Cargo Parsing & Diffing ───────────────────────────────────────────────
+let lastFilamentInferenceKey = null;
+
+function clearFilamentInference() {
+  lastFilamentInferenceKey = null;
+  const status = document.getElementById('filamentInferenceStatus');
+  status.textContent = '';
+  status.style.display = 'none';
+}
+
+function updateFilamentInference() {
+  const inference = runTracking.inferAbyssalFilament(
+    parseCargo(document.getElementById('cargoBeforeText').value)
+  );
+  const status = document.getElementById('filamentInferenceStatus');
+  if (!inference) {
+    clearFilamentInference();
+    return;
+  }
+  if (inference.ambiguous) {
+    lastFilamentInferenceKey = null;
+    status.textContent =
+      'Multiple Abyssal filament types were found. Select the tier and weather for this run.';
+    status.style.color = 'var(--gold)';
+    status.style.display = 'block';
+    return;
+  }
+
+  const inferenceKey = `${inference.tier}:${inference.weather}`;
+  if (lastFilamentInferenceKey !== inferenceKey) {
+    document.getElementById('tierSelect').value = inference.tier;
+    document.getElementById('weatherSelect').value = inference.weather;
+    lastFilamentInferenceKey = inferenceKey;
+  }
+  status.textContent =
+    `Detected ${inference.tier} ${inference.weather} from ${inference.name}. You can change it manually.`;
+  status.style.color = 'var(--cyan)';
+  status.style.display = 'block';
+}
+
 function parseCargo(raw) {
   if (!raw || !raw.trim()) return [];
   const items = {};
@@ -2059,6 +2259,7 @@ function renderCharList() {
       ['tracking', 'Tracking'],
       ['fitting', 'Fitting'],
       ['implants', 'Implants'],
+      ['killmails', 'Killmails'],
     ].filter(([capability]) => capabilities[capability])
       .map(([, label]) => `<span class="capability-badge enabled">${label}</span>`)
       .join('');
@@ -2179,6 +2380,7 @@ function getSelectedCapabilities() {
     ['tracking', 'permissionTracking'],
     ['fitting', 'permissionFitting'],
     ['implants', 'permissionImplants'],
+    ['killmails', 'permissionKillmails'],
   ].filter(([, id]) => document.getElementById(id).checked)
     .map(([capability]) => capability);
 }
@@ -2188,6 +2390,7 @@ function setSelectedCapabilities(capabilities) {
   document.getElementById('permissionTracking').checked = selected.tracking;
   document.getElementById('permissionFitting').checked = selected.fitting;
   document.getElementById('permissionImplants').checked = selected.implants;
+  document.getElementById('permissionKillmails').checked = selected.killmails;
   updatePermissionSummary();
 }
 
@@ -2203,7 +2406,12 @@ function openAddCharModal() {
   document.getElementById('addCharModalTitle').textContent = 'Add Character';
   document.getElementById('ssoStatus').textContent = '';
   document.getElementById('ssoSpinner').style.display = 'none';
-  setSelectedCapabilities({ tracking: true, fitting: false, implants: false });
+  setSelectedCapabilities({
+    tracking: true,
+    fitting: false,
+    implants: false,
+    killmails: false,
+  });
   openModal('addCharModal');
 }
 
@@ -2222,6 +2430,7 @@ const clickActions = {
   'appraise-run': () => appraiseRun(),
   'cancel-run': () => cancelRun(),
   'save-current-run': () => saveCurrentRunSafely(),
+  'retry-killmail': () => retryKillmailLoss(),
   'back-to-appraise': () => backToAppraise(),
   'render-history': () => renderHistory(),
   'open-add-character': () => openAddCharModal(),
@@ -2234,6 +2443,7 @@ const clickActions = {
   'import-csv': () => importCSV(),
   'create-full-backup': () => createFullBackup(),
   'open-backup-folder': () => openBackupFolder(),
+  'clear-inventory-baseline': () => clearInventoryBaseline(),
   'close-modal': element => closeModal(element.dataset.modal),
   'start-sso': () => startSSO(),
   'close-manual-entry': () => closeManualEntryModal(),
@@ -2258,7 +2468,12 @@ document.addEventListener('click', event => {
 
 document.addEventListener('change', event => {
   const element = event.target;
-  if (['permissionTracking', 'permissionFitting', 'permissionImplants'].includes(element.id)) {
+  if ([
+    'permissionTracking',
+    'permissionFitting',
+    'permissionImplants',
+    'permissionKillmails',
+  ].includes(element.id)) {
     updatePermissionSummary();
   } else if (element.dataset.changeAction === 'switch-character') {
     void switchCharacter(element.value).catch(error => {
@@ -2283,6 +2498,12 @@ document.addEventListener('input', event => {
     'droneAfterText',
   ].includes(element.id)) {
     scheduleActiveRunCheckpoint();
+  }
+  if (element.id === 'cargoBeforeText') {
+    hideInventoryBaselineStatus();
+    updateFilamentInference();
+  } else if (element.id === 'droneBeforeText') {
+    hideInventoryBaselineStatus();
   }
 });
 

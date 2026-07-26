@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('api', {
     getShip: characterId => ipcRenderer.invoke('esi:get-ship', characterId),
     getFitting: characterId => ipcRenderer.invoke('esi:get-fitting', characterId),
     getImplants: characterId => ipcRenderer.invoke('esi:get-implants', characterId),
+    getRecentAbyssLoss: (characterId, startedAt, endedAt) =>
+      ipcRenderer.invoke('esi:get-recent-abyss-loss', characterId, startedAt, endedAt),
     getTypeNames: typeIds => ipcRenderer.invoke('esi:get-type-names', typeIds),
     getSystemName: systemId => ipcRenderer.invoke('esi:get-system-name', systemId),
     getTypeInfo: typeId => ipcRenderer.invoke('esi:get-type-info', typeId),

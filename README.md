@@ -7,7 +7,10 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **ESI auto-detection** — polls every 5 seconds, auto-starts/stops timer on abyssal entry/exit
 - **Ship loss detection** — detects pod on exit, triggers loss appraisal automatically
 - **Optional fitting & implant capture** — captures authorized loss details at run start for loss valuation
+- **Optional killmail reconciliation** — replaces estimated death losses with the ship, cargo, drones, and implants recorded by ESI
 - **Cargo diffing** — paste pre/post cargo, app diffs to separate loot gained from items consumed
+- **Filament inference** — recognizes the filament in pre-run cargo and selects its tier and weather
+- **Remembered inventory baseline** — carries a survived run's post-run cargo and drones into the next run
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
 - **Run history** — filterable, sortable table with net ISK and total loss columns
 - **Statistics** — survival rate, ISK/hour, avg net ISK, avg loss on death, breakdown by tier and weather
@@ -31,6 +34,7 @@ AbyssLog includes its EVE OAuth client configuration. Use **Add Character** in S
 - **Automatic run tracking** reads the current solar system and active ship type.
 - **Ship fitting loss capture** reads character assets and the active ship type.
 - **Implant loss capture** reads the active clone's implants.
+- **Killmail loss reconciliation** reads recent killmails after a death.
 
 These choices are stored per character. You can change them later with **Permissions** in Settings. Selecting no optional features leaves manual run entry available without ESI data access.
 
@@ -50,12 +54,14 @@ Janice API keys are available by filing a ticket in the [Janice Discord](https:/
 
 ## Run Workflow
 
-1. **Awaiting** — paste your pre-run cargo hold contents, select tier and weather
+1. **Awaiting** — paste your pre-run cargo hold contents. A recognized filament selects the tier and weather automatically.
 2. **In Abyss** — ESI detects entry, timer starts automatically
 3. **Survived** — ESI detects exit, timer stops. Paste post-run cargo, click **Appraise Loot**, review, click **Save Run**
-4. **Died** — ESI detects pod, then appraises pre-run cargo and any fitting or implant details you authorized. Click **Save Run**
+4. **Died** — ESI detects pod, then checks for an Abyssal killmail and appraises the recorded loss. Killmails can take several minutes to appear, so **Check Killmail** is available for a retry. Without that permission or a matching killmail, the app falls back to the pre-run cargo, fitting, and implant estimate.
 
-After saving a survived run, your post-run cargo is automatically promoted to pre-run cargo for the next run.
+After saving a survived run, your post-run cargo and drone bay are automatically promoted to the next run's pre-run baseline. Clear or replace that baseline after docking to unload loot, restock, or change drones.
+
+ESI character assets can be cached for up to an hour, so they are not used to detect real-time cargo changes during a run.
 
 ---
 

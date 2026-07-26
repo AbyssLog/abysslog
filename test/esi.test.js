@@ -127,6 +127,63 @@ test('ESI derives the active fitting from paginated character assets', async () 
   assert.equal(calls[1].options.headers['X-Compatibility-Date'], '2026-07-25');
 });
 
+test('ESI aggregates exact Abyssal ship and pod losses from recent killmails', async () => {
+  responses.push([
+    { killmail_hash: 'ship_hash', killmail_id: 501 },
+    { killmail_hash: 'pod_hash', killmail_id: 502 },
+    { killmail_hash: 'outside_hash', killmail_id: 503 },
+  ]);
+  responses.push({
+    killmail_id: 501,
+    killmail_time: '2026-07-26T12:10:00Z',
+    solar_system_id: 32_000_001,
+    victim: {
+      character_id: 123,
+      ship_type_id: 17_918,
+      items: [{
+        item_type_id: 12_345,
+        quantity_destroyed: 1,
+      }],
+    },
+  });
+  responses.push({
+    killmail_id: 502,
+    killmail_time: '2026-07-26T12:10:05Z',
+    solar_system_id: 32_000_001,
+    victim: {
+      character_id: 123,
+      ship_type_id: 670,
+      items: [{
+        item_type_id: 20_101,
+        quantity_destroyed: 1,
+      }],
+    },
+  });
+  responses.push({
+    killmail_id: 503,
+    killmail_time: '2026-07-26T12:10:00Z',
+    solar_system_id: 30_000_142,
+    victim: {
+      character_id: 123,
+      ship_type_id: 17_918,
+      items: [],
+    },
+  });
+
+  const startedAt = Math.floor(Date.parse('2026-07-26T12:00:00Z') / 1000);
+  const endedAt = Math.floor(Date.parse('2026-07-26T12:12:00Z') / 1000);
+  assert.deepEqual(await esi.getRecentAbyssLoss(123, 'token', startedAt, endedAt), {
+    killmail_ids: [501, 502],
+    items: [
+      { type_id: 17_918, quantity: 1 },
+      { type_id: 12_345, quantity: 1 },
+      { type_id: 20_101, quantity: 1 },
+    ],
+  });
+  assert.match(calls[0].url, /\/characters\/123\/killmails\/recent\/\?page=1$/);
+  assert.match(calls[1].url, /\/killmails\/501\/ship_hash\/$/);
+});
+
 test('OAuth token calls disable automatic replay and validate refresh tokens', async () => {
   responses.push({
     access_token: 'access',
