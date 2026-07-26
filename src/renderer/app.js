@@ -1377,22 +1377,23 @@ async function submitManualEntry(doAppraise = true) {
     let items = [];
 
     if (!doAppraise && manualEditRunId) {
-      // Save metadata only — preserve existing appraisal values
-      await window.api.runs.updateMeta(manualEditRunId, {
-        tier,
-        weather,
-        outcome,
-        duration,
-        started_at,
-        total_loss: manualEditOriginal?.total_loss || 0,
-        ship_class: shipClass,
-      });
-      // Update cargo text only (so future re-appraise uses corrected pastes)
-      await window.api.runs.updateCargoOnly(manualEditRunId, {
-        cargo_before: cargoBefore,
-        cargo_after: savedCargoAfter,
-        drone_before: droneBefore,
-        drone_after: savedDroneAfter,
+      // Preserve the appraisal while committing metadata and corrected pastes atomically.
+      await window.api.runs.update(manualEditRunId, {
+        meta: {
+          tier,
+          weather,
+          outcome,
+          duration,
+          started_at,
+          total_loss: manualEditOriginal?.total_loss || 0,
+          ship_class: shipClass,
+        },
+        cargo: {
+          cargo_before: cargoBefore,
+          cargo_after: savedCargoAfter,
+          drone_before: droneBefore,
+          drone_after: savedDroneAfter,
+        },
       });
       closeManualEntryModal();
       renderHistory();
@@ -1472,19 +1473,27 @@ async function submitManualEntry(doAppraise = true) {
     };
 
     if (manualEditRunId) {
-      // Update existing run
-      await window.api.runs.updateAppraisal(manualEditRunId, {
-        loot_value,
-        consumed_cost,
-        net_isk,
-        cargo_before: cargoBefore,
-        cargo_after: savedCargoAfter,
-        drone_before: droneBefore,
-        drone_after: savedDroneAfter,
-        items
+      await window.api.runs.update(manualEditRunId, {
+        meta: {
+          tier,
+          weather,
+          outcome,
+          duration,
+          started_at,
+          total_loss,
+          ship_class: shipClass,
+        },
+        appraisal: {
+          loot_value,
+          consumed_cost,
+          net_isk,
+          cargo_before: cargoBefore,
+          cargo_after: savedCargoAfter,
+          drone_before: droneBefore,
+          drone_after: savedDroneAfter,
+          items,
+        },
       });
-      // Also update metadata (tier, weather, outcome, duration, date)
-      await window.api.runs.updateMeta(manualEditRunId, { tier, weather, outcome, duration, started_at, total_loss, ship_class: shipClass });
     } else {
       await window.api.runs.save(runData);
     }

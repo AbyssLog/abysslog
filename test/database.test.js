@@ -200,6 +200,116 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(database.getRuns({ character_id: 9003 }).length, 1);
 });
 
+test('manual run edits commit metadata and appraisal changes atomically', () => {
+  database.saveCharacter({
+    id: 9020,
+    name: 'Edit Pilot',
+    portrait_url: '',
+    client_id: 'edit-client',
+  });
+  const runId = database.saveRun({
+    character_id: 9020,
+    started_at: 1_710_000_000,
+    duration: 600,
+    tier: 'T3',
+    weather: 'Dark',
+    outcome: 'Survived',
+    loot_value: 100,
+    consumed_cost: 20,
+    net_isk: 80,
+    total_loss: 0,
+    cargo_before: 'Nanite Repair Paste, 10',
+    cargo_after: 'Triglavian Survey Database, 1',
+    drone_before: 'Vespa II, 5',
+    drone_after: 'Vespa II, 5',
+    ship_name: 'Gila',
+    ship_class: 'Cruiser',
+    items: [{
+      item_name: 'Triglavian Survey Database',
+      qty: 1,
+      type: 'gained',
+      unit_price_buy: 100,
+      unit_price_sell: 110,
+    }],
+    fitting: [],
+    implants: [],
+  });
+  const changedMeta = {
+    tier: 'T4',
+    weather: 'Electrical',
+    outcome: 'Survived',
+    duration: 700,
+    started_at: 1_710_000_100,
+    total_loss: 0,
+    ship_name: null,
+    ship_class: 'Cruiser',
+  };
+  const changedAppraisal = {
+    loot_value: 250,
+    consumed_cost: 50,
+    net_isk: 200,
+    cargo_before: 'Nanite Repair Paste, 8',
+    cargo_after: 'Triglavian Survey Database, 2',
+    drone_before: '',
+    drone_after: '',
+    items: [{
+      item_name: 'Invalid item',
+      qty: 1,
+      type: 'invalid',
+      unit_price_buy: 0,
+      unit_price_sell: 0,
+    }],
+  };
+
+  assert.throws(
+    () => database.updateRun(runId, { meta: changedMeta, cargo: null, appraisal: changedAppraisal }),
+    /constraint/i
+  );
+  const rolledBack = database.getRunById(runId);
+  assert.equal(rolledBack.tier, 'T3');
+  assert.equal(rolledBack.started_at, 1_710_000_000);
+  assert.equal(rolledBack.net_isk, 80);
+  assert.equal(rolledBack.drone_before, 'Vespa II, 5');
+  assert.equal(rolledBack.items.length, 1);
+  assert.equal(rolledBack.items[0].item_name, 'Triglavian Survey Database');
+
+  changedAppraisal.items = [{
+    item_name: 'Triglavian Survey Database',
+    qty: 2,
+    type: 'gained',
+    unit_price_buy: 125,
+    unit_price_sell: 130,
+  }];
+  assert.equal(
+    database.updateRun(runId, { meta: changedMeta, cargo: null, appraisal: changedAppraisal }),
+    true
+  );
+  const appraised = database.getRunById(runId);
+  assert.equal(appraised.tier, 'T4');
+  assert.equal(appraised.started_at, 1_710_000_100);
+  assert.equal(appraised.net_isk, 200);
+  assert.equal(appraised.drone_before, '');
+  assert.equal(appraised.drone_after, '');
+  assert.equal(appraised.items[0].qty, 2);
+
+  assert.equal(database.updateRun(runId, {
+    meta: { ...changedMeta, tier: 'T5', duration: 800 },
+    cargo: {
+      cargo_before: 'Nanite Repair Paste, 6',
+      cargo_after: '',
+      drone_before: 'Vespa II, 4',
+      drone_after: '',
+    },
+    appraisal: null,
+  }), true);
+  const cargoOnly = database.getRunById(runId);
+  assert.equal(cargoOnly.tier, 'T5');
+  assert.equal(cargoOnly.duration, 800);
+  assert.equal(cargoOnly.net_isk, 200);
+  assert.equal(cargoOnly.cargo_before, 'Nanite Repair Paste, 6');
+  assert.equal(cargoOnly.items[0].qty, 2);
+});
+
 test('statistics include death losses and daily activity keeps the latest 60 days', () => {
   database.saveCharacter({
     id: 9010,

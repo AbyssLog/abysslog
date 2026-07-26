@@ -728,6 +728,21 @@
     };
   }
 
+  function validateRunEdit(value) {
+    if (!isPlainObject(value)) throw new TypeError('Run edit must be an object');
+    assertAllowedKeys(value, 'Run edit', new Set(['meta', 'cargo', 'appraisal']));
+    const hasCargo = value.cargo !== undefined;
+    const hasAppraisal = value.appraisal !== undefined;
+    if (hasCargo === hasAppraisal) {
+      throw new TypeError('Run edit must contain exactly one cargo or appraisal update');
+    }
+    return {
+      meta: validateRunMeta(value.meta),
+      cargo: hasCargo ? validateCargoUpdate(value.cargo) : null,
+      appraisal: hasAppraisal ? validateAppraisalUpdate(value.appraisal) : null,
+    };
+  }
+
   function validateJaniceResponse(value) {
     if (!isPlainObject(value)) throw new TypeError('Janice response is invalid');
     const rawItems = requireArray(value.items, 'Janice response items', 1000);
@@ -853,6 +868,7 @@
     validateOAuthTokenResponse,
     validatePublicSetting,
     validateRunData,
+    validateRunEdit,
     validateRunFilters,
     validateRunMeta,
   };

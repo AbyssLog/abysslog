@@ -493,15 +493,10 @@ secureHandle('runs:update-appraisal', (runId, data) =>
     security.requireInteger(runId, 'Run ID'),
     security.validateAppraisalUpdate(validateObjectPayload(data, 'Appraisal update'))
   ));
-secureHandle('runs:update-meta', (runId, data) =>
-  db.updateMeta(
+secureHandle('runs:update', (runId, data) =>
+  db.updateRun(
     security.requireInteger(runId, 'Run ID'),
-    security.validateRunMeta(validateObjectPayload(data, 'Run update'))
-  ));
-secureHandle('runs:update-cargo-only', (runId, data) =>
-  db.updateCargoOnly(
-    security.requireInteger(runId, 'Run ID'),
-    security.validateCargoUpdate(validateObjectPayload(data, 'Cargo update'))
+    security.validateRunEdit(validateObjectPayload(data, 'Run edit'))
   ));
 secureHandle('runs:get-daily-stats', characterId =>
   db.getDailyStats(validateOptionalCharacterId(characterId)));

@@ -124,6 +124,41 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     cargo_after: '',
     items: [{ item_name: 'Item', qty: 1, type: 'unknown' }],
   }));
+
+  const meta = {
+    tier: 'T5',
+    weather: 'Gamma',
+    outcome: 'Survived',
+    duration: 900,
+    started_at: 1_700_000_100,
+    total_loss: 0,
+    ship_class: 'Cruiser',
+  };
+  const edit = security.validateRunEdit({
+    meta,
+    cargo: {
+      cargo_before: 'Nanite Repair Paste, 20',
+      cargo_after: 'Triglavian Survey Database, 2',
+      drone_before: 'Vespa II, 5',
+      drone_after: '',
+    },
+  });
+  assert.equal(edit.meta.tier, 'T5');
+  assert.equal(edit.cargo.drone_after, '');
+  assert.equal(edit.appraisal, null);
+  assert.throws(() => security.validateRunEdit({ meta }));
+  assert.throws(() => security.validateRunEdit({
+    meta,
+    cargo: edit.cargo,
+    appraisal: {
+      loot_value: 0,
+      consumed_cost: 0,
+      net_isk: 0,
+      cargo_before: '',
+      cargo_after: '',
+      items: [],
+    },
+  }));
 });
 
 test('active run recovery snapshots are bounded and state-consistent', () => {
@@ -419,6 +454,8 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
   assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
   assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
+  assert.match(appJs, /window\.api\.runs\.update\(manualEditRunId/);
+  assert.doesNotMatch(appJs, /window\.api\.runs\.(?:updateMeta|updateCargoOnly)/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
   assert.match(esi, /validateEsiShip/);
@@ -464,6 +501,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /if \(!validateIpcSender\(event\)\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);
+  assert.match(main, /security\.validateRunEdit/);
   assert.match(main, /security\.validateEsiCapabilitySelection/);
   assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
   assert.match(main, /withCharacterCapability\(characterId, 'killmails'/);

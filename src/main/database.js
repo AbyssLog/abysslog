@@ -555,43 +555,82 @@ function deleteSetting(key) {
   return true;
 }
 
-function updateCargoOnly(runId, { cargo_before, cargo_after, drone_before, drone_after }) {
-  db.prepare('UPDATE runs SET cargo_before = ?, cargo_after = ?, drone_before = ?, drone_after = ? WHERE id = ?')
-    .run(cargo_before || null, cargo_after || null, drone_before || null, drone_after || null, runId);
-  return true;
+function requireUpdatedRun(result) {
+  if (result.changes !== 1) throw new Error('Run not found');
 }
 
-function updateMeta(runId, { tier, weather, outcome, duration, started_at, total_loss, ship_name, ship_class }) {
-  db.prepare(`
+function applyCargoUpdate(runId, { cargo_before, cargo_after, drone_before, drone_after }) {
+  const result = db.prepare(
+    'UPDATE runs SET cargo_before = ?, cargo_after = ?, drone_before = ?, drone_after = ? WHERE id = ?'
+  ).run(cargo_before || null, cargo_after || null, drone_before || null, drone_after || null, runId);
+  requireUpdatedRun(result);
+}
+
+function applyMetaUpdate(runId, { tier, weather, outcome, duration, started_at, total_loss, ship_name, ship_class }) {
+  const result = db.prepare(`
     UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?,
       ship_name = COALESCE(?, ship_name), ship_class = COALESCE(?, ship_class)
     WHERE id = ?
-  `).run(tier, weather, outcome, duration, started_at, total_loss || 0, ship_name || null, ship_class || null, runId);
+  `).run(tier, weather, outcome, duration, started_at, total_loss || 0, ship_name, ship_class, runId);
+  requireUpdatedRun(result);
+}
+
+function applyAppraisalUpdate(runId, {
+  loot_value,
+  consumed_cost,
+  net_isk,
+  cargo_before,
+  cargo_after,
+  drone_before,
+  drone_after,
+  items,
+}) {
+  const result = db.prepare(`
+    UPDATE runs SET loot_value = ?, consumed_cost = ?, net_isk = ?,
+      cargo_before = ?, cargo_after = ?,
+      drone_before = COALESCE(?, drone_before), drone_after = COALESCE(?, drone_after)
+      WHERE id = ?
+  `).run(
+    loot_value,
+    consumed_cost,
+    net_isk,
+    cargo_before,
+    cargo_after,
+    drone_before,
+    drone_after,
+    runId
+  );
+  requireUpdatedRun(result);
+
+  // Appraisal updates provide the complete item set, including death-loss reappraisals.
+  db.prepare('DELETE FROM run_items WHERE run_id = ?').run(runId);
+
+  const insertItem = db.prepare(`
+    INSERT INTO run_items (run_id, item_name, qty, type, unit_price_buy, unit_price_sell)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const item of items) {
+    insertItem.run(runId, item.item_name, item.qty, item.type,
+      item.unit_price_buy || 0, item.unit_price_sell || 0);
+  }
+}
+
+function updateAppraisal(runId, appraisal) {
+  db.transaction(() => applyAppraisalUpdate(runId, appraisal))();
   return true;
 }
 
-function updateAppraisal(runId, { loot_value, consumed_cost, net_isk, cargo_before, cargo_after, drone_before, drone_after, items }) {
-  const transaction = db.transaction(() => {
-    db.prepare(`
-      UPDATE runs SET loot_value = ?, consumed_cost = ?, net_isk = ?,
-        cargo_before = ?, cargo_after = ?,
-        drone_before = COALESCE(?, drone_before), drone_after = COALESCE(?, drone_after)
-        WHERE id = ?
-    `).run(loot_value, consumed_cost, net_isk, cargo_before, cargo_after, drone_before || null, drone_after || null, runId);
-
-    // Appraisal updates provide the complete item set, including death-loss reappraisals.
-    db.prepare('DELETE FROM run_items WHERE run_id = ?').run(runId);
-
-    const insertItem = db.prepare(`
-      INSERT INTO run_items (run_id, item_name, qty, type, unit_price_buy, unit_price_sell)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    for (const item of items) {
-      insertItem.run(runId, item.item_name, item.qty, item.type,
-        item.unit_price_buy || 0, item.unit_price_sell || 0);
-    }
-  });
-  transaction();
+function updateRun(runId, { meta, cargo, appraisal }) {
+  const hasCargo = cargo !== null && cargo !== undefined;
+  const hasAppraisal = appraisal !== null && appraisal !== undefined;
+  if (hasCargo === hasAppraisal) {
+    throw new TypeError('Run update requires exactly one cargo or appraisal update');
+  }
+  db.transaction(() => {
+    applyMetaUpdate(runId, meta);
+    if (hasAppraisal) applyAppraisalUpdate(runId, appraisal);
+    else applyCargoUpdate(runId, cargo);
+  })();
   return true;
 }
 
@@ -740,8 +779,7 @@ module.exports = {
   clearActiveRun,
   completeActiveRun,
   updateAppraisal,
-  updateMeta,
-  updateCargoOnly,
+  updateRun,
   getRuns,
   getRunById,
   deleteRun,
