@@ -14,6 +14,7 @@ const path = require('path');
 const db = require('./database');
 const esi = require('./esi');
 const janice = require('./janice');
+const runTracking = require('../shared/run-tracking');
 const security = require('../shared/security');
 
 const CLIENT_ID = 'c74d7418579645ebbad0665c93e47900';
@@ -121,6 +122,23 @@ function loadTokens(characterId) {
     return null;
   }
 }
+
+const tokenCoordinator = runTracking.createTokenCoordinator({
+  loadTokens,
+  saveTokens,
+  refreshTokens: async refreshToken => {
+    try {
+      return await esi.refreshToken(refreshToken, CLIENT_ID);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Character authorization refresh failed: ${detail}`);
+    }
+  },
+  validateAccessToken: token =>
+    security.requireString(token, 'Access token', 16 * 1024),
+  validateLifetime: lifetime =>
+    security.requireInteger(lifetime, 'Token lifetime', { min: 1, max: 86_400 }),
+});
 
 function migrateLegacyJaniceKey() {
   const legacyKey = db.getSetting('janice_api_key');
@@ -254,32 +272,9 @@ async function handleOAuthCallback(callbackUrl) {
   }
 }
 
-async function getValidAccessToken(characterId) {
-  const id = security.requireInteger(characterId, 'Character ID');
-  const tokens = loadTokens(id);
-  if (!tokens) throw new Error('Character authorization is unavailable');
-
-  if (!tokens.expires_at || Date.now() > tokens.expires_at - 60_000) {
-    const refreshed = await esi.refreshToken(tokens.refresh_token, CLIENT_ID);
-    const merged = {
-      ...tokens,
-      ...refreshed,
-      refresh_token: refreshed.refresh_token || tokens.refresh_token,
-      expires_at: Date.now() + security.requireInteger(refreshed.expires_in, 'Token lifetime', {
-        min: 1,
-        max: 86_400,
-      }) * 1000,
-    };
-    saveTokens(id, merged);
-    return merged.access_token;
-  }
-
-  return security.requireString(tokens.access_token, 'Access token', 16 * 1024);
-}
-
 async function withCharacterToken(characterId, operation) {
   const id = security.requireInteger(characterId, 'Character ID');
-  return operation(id, await getValidAccessToken(id));
+  return tokenCoordinator.runWithToken(id, operation);
 }
 
 function createWindow() {
@@ -429,6 +424,29 @@ secureHandle('janice:test-key', apiKey =>
 
 secureHandle('runs:save', runData =>
   db.saveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
+secureHandle('runs:complete-active', runData =>
+  db.completeActiveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
+secureHandle('runs:get-active', characterId => {
+  const id = security.requireInteger(characterId, 'Character ID');
+  const snapshot = db.getActiveRun(id);
+  if (!snapshot) return null;
+  try {
+    const validated = security.validateActiveRunSnapshot(snapshot);
+    if (validated.run.character_id !== id) throw new TypeError('Active run character mismatch');
+    return validated;
+  } catch {
+    db.clearActiveRun(id);
+    return null;
+  }
+});
+secureHandle('runs:save-active', snapshot => {
+  const validated = security.validateActiveRunSnapshot(
+    validateObjectPayload(snapshot, 'Active run')
+  );
+  return db.saveActiveRun(validated);
+});
+secureHandle('runs:clear-active', characterId =>
+  db.clearActiveRun(security.requireInteger(characterId, 'Character ID')));
 secureHandle('runs:get-all', filters =>
   db.getRuns(security.validateRunFilters(
     filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)

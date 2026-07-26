@@ -126,6 +126,42 @@ test('run IPC payloads are schema-validated and sanitized', () => {
   }));
 });
 
+test('active run recovery snapshots are bounded and state-consistent', () => {
+  const snapshot = security.validateActiveRunSnapshot({
+    version: 1,
+    state: 'in-abyss',
+    run: {
+      character_id: 123,
+      started_at: 1_700_000_000,
+      duration: 0,
+      tier: 'T4',
+      weather: 'Electrical',
+      outcome: null,
+      system_id: 32_000_001,
+      cargoBefore: 'Tritanium, 2',
+      cargoAfter: '',
+      droneBefore: 'Vespa II, 5',
+      droneAfter: '',
+      ship_name: 'Gila',
+      ship_class: 'Cruiser',
+      fitting: [],
+      implants: [],
+      fitCaptured: false,
+    },
+  });
+
+  assert.equal(snapshot.state, 'in-abyss');
+  assert.equal(snapshot.run.character_id, 123);
+  assert.throws(() => security.validateActiveRunSnapshot({
+    ...snapshot,
+    state: 'died',
+  }), /outcome/);
+  assert.throws(() => security.validateActiveRunSnapshot({
+    ...snapshot,
+    unexpected: true,
+  }), /unexpected field/);
+});
+
 test('Janice responses are reduced to a safe renderer-facing schema', () => {
   const result = security.validateJaniceResponse({
     items: [{
@@ -194,6 +230,9 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /\son(?:click|error|input|change)\s*=/i);
   assert.match(appJs, /\$\{esc\(r\.tier\)\}/);
   assert.match(appJs, /\$\{esc\(r\.weather\)\}/);
+  assert.doesNotMatch(appJs, /setInterval\(pollESI/);
+  assert.match(appJs, /runESIPollLoop/);
+  assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.doesNotMatch(preload, /getTokens|saveTokens|refreshToken|verifyToken/);
 });
 

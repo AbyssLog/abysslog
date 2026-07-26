@@ -27,6 +27,7 @@
   const RUN_OUTCOMES = new Set(['Survived', 'Died']);
   const SHIP_CLASSES = new Set(['Frigate', 'Destroyer', 'Cruiser', 'Unknown']);
   const RUN_ITEM_TYPES = new Set(['gained', 'consumed', 'lost']);
+  const ACTIVE_RUN_STATES = new Set(['in-abyss', 'awaiting-cargo', 'died']);
   const MAX_MONEY_VALUE = 1_000_000_000_000_000_000;
 
   function escapeHtml(value) {
@@ -302,6 +303,61 @@
     };
   }
 
+  function validateActiveRunSnapshot(value) {
+    if (!isPlainObject(value)) throw new TypeError('Active run snapshot must be an object');
+    assertAllowedKeys(value, 'Active run snapshot', new Set(['version', 'state', 'run']));
+    if (value.version !== 1) throw new TypeError('Active run snapshot version is unsupported');
+
+    const state = requireEnum(value.state, 'Active run state', ACTIVE_RUN_STATES);
+    const run = value.run;
+    if (!isPlainObject(run)) throw new TypeError('Active run must be an object');
+    assertAllowedKeys(run, 'Active run', new Set([
+      'character_id', 'started_at', 'duration', 'tier', 'weather', 'outcome',
+      'system_id', 'cargoBefore', 'cargoAfter', 'droneBefore', 'droneAfter',
+      'ship_name', 'ship_class', 'fitting', 'implants', 'fitCaptured',
+    ]));
+
+    const expectedOutcome = state === 'in-abyss'
+      ? null
+      : state === 'died' ? 'Died' : 'Survived';
+    if (run.outcome !== expectedOutcome) {
+      throw new TypeError('Active run outcome does not match its state');
+    }
+    if (typeof run.fitCaptured !== 'boolean') {
+      throw new TypeError('Active run fitting status must be a boolean');
+    }
+
+    return {
+      version: 1,
+      state,
+      run: {
+        character_id: requireInteger(run.character_id, 'Character ID'),
+        started_at: requireInteger(run.started_at, 'Run start', { min: 0 }),
+        duration: requireInteger(run.duration ?? 0, 'Run duration', {
+          min: 0,
+          max: 604_800,
+        }),
+        tier: requireEnum(run.tier, 'Run tier', RUN_TIERS),
+        weather: requireEnum(run.weather, 'Run weather', RUN_WEATHERS),
+        outcome: expectedOutcome,
+        system_id: run.system_id == null
+          ? null
+          : requireInteger(run.system_id, 'System ID'),
+        cargoBefore: requireText(run.cargoBefore ?? '', 'Pre-run cargo', 512 * 1024),
+        cargoAfter: requireText(run.cargoAfter ?? '', 'Post-run cargo', 512 * 1024),
+        droneBefore: requireText(run.droneBefore ?? '', 'Pre-run drone bay', 512 * 1024),
+        droneAfter: requireText(run.droneAfter ?? '', 'Post-run drone bay', 512 * 1024),
+        ship_name: requireText(run.ship_name ?? '', 'Ship name', 256, {
+          multiline: false,
+        }),
+        ship_class: requireEnum(run.ship_class ?? 'Unknown', 'Ship class', SHIP_CLASSES),
+        fitting: validateFitting(run.fitting ?? []),
+        implants: validateImplants(run.implants ?? []),
+        fitCaptured: run.fitCaptured,
+      },
+    };
+  }
+
   function validateRunFilters(value) {
     if (!isPlainObject(value)) throw new TypeError('Run filters must be an object');
     assertAllowedKeys(value, 'Run filters', new Set([
@@ -478,6 +534,7 @@
     requireText,
     requireTrimmedText,
     unescapeCsvCell,
+    validateActiveRunSnapshot,
     validateAppraisalItems,
     validateAppraisalUpdate,
     validateCargoUpdate,

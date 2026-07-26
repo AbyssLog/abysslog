@@ -12,6 +12,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Run history** — filterable, sortable table with net ISK and total loss columns
 - **Statistics** — survival rate, ISK/hour, avg net ISK, avg loss on death, breakdown by tier and weather
 - **Multi-character** — add multiple characters, switch between them
+- **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
 
 ---
 
@@ -106,3 +107,5 @@ Run history is stored in a local SQLite database at:
 - **Linux:** `~/.config/abysslog/abysslog.db`
 
 OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` before they are written to the local database. AbyssLog disables sign-in and credential storage when a secure OS-backed provider is unavailable; credentials are never persisted with the insecure plaintext/basic-text fallback.
+
+While the app is open, one verified full-database backup is created per local day and the latest seven automatic backups are retained. The backup folder and manual backup control are available in **Settings → Data & Recovery**.

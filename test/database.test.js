@@ -29,11 +29,16 @@ test.after(() => {
 });
 
 test('database lifecycle creates verified backups and round-trips multiline CSV safely', () => {
+  const Database = require('better-sqlite3');
+  const previousDatabase = new Database(path.join(userDataDirectory, 'abysslog.db'));
+  previousDatabase.pragma('user_version = 1');
+  previousDatabase.close();
+
   database.init();
   database.hardenSensitiveStorage();
 
   const startupStatus = database.finishStartup();
-  assert.equal(startupStatus.schemaVersion, 1);
+  assert.equal(startupStatus.schemaVersion, 2);
   assert.equal(startupStatus.automaticBackupRetention, 7);
   assert.ok(startupStatus.latestBackup);
   assert.equal(fs.existsSync(startupStatus.latestBackup.filePath), true);
@@ -59,6 +64,12 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     name: 'Imported Pilot',
     portrait_url: 'https://images.evetech.net/characters/9002/portrait',
     client_id: 'target-client',
+  });
+  database.saveCharacter({
+    id: 9003,
+    name: 'Recovery Pilot',
+    portrait_url: 'https://images.evetech.net/characters/9003/portrait',
+    client_id: 'recovery-client',
   });
 
   const sourceRun = {
@@ -121,4 +132,70 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   const manualStatus = database.createManualBackup();
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
+
+  const activeSnapshot = {
+    version: 1,
+    state: 'in-abyss',
+    run: {
+      character_id: 9003,
+      started_at: 1_800_000_000,
+      duration: 0,
+      tier: 'T5',
+      weather: 'Gamma',
+      outcome: null,
+      system_id: 32_000_001,
+      cargoBefore: 'Nanite Repair Paste, 20',
+      cargoAfter: '',
+      droneBefore: 'Vespa II, 5',
+      droneAfter: '',
+      ship_name: 'Gila',
+      ship_class: 'Cruiser',
+      fitting: [],
+      implants: [],
+      fitCaptured: false,
+    },
+  };
+  database.saveActiveRun(activeSnapshot);
+  assert.deepEqual(database.getActiveRun(9003), activeSnapshot);
+
+  const completedRun = {
+    character_id: 9003,
+    started_at: 1_800_000_000,
+    duration: 1_000,
+    tier: 'T5',
+    weather: 'Gamma',
+    outcome: 'Survived',
+    loot_value: 500,
+    consumed_cost: 100,
+    net_isk: 400,
+    total_loss: 0,
+    system_id: 30_000_142,
+    cargo_before: activeSnapshot.run.cargoBefore,
+    cargo_after: 'Triglavian Survey Database, 2',
+    drone_before: activeSnapshot.run.droneBefore,
+    drone_after: activeSnapshot.run.droneBefore,
+    ship_name: 'Gila',
+    ship_class: 'Cruiser',
+    items: [],
+    fitting: [],
+    implants: [],
+  };
+  assert.throws(() => database.completeActiveRun({
+    ...completedRun,
+    items: [{
+      item_name: 'Invalid item',
+      qty: 1,
+      type: 'invalid',
+      unit_price_buy: 0,
+      unit_price_sell: 0,
+    }],
+  }), /constraint/i);
+  assert.deepEqual(database.getActiveRun(9003), activeSnapshot);
+  assert.equal(database.getRuns({ character_id: 9003 }).length, 0);
+
+  const completedId = database.completeActiveRun(completedRun);
+  assert.equal(database.getActiveRun(9003), null);
+  assert.equal(database.getRunById(completedId).net_isk, 400);
+  assert.equal(database.completeActiveRun(completedRun), completedId);
+  assert.equal(database.getRuns({ character_id: 9003 }).length, 1);
 });

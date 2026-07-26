@@ -9,7 +9,7 @@ let Database;
 let databasePath;
 let backupDirectory;
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const AUTOMATIC_BACKUP_RETENTION = 7;
 
 function init() {
@@ -253,34 +253,56 @@ function createSchema() {
       unit_price_sell REAL DEFAULT 0,
       FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS active_run_state (
+      character_id INTEGER PRIMARY KEY,
+      snapshot TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
   `);
 }
 
 
 function migrateSchema(currentVersion) {
-  if (currentVersion >= 1) return;
+  let version = currentVersion;
 
-  // Add cargo columns to existing databases that predate this feature
-  const cols = db.pragma('table_info(runs)').map(c => c.name);
-  if (!cols.includes('cargo_before')) {
-    db.exec('ALTER TABLE runs ADD COLUMN cargo_before TEXT');
+  if (version < 1) {
+    // Add cargo columns to existing databases that predate this feature
+    const cols = db.pragma('table_info(runs)').map(c => c.name);
+    if (!cols.includes('cargo_before')) {
+      db.exec('ALTER TABLE runs ADD COLUMN cargo_before TEXT');
+    }
+    if (!cols.includes('cargo_after')) {
+      db.exec('ALTER TABLE runs ADD COLUMN cargo_after TEXT');
+    }
+    if (!cols.includes('drone_before')) {
+      db.exec('ALTER TABLE runs ADD COLUMN drone_before TEXT');
+    }
+    if (!cols.includes('drone_after')) {
+      db.exec('ALTER TABLE runs ADD COLUMN drone_after TEXT');
+    }
+    if (!cols.includes('ship_name')) {
+      db.exec('ALTER TABLE runs ADD COLUMN ship_name TEXT');
+    }
+    if (!cols.includes('ship_class')) {
+      db.exec('ALTER TABLE runs ADD COLUMN ship_class TEXT');
+    }
+    db.pragma('user_version = 1');
+    version = 1;
   }
-  if (!cols.includes('cargo_after')) {
-    db.exec('ALTER TABLE runs ADD COLUMN cargo_after TEXT');
+
+  if (version < 2) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS active_run_state (
+        character_id INTEGER PRIMARY KEY,
+        snapshot TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+      )
+    `);
+    db.pragma('user_version = 2');
   }
-  if (!cols.includes('drone_before')) {
-    db.exec('ALTER TABLE runs ADD COLUMN drone_before TEXT');
-  }
-  if (!cols.includes('drone_after')) {
-    db.exec('ALTER TABLE runs ADD COLUMN drone_after TEXT');
-  }
-  if (!cols.includes('ship_name')) {
-    db.exec("ALTER TABLE runs ADD COLUMN ship_name TEXT");
-  }
-  if (!cols.includes('ship_class')) {
-    db.exec("ALTER TABLE runs ADD COLUMN ship_class TEXT");
-  }
-  db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
 // ── Characters ────────────────────────────────────────────────────────────
@@ -381,6 +403,46 @@ function saveRun(runData) {
   });
 
   return transaction();
+}
+
+function saveActiveRun(snapshot) {
+  db.prepare(`
+    INSERT INTO active_run_state (character_id, snapshot, updated_at)
+    VALUES (?, ?, strftime('%s','now'))
+    ON CONFLICT(character_id) DO UPDATE SET
+      snapshot = excluded.snapshot,
+      updated_at = excluded.updated_at
+  `).run(snapshot.run.character_id, JSON.stringify(snapshot));
+  return true;
+}
+
+function getActiveRun(characterId) {
+  const row = db.prepare(
+    'SELECT snapshot FROM active_run_state WHERE character_id = ?'
+  ).get(characterId);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.snapshot);
+  } catch {
+    clearActiveRun(characterId);
+    return null;
+  }
+}
+
+function clearActiveRun(characterId) {
+  db.prepare('DELETE FROM active_run_state WHERE character_id = ?').run(characterId);
+  return true;
+}
+
+function completeActiveRun(runData) {
+  return db.transaction(() => {
+    const existing = db.prepare(
+      'SELECT id FROM runs WHERE character_id = ? AND started_at = ? LIMIT 1'
+    ).get(runData.character_id, runData.started_at);
+    const runId = existing ? existing.id : saveRun(runData);
+    clearActiveRun(runData.character_id);
+    return runId;
+  })();
 }
 
 function getRuns(filters = {}) {
@@ -667,6 +729,10 @@ module.exports = {
   deleteSetting,
   getAllSettings,
   saveRun,
+  saveActiveRun,
+  getActiveRun,
+  clearActiveRun,
+  completeActiveRun,
   updateAppraisal,
   updateMeta,
   updateCargoOnly,

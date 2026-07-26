@@ -1,4 +1,6 @@
 // ── State ─────────────────────────────────────────────────────────────────
+const runTracking = window.AbyssRunTracking;
+
 const S = {
   characters: [],
   activeCharId: null,
@@ -10,7 +12,8 @@ const S = {
   runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraising | appraisal | died | loss
   activeRun: null,
   timerInterval: null,
-  pollInterval: null,
+  pollTimeout: null,
+  pollGeneration: 0,
   sortCol: 'started_at',
   sortDir: 'desc',
 };
@@ -67,25 +70,59 @@ async function populateCharSelect() {
   if (S.activeCharId) sel.value = S.activeCharId;
 }
 
-async function switchCharacter(charId, save = true) {
-  stopESIPoll();
-  S.activeCharId = charId;
-  document.getElementById('charSelect').value = charId;
+let characterSwitchChain = Promise.resolve();
 
-  if (!charId) {
+function switchCharacter(charId, save = true) {
+  characterSwitchChain = characterSwitchChain
+    .catch(() => {})
+    .then(() => performCharacterSwitch(charId, save));
+  return characterSwitchChain;
+}
+
+async function performCharacterSwitch(charId, save = true) {
+  if (S.activeRun?.finalizing) {
+    document.getElementById('charSelect').value = S.activeCharId || '';
+    return;
+  }
+  stopESIPoll();
+  if (S.activeRun) {
+    const run = S.activeRun;
+    run.suspended = true;
+    syncActiveRunInputs();
+    try {
+      await persistActiveRun();
+    } catch (error) {
+      run.suspended = false;
+      if (S.hasAuth) startESIPoll();
+      throw error;
+    }
+  }
+  S.activeRun = null;
+  resetRunUI();
+  clearTrackerInputs();
+  lastShipTypeId = null;
+  lastSystemId = null;
+
+  const normalizedCharacterId = charId ? Number(charId) : null;
+  S.activeCharId = normalizedCharacterId;
+  document.getElementById('charSelect').value = normalizedCharacterId || '';
+
+  if (!normalizedCharacterId) {
     showNoCharPrompt();
     return;
   }
 
-  if (save) await window.api.settings.set('active_character', charId);
+  if (save) await window.api.settings.set('active_character', normalizedCharacterId);
 
-  S.hasAuth = await window.api.auth.hasTokens(charId);
+  S.hasAuth = await window.api.auth.hasTokens(normalizedCharacterId);
 
   document.getElementById('no-char-prompt').style.display = 'none';
   document.getElementById('tracker-ui').style.display = 'block';
 
   loadDefaultSelects();
   updateRecentRuns();
+  const restored = await restoreActiveRun(normalizedCharacterId);
+  resetTransitionTracker(restored?.state === 'in-abyss' ? 'inside' : 'outside');
 
   if (S.hasAuth) {
     startESIPoll();
@@ -140,21 +177,41 @@ const ABYSSAL_MIN = 32000000;
 const CAPSULE_IDS = [670, 33328];
 let lastShipTypeId = null;
 let lastSystemId = null;
-let wasInAbyss = false;
+let transitionTracker = runTracking.createTransitionTracker();
 
-async function pollESI() {
-  if (!S.activeCharId || !S.hasAuth) return;
+function resetTransitionTracker(phase = 'outside') {
+  transitionTracker = runTracking.createTransitionTracker({ initialPhase: phase });
+}
+
+function isCurrentPoll(generation, characterId) {
+  return (
+    generation === S.pollGeneration
+    && characterId === S.activeCharId
+    && S.hasAuth
+  );
+}
+
+async function pollESI(generation, characterId) {
+  if (!isCurrentPoll(generation, characterId)) return;
   document.getElementById('statusDot').className = 'status-dot scanning';
 
   try {
     const [loc, ship] = await Promise.all([
-      window.api.esi.getLocation(S.activeCharId),
-      window.api.esi.getShip(S.activeCharId)
+      window.api.esi.getLocation(characterId),
+      window.api.esi.getShip(characterId)
     ]);
+    if (!isCurrentPoll(generation, characterId)) return;
 
-    const sysId = loc.solar_system_id;
+    const sysId = Number(loc?.solar_system_id);
+    const shipTypeId = Number(ship?.ship_type_id);
+    if (!Number.isSafeInteger(sysId) || sysId < 1) {
+      throw new TypeError('ESI returned an invalid solar system');
+    }
+    if (!Number.isSafeInteger(shipTypeId) || shipTypeId < 1) {
+      throw new TypeError('ESI returned an invalid ship type');
+    }
     const inAbyss = sysId >= ABYSSAL_MIN;
-    const isCapsule = CAPSULE_IDS.includes(ship.ship_type_id);
+    const isCapsule = CAPSULE_IDS.includes(shipTypeId);
 
     // Update HUD
     if (inAbyss) {
@@ -164,33 +221,38 @@ async function pollESI() {
       document.getElementById('hudLocation').classList.remove('active');
       if (sysId !== lastSystemId) {
         window.api.esi.getSystemName(sysId).then(name => {
-          document.getElementById('hudLocationVal').textContent = name;
-        });
+          if (isCurrentPoll(generation, characterId) && lastSystemId === sysId) {
+            document.getElementById('hudLocationVal').textContent = name;
+          }
+        }).catch(() => {});
       }
     }
-    document.getElementById('hudShipVal').textContent = ship.ship_name || `Ship ${ship.ship_type_id}`;
+    document.getElementById('hudShipVal').textContent = ship.ship_name || `Ship ${shipTypeId}`;
     document.getElementById('hudEsiVal').textContent = inAbyss ? '⚡ IN ABYSS' : 'Active';
+    document.getElementById('hudEsiVal').title = '';
     document.getElementById('statusDot').className = inAbyss ? 'status-dot abyss' : 'status-dot online';
 
-    // Detect transitions
-    if (inAbyss && !wasInAbyss && S.runState === 'awaiting') {
-      autoStartRun();
-    } else if (!inAbyss && wasInAbyss && S.runState === 'in-abyss') {
-      if (isCapsule) {
-        autoEndDied();
+    lastSystemId = sysId;
+    lastShipTypeId = shipTypeId;
+
+    const transition = transitionTracker.observe({
+      inAbyss,
+      isCapsule,
+      observedAt: Math.floor(Date.now() / 1000),
+    });
+    if (transition?.type === 'entered' && S.runState === 'awaiting') {
+      autoStartRun(transition.observedAt);
+    } else if (transition?.type === 'exited' && S.runState === 'in-abyss') {
+      if (transition.outcome === 'Died') {
+        await autoEndDied(transition.observedAt);
       } else {
-        autoEndSurvived();
+        autoEndSurvived(transition.observedAt);
       }
-    } else if (isCapsule && S.runState === 'in-abyss') {
-      autoEndDied();
     }
 
-    wasInAbyss = inAbyss;
-    lastSystemId = sysId;
-    lastShipTypeId = ship.ship_type_id;
-
   } catch (e) {
-    const authError = /authorization|token/i.test(e.message || '');
+    if (!isCurrentPoll(generation, characterId)) return;
+    const authError = /authorization|token|\bHTTP (?:401|403)\b/i.test(e.message || '');
     document.getElementById('hudEsiVal').textContent = authError ? 'Auth Error' : 'Poll Error';
     document.getElementById('hudEsiVal').title = authError
       ? 'Go to Settings → Re-authenticate to fix this'
@@ -199,14 +261,27 @@ async function pollESI() {
   }
 }
 
+async function runESIPollLoop(generation, characterId, interval) {
+  await pollESI(generation, characterId);
+  if (!isCurrentPoll(generation, characterId)) return;
+  S.pollTimeout = setTimeout(() => {
+    void runESIPollLoop(generation, characterId, interval);
+  }, interval);
+}
+
 function startESIPoll() {
-  pollESI();
+  stopESIPoll();
   const interval = Math.max(3, parseInt(S.settings.esi_poll_interval) || 5) * 1000;
-  S.pollInterval = setInterval(pollESI, interval);
+  const generation = S.pollGeneration;
+  void runESIPollLoop(generation, S.activeCharId, interval);
 }
 
 function stopESIPoll() {
-  if (S.pollInterval) { clearInterval(S.pollInterval); S.pollInterval = null; }
+  S.pollGeneration++;
+  if (S.pollTimeout) {
+    clearTimeout(S.pollTimeout);
+    S.pollTimeout = null;
+  }
 }
 
 // ── Run Lifecycle ─────────────────────────────────────────────────────────
@@ -233,48 +308,185 @@ async function classifyShip(typeId) {
   }
 }
 
-async function startRun() {
+let activeCheckpointTimer = null;
+let activeCheckpointChain = Promise.resolve();
+
+function clearTrackerInputs() {
+  for (const id of [
+    'cargoBeforeText',
+    'cargoAfterText',
+    'droneBeforeText',
+    'droneAfterText',
+  ]) {
+    document.getElementById(id).value = '';
+  }
+}
+
+function syncActiveRunInputs() {
+  if (!S.activeRun) return;
+  S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
+  S.activeRun.cargoAfter = document.getElementById('cargoAfterText').value;
+  S.activeRun.droneBefore = document.getElementById('droneBeforeText').value;
+  S.activeRun.droneAfter = document.getElementById('droneAfterText').value;
+}
+
+function activeRunSnapshot() {
+  if (!S.activeRun) return null;
+  const state = S.runState === 'died'
+    ? 'died'
+    : S.runState === 'in-abyss' ? 'in-abyss' : 'awaiting-cargo';
+  const run = S.activeRun;
+  return window.AbyssSecurity.validateActiveRunSnapshot({
+    version: 1,
+    state,
+    run: {
+      character_id: run.character_id,
+      started_at: run.started_at,
+      duration: run.duration || 0,
+      tier: run.tier,
+      weather: run.weather,
+      outcome: state === 'in-abyss' ? null : state === 'died' ? 'Died' : 'Survived',
+      system_id: run.system_id ?? lastSystemId,
+      cargoBefore: run.cargoBefore || '',
+      cargoAfter: run.cargoAfter || '',
+      droneBefore: run.droneBefore || '',
+      droneAfter: run.droneAfter || '',
+      ship_name: run.ship_name || '',
+      ship_class: run.ship_class || 'Unknown',
+      fitting: run.fitting || [],
+      implants: run.implants || [],
+      fitCaptured: Boolean(run.fitCaptured),
+    },
+  });
+}
+
+function persistActiveRun() {
+  const snapshot = activeRunSnapshot();
+  if (!snapshot) return activeCheckpointChain;
+  activeCheckpointChain = activeCheckpointChain
+    .catch(() => {})
+    .then(() => window.api.runs.saveActive(snapshot));
+  return activeCheckpointChain;
+}
+
+function scheduleActiveRunCheckpoint() {
+  if (!S.activeRun || S.activeRun.finalizing || S.activeRun.suspended) return;
+  if (activeCheckpointTimer) clearTimeout(activeCheckpointTimer);
+  activeCheckpointTimer = setTimeout(() => {
+    activeCheckpointTimer = null;
+    syncActiveRunInputs();
+    void persistActiveRun().catch(error => {
+      console.error('Failed to checkpoint active run:', error);
+    });
+  }, 250);
+}
+
+async function clearPersistedActiveRun(characterId) {
+  if (activeCheckpointTimer) {
+    clearTimeout(activeCheckpointTimer);
+    activeCheckpointTimer = null;
+  }
+  activeCheckpointChain = activeCheckpointChain
+    .catch(() => {})
+    .then(() => window.api.runs.clearActive(characterId));
+  await activeCheckpointChain;
+}
+
+async function restoreActiveRun(characterId) {
+  const snapshot = await window.api.runs.getActive(characterId);
+  if (!snapshot) return null;
+
+  S.activeRun = snapshot.run;
+  lastSystemId = snapshot.run.system_id;
+  document.getElementById('cargoBeforeText').value = snapshot.run.cargoBefore;
+  document.getElementById('cargoAfterText').value = snapshot.run.cargoAfter;
+  document.getElementById('droneBeforeText').value = snapshot.run.droneBefore;
+  document.getElementById('droneAfterText').value = snapshot.run.droneAfter;
+  document.getElementById('fitCaptured').style.display =
+    snapshot.run.fitCaptured ? 'block' : 'none';
+  updateRunInfo();
+
+  const recoveryStatus = document.getElementById('recoveryStatus');
+  recoveryStatus.textContent = 'Recovered your unfinished run from the last session.';
+  recoveryStatus.style.display = 'block';
+
+  if (snapshot.state === 'in-abyss') {
+    document.getElementById('hudRunState').textContent = 'In Abyss';
+    setRunState('in-abyss');
+    startTimer();
+  } else if (snapshot.state === 'died') {
+    document.getElementById('timerDisplay').textContent = fmtDuration(snapshot.run.duration);
+    document.getElementById('timerDisplay').classList.add('died');
+    document.getElementById('hudRunState').textContent = 'Died';
+    document.getElementById('infoOutcome').innerHTML = '<span class="badge died">Died</span>';
+    setRunState('died');
+    void appraiseLoss();
+  } else {
+    document.getElementById('timerDisplay').textContent = fmtDuration(snapshot.run.duration);
+    document.getElementById('timerDisplay').classList.add('survived');
+    document.getElementById('hudRunState').textContent = 'Survived';
+    document.getElementById('infoOutcome').innerHTML = '<span class="badge survived">Survived</span>';
+    setRunState('awaiting-cargo');
+  }
+  return snapshot;
+}
+
+function startRun(startedAt = Math.floor(Date.now() / 1000)) {
+  if (S.activeRun || S.runState !== 'awaiting' || !S.activeCharId) return;
   const tier = document.getElementById('tierSelect').value;
   const weather = document.getElementById('weatherSelect').value;
   const cargoBefore = document.getElementById('cargoBeforeText').value;
-
-  // Determine ship class from current ship type
-  const shipClass = await classifyShip(lastShipTypeId);
+  const droneBefore = document.getElementById('droneBeforeText').value;
+  const shipTypeId = lastShipTypeId;
 
   S.activeRun = {
     character_id: S.activeCharId,
-    started_at: Math.floor(Date.now() / 1000),
+    started_at: startedAt,
+    duration: 0,
     tier: tier || 'Unknown',
     weather: weather || 'Unknown',
     ship_name: document.getElementById('hudShipVal').textContent || '',
-    ship_class: shipClass,
+    ship_class: 'Unknown',
+    system_id: lastSystemId,
     cargoBefore,
     cargoAfter: '',
+    droneBefore,
+    droneAfter: '',
     outcome: null,
     fitting: [],
     implants: [],
     fitCaptured: false
   };
 
-  // Capture fitting and implants at run start
-  if (S.hasAuth) {
-    try {
-      const [fitData, implantIds] = await Promise.all([
-        window.api.esi.getFitting(S.activeCharId),
-        window.api.esi.getImplants(S.activeCharId)
-      ]);
+  document.getElementById('recoveryStatus').style.display = 'none';
+  setRunState('in-abyss');
+  startTimer();
+  updateRunInfo();
+  void persistActiveRun().catch(error => {
+    console.error('Failed to checkpoint active run:', error);
+  });
+  void captureActiveRunDetails(S.activeRun, shipTypeId);
+}
 
-      // Resolve type names for fitting items
+async function captureActiveRunDetails(run, shipTypeId) {
+  const characterId = run.character_id;
+  try {
+    const [shipClass, fitData, implantIds] = await Promise.all([
+      classifyShip(shipTypeId),
+      S.hasAuth ? window.api.esi.getFitting(characterId) : null,
+      S.hasAuth ? window.api.esi.getImplants(characterId) : [],
+    ]);
+    if (S.activeRun !== run || run.finalizing || run.suspended) return;
+    run.ship_class = shipClass;
+
+    if (fitData) {
       const fitTypeIds = [fitData.ship_type_id, ...fitData.items.map(i => i.type_id)];
-      const implantTypeIds = implantIds;
-      const allTypeIds = [...new Set([...fitTypeIds, ...implantTypeIds])];
+      const allTypeIds = [...new Set([...fitTypeIds, ...implantIds])];
       const typeNames = await window.api.esi.getTypeNames(allTypeIds);
+      if (S.activeRun !== run || run.finalizing || run.suspended) return;
 
-      // Update ship name from resolved type names
-      S.activeRun.ship_name = typeNames[fitData.ship_type_id] || S.activeRun.ship_name;
-
-      // Build fitting array
-      S.activeRun.fitting = [
+      run.ship_name = typeNames[fitData.ship_type_id] || run.ship_name;
+      run.fitting = [
         { type_id: fitData.ship_type_id, type_name: typeNames[fitData.ship_type_id] || `Type ${fitData.ship_type_id}`, qty: 1, slot: 'hull' },
         ...fitData.items.map(i => ({
           type_id: i.type_id,
@@ -283,67 +495,69 @@ async function startRun() {
           slot: i.flag || 'unknown'
         }))
       ];
-
-      // Build implants array
-      S.activeRun.implants = implantIds.map(id => ({
+      run.implants = implantIds.map(id => ({
         type_id: id,
         type_name: typeNames[id] || `Type ${id}`,
       }));
-
-      S.activeRun.fitCaptured = true;
+      run.fitCaptured = true;
       document.getElementById('fitCaptured').style.display = 'block';
-    } catch (e) {
-      console.error('Failed to capture fitting/implants:', e);
     }
+    if (S.activeRun === run && !run.finalizing && !run.suspended) await persistActiveRun();
+  } catch (e) {
+    console.error('Failed to capture fitting/implants:', e);
   }
-
-  setRunState('in-abyss');
-  startTimer();
-  updateRunInfo();
 }
 
 function manualStart() {
   startRun();
 }
 
-function autoStartRun() {
-  startRun();
+function autoStartRun(startedAt) {
+  startRun(startedAt);
 }
 
-function autoEndSurvived() {
-  endRunSurvived();
+function autoEndSurvived(endedAt) {
+  return endRunSurvived(endedAt);
 }
 
-function autoEndDied() {
-  endRunDied();
+function autoEndDied(endedAt) {
+  return endRunDied(endedAt);
 }
 
 function manualEndSurvived() {
-  endRunSurvived();
+  return endRunSurvived();
 }
 
 function manualEndDied() {
-  endRunDied();
+  return endRunDied();
 }
 
-function endRunSurvived() {
+function endRunSurvived(endedAt = Math.floor(Date.now() / 1000)) {
+  if (!S.activeRun || S.runState !== 'in-abyss') return;
   stopTimer();
   S.activeRun.outcome = 'Survived';
-  S.activeRun.duration = Math.floor(Date.now() / 1000) - S.activeRun.started_at;
+  S.activeRun.duration = Math.max(0, endedAt - S.activeRun.started_at);
   document.getElementById('timerDisplay').classList.add('survived');
+  document.getElementById('timerDisplay').textContent = fmtDuration(S.activeRun.duration);
   document.getElementById('hudRunState').textContent = 'Survived';
   document.getElementById('infoOutcome').innerHTML = '<span class="badge survived">Survived</span>';
   setRunState('awaiting-cargo');
+  void persistActiveRun().catch(error => {
+    console.error('Failed to checkpoint completed run:', error);
+  });
 }
 
-async function endRunDied() {
+async function endRunDied(endedAt = Math.floor(Date.now() / 1000)) {
+  if (!S.activeRun || S.runState !== 'in-abyss') return;
   stopTimer();
   S.activeRun.outcome = 'Died';
-  S.activeRun.duration = Math.floor(Date.now() / 1000) - S.activeRun.started_at;
+  S.activeRun.duration = Math.max(0, endedAt - S.activeRun.started_at);
   document.getElementById('timerDisplay').classList.add('died');
+  document.getElementById('timerDisplay').textContent = fmtDuration(S.activeRun.duration);
   document.getElementById('hudRunState').textContent = 'Died';
   document.getElementById('infoOutcome').innerHTML = '<span class="badge died">Died</span>';
   setRunState('died');
+  await persistActiveRun();
   await appraiseLoss();
 }
 
@@ -373,6 +587,7 @@ async function appraiseRun() {
   };
 
   try {
+    await persistActiveRun();
     let lootResult = null, consumedResult = null;
 
     if (diff.gained.length > 0) {
@@ -394,6 +609,9 @@ async function appraiseRun() {
 
     renderAppraisalResults(lootResult, consumedResult, diff);
     setRunState('appraisal');
+    void persistActiveRun().catch(error => {
+      console.error('Failed to checkpoint appraised run:', error);
+    });
   } catch (e) {
     document.getElementById('appraise-error').innerHTML = `<div class="alert err">Appraisal failed: ${esc(e.message)} <button class="btn sm red" data-action="appraise-run">Retry</button></div>`;
     document.getElementById('appraise-error').style.display = 'block';
@@ -430,6 +648,7 @@ async function appraiseLoss() {
     renderLossResults(results, cargoLoss, fittingLoss, implantLoss);
   } catch (e) {
     document.getElementById('loss-loading').textContent = 'Appraisal failed: ' + e.message;
+    document.getElementById('loss-actions').style.display = 'flex';
   }
 }
 
@@ -532,9 +751,21 @@ function renderLossResults(results, cargoLoss, fittingLoss, implantLoss) {
 }
 
 async function saveCurrentRun() {
-  if (!S.activeRun) return;
+  if (!S.activeRun || S.activeRun.finalizing) return;
 
   const run = S.activeRun;
+  run.finalizing = true;
+  if (activeCheckpointTimer) {
+    clearTimeout(activeCheckpointTimer);
+    activeCheckpointTimer = null;
+  }
+  syncActiveRunInputs();
+  try {
+    await persistActiveRun();
+  } catch (error) {
+    run.finalizing = false;
+    throw error;
+  }
   const items = [];
 
   if (run.outcome === 'Survived') {
@@ -597,7 +828,12 @@ async function saveCurrentRun() {
     implants
   };
 
-  await window.api.runs.save(runData);
+  try {
+    await window.api.runs.completeActive(runData);
+  } catch (error) {
+    run.finalizing = false;
+    throw error;
+  }
 
   // Promote post-run cargo and drone bay to pre-run for next run
   if (run.outcome === 'Survived') {
@@ -620,6 +856,23 @@ async function saveCurrentRun() {
   S.activeRun = null;
   resetRunUI();
   updateRecentRuns();
+}
+
+async function saveCurrentRunSafely() {
+  try {
+    await saveCurrentRun();
+  } catch (error) {
+    const target = S.runState === 'died'
+      ? document.getElementById('loss-loading')
+      : document.getElementById('appraise-error');
+    const message = `Run could not be saved: ${error.message}`;
+    if (S.runState === 'died') {
+      target.textContent = message;
+    } else {
+      target.innerHTML = `<div class="alert err">${esc(message)}</div>`;
+    }
+    target.style.display = 'block';
+  }
 }
 
 
@@ -908,8 +1161,17 @@ async function submitManualEntry(doAppraise = true) {
   document.getElementById('manualSpinner').style.display = 'none';
 }
 
-function cancelRun() {
-  S.activeRun = null;
+async function cancelRun() {
+  if (!S.activeRun || S.activeRun.finalizing) return;
+  const run = S.activeRun;
+  run.finalizing = true;
+  try {
+    await clearPersistedActiveRun(run.character_id);
+  } catch (error) {
+    run.finalizing = false;
+    throw error;
+  }
+  if (S.activeRun === run) S.activeRun = null;
   resetRunUI();
 }
 
@@ -922,6 +1184,9 @@ function backToAppraise() {
   document.getElementById('cargoAfterText').value = S.activeRun ? S.activeRun.cargoAfter : '';
   document.getElementById('droneAfterText').value = S.activeRun ? (S.activeRun.droneAfter || '') : '';
   setRunState('awaiting-cargo');
+  void persistActiveRun().catch(error => {
+    console.error('Failed to checkpoint active run:', error);
+  });
 }
 
 function resetRunUI() {
@@ -937,6 +1202,7 @@ function resetRunUI() {
   document.getElementById('droneAfterText').value = '';
   document.getElementById('fitCaptured').style.display = 'none';
   document.getElementById('appraise-error').style.display = 'none';
+  document.getElementById('recoveryStatus').style.display = 'none';
   setRunState('awaiting');
 }
 
@@ -1742,6 +2008,12 @@ async function reauthCharacter(charId) {
 
 async function removeCharacter(charId) {
   if (!confirm('Remove this character? Their run history will be deleted.')) return;
+  if (String(S.activeCharId) === String(charId)) {
+    stopESIPoll();
+    S.activeRun = null;
+    await clearPersistedActiveRun(charId);
+    resetRunUI();
+  }
   await window.api.auth.deleteCharacter(charId);
   S.characters = await window.api.auth.getCharacters();
   await populateCharSelect();
@@ -1824,7 +2096,7 @@ const clickActions = {
   'manual-end-died': () => manualEndDied(),
   'appraise-run': () => appraiseRun(),
   'cancel-run': () => cancelRun(),
-  'save-current-run': () => saveCurrentRun(),
+  'save-current-run': () => saveCurrentRunSafely(),
   'back-to-appraise': () => backToAppraise(),
   'render-history': () => renderHistory(),
   'open-add-character': () => openAddCharModal(),
@@ -1862,7 +2134,9 @@ document.addEventListener('click', event => {
 document.addEventListener('change', event => {
   const element = event.target;
   if (element.dataset.changeAction === 'switch-character') {
-    void switchCharacter(element.value);
+    void switchCharacter(element.value).catch(error => {
+      console.error('Character switch failed:', error);
+    });
   } else if (element.dataset.changeAction === 'render-history') {
     void renderHistory();
   } else if (element.dataset.changeAction === 'manual-outcome') {
@@ -1874,6 +2148,14 @@ document.addEventListener('input', event => {
   const element = event.target;
   if (element.dataset.inputAction === 'paste-hint') {
     updatePasteHint(element.id, element.dataset.hint);
+  }
+  if ([
+    'cargoBeforeText',
+    'cargoAfterText',
+    'droneBeforeText',
+    'droneAfterText',
+  ].includes(element.id)) {
+    scheduleActiveRunCheckpoint();
   }
 });
 

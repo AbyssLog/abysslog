@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld('api', {
 
   runs: {
     save: runData => ipcRenderer.invoke('runs:save', runData),
+    completeActive: runData => ipcRenderer.invoke('runs:complete-active', runData),
+    getActive: characterId => ipcRenderer.invoke('runs:get-active', characterId),
+    saveActive: snapshot => ipcRenderer.invoke('runs:save-active', snapshot),
+    clearActive: characterId => ipcRenderer.invoke('runs:clear-active', characterId),
     getAll: filters => ipcRenderer.invoke('runs:get-all', filters),
     getById: runId => ipcRenderer.invoke('runs:get-by-id', runId),
     delete: runId => ipcRenderer.invoke('runs:delete', runId),
