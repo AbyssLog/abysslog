@@ -162,6 +162,59 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
   }), /unexpected field/);
 });
 
+test('ESI and OAuth responses are reduced to bounded schemas', () => {
+  assert.deepEqual(security.validateEsiLocation({
+    solar_system_id: 32_000_001,
+    structure_id: 123,
+    ignored: '<script>',
+  }), {
+    solar_system_id: 32_000_001,
+  });
+  assert.deepEqual(security.validateEsiShip({
+    ship_item_id: 99,
+    ship_name: 'Reliable Gila',
+    ship_type_id: 17_918,
+    ignored: '<script>',
+  }), {
+    ship_name: 'Reliable Gila',
+    ship_type_id: 17_918,
+  });
+  assert.deepEqual(security.validateEsiFitting({
+    ship_type_id: 17_918,
+    items: [{
+      flag: 'HiSlot0',
+      quantity: 1,
+      type_id: 12_345,
+      ignored: '<script>',
+    }],
+  }), {
+    ship_type_id: 17_918,
+    items: [{ flag: 'HiSlot0', quantity: 1, type_id: 12_345 }],
+  });
+  assert.deepEqual(security.validateOAuthTokenResponse({
+    access_token: 'access',
+    refresh_token: 'refresh',
+    expires_in: 1_200,
+    ignored: '<script>',
+  }, { requireRefreshToken: true }), {
+    access_token: 'access',
+    refresh_token: 'refresh',
+    expires_in: 1_200,
+  });
+
+  assert.throws(() => security.validateEsiLocation({
+    solar_system_id: '<script>',
+  }));
+  assert.throws(() => security.validateEsiFitting({
+    ship_type_id: 17_918,
+    items: [{ flag: 'HiSlot0', quantity: 0, type_id: 12_345 }],
+  }));
+  assert.throws(() => security.validateOAuthTokenResponse({
+    access_token: 'access',
+    expires_in: 1_200,
+  }, { requireRefreshToken: true }), /refresh token/i);
+});
+
 test('Janice responses are reduced to a safe renderer-facing schema', () => {
   const result = security.validateJaniceResponse({
     items: [{
@@ -222,6 +275,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   const html = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
+  const esi = fs.readFileSync(path.join(projectRoot, 'src/main/esi.js'), 'utf8');
 
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
   const scriptDirective = csp.split(';').map(part => part.trim()).find(part => part.startsWith('script-src'));
@@ -232,7 +286,10 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /\$\{esc\(r\.weather\)\}/);
   assert.doesNotMatch(appJs, /setInterval\(pollESI/);
   assert.match(appJs, /runESIPollLoop/);
+  assert.match(appJs, /calculateBackoffDelay/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
+  assert.match(esi, /validateEsiLocation/);
+  assert.match(esi, /validateEsiShip/);
   assert.doesNotMatch(preload, /getTokens|saveTokens|refreshToken|verifyToken/);
 });
 

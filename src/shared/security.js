@@ -358,6 +358,100 @@
     };
   }
 
+  function validateEsiLocation(value) {
+    if (!isPlainObject(value)) throw new TypeError('ESI location response is invalid');
+    return {
+      solar_system_id: requireInteger(value.solar_system_id, 'Solar system ID'),
+    };
+  }
+
+  function validateEsiShip(value) {
+    if (!isPlainObject(value)) throw new TypeError('ESI ship response is invalid');
+    return {
+      ship_type_id: requireInteger(value.ship_type_id, 'Ship type ID'),
+      ship_name: requireText(value.ship_name ?? '', 'Ship name', 256, {
+        multiline: false,
+      }),
+    };
+  }
+
+  function validateEsiFitting(value) {
+    if (!isPlainObject(value)) throw new TypeError('ESI fitting response is invalid');
+    const items = requireArray(value.items, 'ESI fitting items', 1000).map((item, index) => {
+      if (!isPlainObject(item)) throw new TypeError(`ESI fitting item ${index + 1} is invalid`);
+      return {
+        type_id: requireInteger(item.type_id, `ESI fitting item ${index + 1} type ID`),
+        quantity: requireInteger(item.quantity, `ESI fitting item ${index + 1} quantity`, {
+          min: 1,
+          max: 1_000_000_000,
+        }),
+        flag: requireText(item.flag ?? '', `ESI fitting item ${index + 1} flag`, 64, {
+          multiline: false,
+        }),
+      };
+    });
+    return {
+      ship_type_id: requireInteger(value.ship_type_id, 'Fitted ship type ID'),
+      items,
+    };
+  }
+
+  function validateEsiImplants(value) {
+    return requireArray(value, 'ESI implants', 64).map((typeId, index) =>
+      requireInteger(typeId, `ESI implant ${index + 1} type ID`));
+  }
+
+  function validateEsiSystem(value) {
+    if (!isPlainObject(value)) throw new TypeError('ESI system response is invalid');
+    return {
+      name: requireTrimmedText(value.name, 'Solar system name', 128),
+    };
+  }
+
+  function validateEsiType(value) {
+    if (!isPlainObject(value)) throw new TypeError('ESI type response is invalid');
+    return {
+      group_id: requireInteger(value.group_id, 'Type group ID'),
+      name: requireTrimmedText(value.name, 'Type name', 256),
+    };
+  }
+
+  function validateEsiNames(value) {
+    return requireArray(value, 'ESI names', 1000).map((item, index) => {
+      if (!isPlainObject(item)) throw new TypeError(`ESI name ${index + 1} is invalid`);
+      return {
+        id: requireInteger(item.id, `ESI name ${index + 1} ID`),
+        name: requireTrimmedText(item.name, `ESI name ${index + 1}`, 256),
+      };
+    });
+  }
+
+  function validateEsiTokenIdentity(value) {
+    if (!isPlainObject(value)) throw new TypeError('EVE token identity is invalid');
+    return {
+      CharacterID: requireInteger(value.CharacterID, 'Character ID'),
+      CharacterName: requireTrimmedText(value.CharacterName, 'Character name', 128),
+    };
+  }
+
+  function validateOAuthTokenResponse(value, { requireRefreshToken = false } = {}) {
+    if (!isPlainObject(value)) throw new TypeError('OAuth token response is invalid');
+    const refreshToken = value.refresh_token == null
+      ? null
+      : requireString(value.refresh_token, 'Refresh token', 16 * 1024);
+    if (requireRefreshToken && !refreshToken) {
+      throw new TypeError('OAuth refresh token is required');
+    }
+    return {
+      access_token: requireString(value.access_token, 'Access token', 16 * 1024),
+      refresh_token: refreshToken,
+      expires_in: requireInteger(value.expires_in, 'Token lifetime', {
+        min: 1,
+        max: 86_400,
+      }),
+    };
+  }
+
   function validateRunFilters(value) {
     if (!isPlainObject(value)) throw new TypeError('Run filters must be an object');
     assertAllowedKeys(value, 'Run filters', new Set([
@@ -538,7 +632,16 @@
     validateAppraisalItems,
     validateAppraisalUpdate,
     validateCargoUpdate,
+    validateEsiFitting,
+    validateEsiImplants,
+    validateEsiLocation,
+    validateEsiNames,
+    validateEsiShip,
+    validateEsiSystem,
+    validateEsiTokenIdentity,
+    validateEsiType,
     validateJaniceResponse,
+    validateOAuthTokenResponse,
     validatePublicSetting,
     validateRunData,
     validateRunFilters,

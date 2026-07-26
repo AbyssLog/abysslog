@@ -2,10 +2,19 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  calculateBackoffDelay,
   createSingleFlight,
   createTokenCoordinator,
   createTransitionTracker,
 } = require('../src/shared/run-tracking');
+
+test('poll backoff grows exponentially and respects its cap', () => {
+  assert.equal(calculateBackoffDelay(5_000, 1), 5_000);
+  assert.equal(calculateBackoffDelay(5_000, 2), 10_000);
+  assert.equal(calculateBackoffDelay(5_000, 5), 60_000);
+  assert.equal(calculateBackoffDelay(5_000, 20), 60_000);
+  assert.throws(() => calculateBackoffDelay(0, 1));
+});
 
 test('single-flight work is shared per key and cleared after completion', async () => {
   const singleFlight = createSingleFlight();

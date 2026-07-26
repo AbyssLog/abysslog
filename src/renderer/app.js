@@ -14,6 +14,7 @@ const S = {
   timerInterval: null,
   pollTimeout: null,
   pollGeneration: 0,
+  pollFailureCount: 0,
   sortCol: 'started_at',
   sortDir: 'desc',
 };
@@ -249,24 +250,37 @@ async function pollESI(generation, characterId) {
         autoEndSurvived(transition.observedAt);
       }
     }
+    return { success: true };
 
   } catch (e) {
-    if (!isCurrentPoll(generation, characterId)) return;
+    if (!isCurrentPoll(generation, characterId)) return null;
     const authError = /authorization|token|\bHTTP (?:401|403)\b/i.test(e.message || '');
-    document.getElementById('hudEsiVal').textContent = authError ? 'Auth Error' : 'Poll Error';
+    document.getElementById('hudEsiVal').textContent = authError ? 'Auth Error' : 'Reconnecting…';
     document.getElementById('hudEsiVal').title = authError
       ? 'Go to Settings → Re-authenticate to fix this'
-      : '';
+      : 'ESI is temporarily unavailable; AbyssLog will retry automatically';
     document.getElementById('statusDot').className = 'status-dot';
+    return { success: false, authError };
   }
 }
 
 async function runESIPollLoop(generation, characterId, interval) {
-  await pollESI(generation, characterId);
+  const result = await pollESI(generation, characterId);
   if (!isCurrentPoll(generation, characterId)) return;
+  let delay = interval;
+  if (result?.success) {
+    S.pollFailureCount = 0;
+  } else {
+    S.pollFailureCount++;
+    delay = runTracking.calculateBackoffDelay(interval, S.pollFailureCount);
+    if (!result?.authError) {
+      document.getElementById('hudEsiVal').textContent =
+        `Reconnecting in ${Math.ceil(delay / 1000)}s`;
+    }
+  }
   S.pollTimeout = setTimeout(() => {
     void runESIPollLoop(generation, characterId, interval);
-  }, interval);
+  }, delay);
 }
 
 function startESIPoll() {
@@ -278,6 +292,7 @@ function startESIPoll() {
 
 function stopESIPoll() {
   S.pollGeneration++;
+  S.pollFailureCount = 0;
   if (S.pollTimeout) {
     clearTimeout(S.pollTimeout);
     S.pollTimeout = null;

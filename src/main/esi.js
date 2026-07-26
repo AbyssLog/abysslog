@@ -1,158 +1,180 @@
-const https = require('https');
+const { createHttpClient } = require('./http-client');
+const security = require('../shared/security');
 
 const ESI_BASE = 'https://esi.evetech.net/latest';
 const SSO_TOKEN_URL = 'https://login.eveonline.com/v2/oauth/token';
 const SSO_VERIFY_URL = 'https://login.eveonline.com/oauth/verify';
-const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 15_000;
+const USER_AGENT = 'AbyssLog/1.0';
+const CACHE_LIMIT = 5000;
 
-function readJsonResponse(res, resolve, reject, label) {
-  let data = '';
-  res.setEncoding('utf8');
-  res.on('data', chunk => {
-    data += chunk;
-    if (data.length > MAX_RESPONSE_BYTES) res.destroy(new Error(`${label} response is too large`));
-  });
-  res.on('end', () => {
-    if (res.statusCode >= 400) {
-      reject(new Error(`${label} request failed with HTTP ${res.statusCode}`));
-      return;
-    }
-    try {
-      resolve(JSON.parse(data));
-    } catch {
-      reject(new Error(`${label} returned invalid JSON`));
-    }
-  });
-  res.on('error', reject);
+const http = createHttpClient();
+const systemNameCache = new Map();
+const typeInfoCache = new Map();
+const typeNameCache = new Map();
+
+function cacheSet(cache, key, value) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value);
 }
 
-function httpGet(url, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const options = { headers: { 'User-Agent': 'AbyssLog/1.0', ...headers } };
-    const req = https.get(url, options, res => readJsonResponse(res, resolve, reject, 'ESI'));
-    req.on('error', reject);
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('ESI request timed out')));
+function authenticatedHeaders(accessToken) {
+  return {
+    Authorization: `Bearer ${security.requireString(
+      accessToken,
+      'Access token',
+      16 * 1024
+    )}`,
+    'User-Agent': USER_AGENT,
+  };
+}
+
+function getJson(url, headers = {}) {
+  return http.requestJson(url, {
+    headers: { 'User-Agent': USER_AGENT, ...headers },
+    label: 'ESI',
   });
 }
 
-function httpPost(url, body, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const postData = typeof body === 'string' ? body : new URLSearchParams(body).toString();
-    const urlObj = new URL(url);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(postData),
-        'User-Agent': 'AbyssLog/1.0',
-        ...headers
-      }
-    };
-    const req = https.request(options, res => readJsonResponse(res, resolve, reject, 'EVE SSO'));
-    req.on('error', reject);
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('EVE SSO request timed out')));
-    req.write(postData);
-    req.end();
+function postJson(url, body, headers = {}) {
+  const serialized = JSON.stringify(body);
+  return http.requestJson(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
+      ...headers,
+    },
+    body: serialized,
+    label: 'ESI',
+  });
+}
+
+async function postForm(url, body) {
+  const serialized = new URLSearchParams(body).toString();
+  return http.requestJson(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': USER_AGENT,
+    },
+    body: serialized,
+    label: 'EVE SSO',
+    // Authorization codes and rotating refresh tokens must not be replayed
+    // automatically when the response may have been lost.
+    retries: 0,
   });
 }
 
 async function getLocation(characterId, accessToken) {
-  return httpGet(`${ESI_BASE}/characters/${characterId}/location/`, {
-    Authorization: `Bearer ${accessToken}`
-  });
+  const response = await getJson(
+    `${ESI_BASE}/characters/${characterId}/location/`,
+    authenticatedHeaders(accessToken)
+  );
+  return security.validateEsiLocation(response);
 }
 
 async function getShip(characterId, accessToken) {
-  return httpGet(`${ESI_BASE}/characters/${characterId}/ship/`, {
-    Authorization: `Bearer ${accessToken}`
-  });
+  const response = await getJson(
+    `${ESI_BASE}/characters/${characterId}/ship/`,
+    authenticatedHeaders(accessToken)
+  );
+  return security.validateEsiShip(response);
 }
 
 async function getFitting(characterId, accessToken) {
-  // Returns current ship fitting with modules, charges, drones
-  return httpGet(`${ESI_BASE}/characters/${characterId}/fit/`, {
-    Authorization: `Bearer ${accessToken}`
-  });
+  const response = await getJson(
+    `${ESI_BASE}/characters/${characterId}/fit/`,
+    authenticatedHeaders(accessToken)
+  );
+  return security.validateEsiFitting(response);
 }
 
 async function getImplants(characterId, accessToken) {
-  // Returns array of type IDs for currently active implants
-  return httpGet(`${ESI_BASE}/characters/${characterId}/implants/`, {
-    Authorization: `Bearer ${accessToken}`
-  });
+  const response = await getJson(
+    `${ESI_BASE}/characters/${characterId}/implants/`,
+    authenticatedHeaders(accessToken)
+  );
+  return security.validateEsiImplants(response);
 }
 
 async function getTypeInfo(typeId) {
-  // Returns type info including group_id for ship class detection
-  return httpGet(`${ESI_BASE}/universe/types/${typeId}/`);
+  if (typeInfoCache.has(typeId)) return typeInfoCache.get(typeId);
+  const response = await getJson(`${ESI_BASE}/universe/types/${typeId}/`);
+  const typeInfo = security.validateEsiType(response);
+  cacheSet(typeInfoCache, typeId, typeInfo);
+  cacheSet(typeNameCache, typeId, typeInfo.name);
+  return typeInfo;
 }
 
 async function getSystemName(systemId) {
+  if (systemNameCache.has(systemId)) return systemNameCache.get(systemId);
   try {
-    const data = await httpGet(`${ESI_BASE}/universe/systems/${systemId}/`);
-    return data.name || String(systemId);
-  } catch (e) {
+    const response = await getJson(`${ESI_BASE}/universe/systems/${systemId}/`);
+    const name = security.validateEsiSystem(response).name;
+    cacheSet(systemNameCache, systemId, name);
+    return name;
+  } catch {
     return String(systemId);
   }
 }
 
 async function getTypeNames(typeIds) {
-  // Batch resolve type IDs to names via universe/names
-  if (!typeIds || typeIds.length === 0) return {};
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify(typeIds);
-    const urlObj = new URL(`${ESI_BASE}/universe/names/`);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        'User-Agent': 'AbyssLog/1.0'
-      }
-    };
-    const req = https.request(options, res => {
-      readJsonResponse(res, items => {
-        const map = {};
-        for (const item of items) map[item.id] = item.name;
-        resolve(map);
-      }, reject, 'ESI');
-    });
-    req.on('error', reject);
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('ESI request timed out')));
-    req.write(body);
-    req.end();
-  });
+  if (!Array.isArray(typeIds) || typeIds.length === 0) return {};
+  const uniqueIds = [...new Set(typeIds)];
+  const names = {};
+  const missing = [];
+
+  for (const typeId of uniqueIds) {
+    if (typeNameCache.has(typeId)) {
+      names[typeId] = typeNameCache.get(typeId);
+    } else {
+      missing.push(typeId);
+    }
+  }
+
+  if (missing.length > 0) {
+    const response = await postJson(`${ESI_BASE}/universe/names/`, missing);
+    for (const item of security.validateEsiNames(response)) {
+      cacheSet(typeNameCache, item.id, item.name);
+      names[item.id] = item.name;
+    }
+  }
+  return names;
 }
 
 async function exchangeAuthorizationCode(code, clientId, codeVerifier, redirectUri) {
-  return httpPost(SSO_TOKEN_URL, {
+  const response = await postForm(SSO_TOKEN_URL, {
     grant_type: 'authorization_code',
     code,
     client_id: clientId,
     code_verifier: codeVerifier,
     redirect_uri: redirectUri,
   });
+  return security.validateOAuthTokenResponse(response, { requireRefreshToken: true });
 }
 
-async function refreshToken(refreshToken, clientId) {
-  return httpPost(SSO_TOKEN_URL, {
+async function refreshToken(refreshTokenValue, clientId) {
+  const response = await postForm(SSO_TOKEN_URL, {
     grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: clientId
-  }, {
-    'Content-Type': 'application/x-www-form-urlencoded'
+    refresh_token: refreshTokenValue,
+    client_id: clientId,
   });
+  return security.validateOAuthTokenResponse(response);
 }
 
 async function verifyToken(accessToken) {
-  return httpGet(SSO_VERIFY_URL, {
-    Authorization: `Bearer ${accessToken}`
-  });
+  const response = await getJson(
+    SSO_VERIFY_URL,
+    authenticatedHeaders(accessToken)
+  );
+  return security.validateEsiTokenIdentity(response);
+}
+
+function clearMetadataCaches() {
+  systemNameCache.clear();
+  typeInfoCache.clear();
+  typeNameCache.clear();
 }
 
 module.exports = {
@@ -165,5 +187,6 @@ module.exports = {
   getTypeNames,
   exchangeAuthorizationCode,
   refreshToken,
-  verifyToken
+  verifyToken,
+  clearMetadataCaches,
 };

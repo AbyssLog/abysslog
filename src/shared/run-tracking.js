@@ -185,5 +185,23 @@
     };
   }
 
-  return { createSingleFlight, createTokenCoordinator, createTransitionTracker };
+  function calculateBackoffDelay(baseDelayMs, failureCount, capMs = 60_000) {
+    if (!Number.isSafeInteger(baseDelayMs) || baseDelayMs < 1) {
+      throw new TypeError('Base delay must be a positive integer');
+    }
+    if (!Number.isSafeInteger(failureCount) || failureCount < 1) {
+      throw new TypeError('Failure count must be a positive integer');
+    }
+    if (!Number.isSafeInteger(capMs) || capMs < baseDelayMs) {
+      throw new TypeError('Backoff cap must be at least the base delay');
+    }
+    return Math.min(capMs, baseDelayMs * (2 ** Math.min(failureCount - 1, 20)));
+  }
+
+  return {
+    calculateBackoffDelay,
+    createSingleFlight,
+    createTokenCoordinator,
+    createTransitionTracker,
+  };
 });
