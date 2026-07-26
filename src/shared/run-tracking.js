@@ -361,12 +361,21 @@
     return { gained, consumed };
   }
 
+  function diffOptionalInventoryPastes(beforeRaw, afterRaw) {
+    if (typeof beforeRaw !== 'string' || typeof afterRaw !== 'string') {
+      throw new TypeError('Inventory pastes must be text');
+    }
+    if (!afterRaw.trim()) return { gained: [], consumed: [] };
+    return diffInventoryPastes(beforeRaw, afterRaw);
+  }
+
   return {
     calculateBackoffDelay,
     createSingleFlight,
     createTokenCoordinator,
     createTransitionTracker,
     diffInventoryPastes,
+    diffOptionalInventoryPastes,
     inferAbyssalFilament,
     mergeInventoryItems,
     parseInventoryPaste,

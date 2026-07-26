@@ -442,6 +442,9 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /S\.capabilities\.killmails/);
   assert.match(appJs, /total_loss:\s*manualEditOriginal\?\.total_loss/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
+  assert.match(appJs, /const droneDiff = diffOptionalDroneBay/);
+  assert.match(appJs, /const _dd = diffOptionalDroneBay/);
+  assert.doesNotMatch(appJs, /const droneDiff = diffCargo\(droneBefore,\s*droneAfter\)/);
   assert.match(appJs, /mergeDiffItems\(cargoDiff\.gained,\s*droneDiff\.gained\)/);
   assert.match(appJs, /MODAL_FOCUSABLE_SELECTOR/);
   assert.match(appJs, /event\.key === 'Escape'/);

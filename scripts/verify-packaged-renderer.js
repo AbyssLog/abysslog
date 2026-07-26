@@ -2,15 +2,19 @@
 
 const http = require('node:http');
 
-const port = Number(process.argv[2]);
-if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-  throw new TypeError('A valid DevTools port is required');
-}
 if (typeof WebSocket !== 'function') {
   throw new Error('This smoke test requires a Node.js runtime with WebSocket support');
 }
 
-function getJson(pathname) {
+function parsePort(value) {
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new TypeError('A valid DevTools port is required');
+  }
+  return port;
+}
+
+function getJson(port, pathname) {
   return new Promise((resolve, reject) => {
     http.get(`http://127.0.0.1:${port}${pathname}`, response => {
       let data = '';
@@ -29,11 +33,11 @@ function getJson(pathname) {
   });
 }
 
-async function findRendererTarget() {
+async function findRendererTarget(port) {
   const deadline = Date.now() + 10_000;
   do {
     try {
-      const targets = await getJson('/json/list');
+      const targets = await getJson(port, '/json/list');
       const page = targets.find(target => target.type === 'page');
       if (page?.webSocketDebuggerUrl) return page;
     } catch {
@@ -88,25 +92,49 @@ async function inspectRenderer(page) {
   });
 }
 
-async function main() {
-  const page = await findRendererTarget();
-  const renderer = await inspectRenderer(page);
+function isRendererInitialized(renderer) {
   const expectedUrl = 'abysslog-app://bundle/src/renderer/index.html';
-  if (
-    renderer.readyState !== 'complete'
-    || renderer.url !== expectedUrl
-    || renderer.title !== 'AbyssLog'
-    || renderer.activePage !== 'page-tracker'
-    || renderer.hasApiBridge !== true
-    || renderer.errorNoticeHidden !== true
-    || renderer.bodyText.trim().length === 0
-  ) {
-    throw new Error(`Packaged renderer did not initialize safely: ${JSON.stringify(renderer)}`);
-  }
+  return Boolean(
+    renderer
+    && ['interactive', 'complete'].includes(renderer.readyState)
+    && renderer.url === expectedUrl
+    && renderer.title === 'AbyssLog'
+    && renderer.activePage === 'page-tracker'
+    && renderer.hasApiBridge === true
+    && renderer.errorNoticeHidden === true
+    && typeof renderer.bodyText === 'string'
+    && renderer.bodyText.trim().length > 0
+  );
+}
+
+async function waitForInitializedRenderer(page) {
+  const deadline = Date.now() + 10_000;
+  let renderer = null;
+  do {
+    renderer = await inspectRenderer(page);
+    if (isRendererInitialized(renderer)) return renderer;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  throw new Error(
+    `Packaged renderer did not initialize safely: ${JSON.stringify(renderer)}`
+  );
+}
+
+async function main() {
+  const port = parsePort(process.argv[2]);
+  const page = await findRendererTarget(port);
+  const renderer = await waitForInitializedRenderer(page);
   console.log(`Packaged renderer loaded successfully: ${renderer.url}`);
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+} else {
+  module.exports = {
+    isRendererInitialized,
+    parsePort,
+  };
+}

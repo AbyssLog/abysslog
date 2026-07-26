@@ -61,6 +61,20 @@ function Get-SmokeProcesses {
   )
 }
 
+function Stop-SmokeProcesses {
+  $shutdownDeadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    $remainingProcesses = @(Get-SmokeProcesses)
+    if ($remainingProcesses.Count -eq 0) {
+      return
+    }
+    foreach ($remainingProcess in $remainingProcesses) {
+      Stop-Process -Id $remainingProcess.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 200
+  } while ([DateTime]::UtcNow -lt $shutdownDeadline)
+}
+
 New-Item -ItemType Directory -Path $normalizedSmokeDirectory -ErrorAction Stop | Out-Null
 
 try {
@@ -133,11 +147,28 @@ try {
     }
   }
 
-  foreach ($remainingProcess in @(Get-SmokeProcesses)) {
-    Stop-Process -Id $remainingProcess.ProcessId -Force -ErrorAction SilentlyContinue
-  }
+  Stop-SmokeProcesses
 
   if (Test-Path -LiteralPath $normalizedSmokeDirectory) {
-    Remove-Item -LiteralPath $normalizedSmokeDirectory -Recurse -Force
+    $cleanupDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+      try {
+        Remove-Item `
+          -LiteralPath $normalizedSmokeDirectory `
+          -Recurse `
+          -Force `
+          -ErrorAction Stop
+        break
+      } catch {
+        if ([DateTime]::UtcNow -ge $cleanupDeadline) {
+          Write-Warning (
+            'Could not remove the disposable smoke-test profile after waiting for ' +
+            "Electron to exit: $($_.Exception.Message)"
+          )
+          break
+        }
+        Start-Sleep -Milliseconds 250
+      }
+    } while (Test-Path -LiteralPath $normalizedSmokeDirectory)
   }
 }

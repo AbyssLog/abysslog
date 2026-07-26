@@ -7,6 +7,7 @@ const {
   createTokenCoordinator,
   createTransitionTracker,
   diffInventoryPastes,
+  diffOptionalInventoryPastes,
   inferAbyssalFilament,
   mergeInventoryItems,
   parseInventoryPaste,
@@ -77,6 +78,18 @@ test('inventory pastes parse, merge, and diff cargo and drone stacks safely', ()
   });
   assert.throws(() => parseInventoryPaste('Tritanium\t1,000,000,001'), /too large/);
   assert.throws(() => mergeInventoryItems([{ name: 'Vespa II', qty: -1 }]), /invalid/);
+});
+
+test('omitted post-run inventory is unchanged while an explicit paste records losses', () => {
+  assert.deepEqual(
+    diffOptionalInventoryPastes('Vespa II\t5', ''),
+    { gained: [], consumed: [] }
+  );
+  assert.deepEqual(
+    diffOptionalInventoryPastes('Vespa II\t5', 'Vespa II\t4'),
+    { gained: [], consumed: [{ name: 'Vespa II', qty: 1 }] }
+  );
+  assert.throws(() => diffOptionalInventoryPastes([], ''), /must be text/);
 });
 
 test('single-flight work is shared per key and cleared after completion', async () => {

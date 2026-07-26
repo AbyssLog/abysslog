@@ -856,7 +856,7 @@ async function appraiseRun() {
 
   // Merge cargo and drone bay diffs
   const cargoDiff = diffCargo(S.activeRun.cargoBefore, cargoAfter);
-  const droneDiff = diffCargo(S.activeRun.droneBefore || '', droneAfter);
+  const droneDiff = diffOptionalDroneBay(S.activeRun.droneBefore || '', droneAfter);
   const diff = {
     gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
     consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed)
@@ -1423,7 +1423,7 @@ async function submitManualEntry(doAppraise = true) {
 
     if (outcome === 'Survived') {
       const _cd = diffCargo(cargoBefore, savedCargoAfter);
-      const _dd = diffCargo(droneBefore, savedDroneAfter);
+      const _dd = diffOptionalDroneBay(droneBefore, savedDroneAfter);
       const diff = { gained: mergeDiffItems(_cd.gained, _dd.gained), consumed: mergeDiffItems(_cd.consumed, _dd.consumed) };
       let lootResult = null, consumedResult = null;
 
@@ -1662,6 +1662,10 @@ function diffCargo(beforeRaw, afterRaw) {
   return runTracking.diffInventoryPastes(beforeRaw || '', afterRaw || '');
 }
 
+function diffOptionalDroneBay(beforeRaw, afterRaw) {
+  return runTracking.diffOptionalInventoryPastes(beforeRaw || '', afterRaw || '');
+}
+
 // ── History ───────────────────────────────────────────────────────────────
 async function renderHistory() {
   const el = document.getElementById('historyContent');
@@ -1840,7 +1844,7 @@ async function reappraiseRun(runId) {
   statusEl.innerHTML = '';
 
   const cargoDiff = diffCargo(cargoBefore, cargoAfter);
-  const droneDiff = diffCargo(droneBefore, droneAfter);
+  const droneDiff = diffOptionalDroneBay(droneBefore, droneAfter);
   const diff = {
     gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
     consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed),
