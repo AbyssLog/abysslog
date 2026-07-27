@@ -517,6 +517,13 @@ secureHandle('runs:get-all', filters =>
   )));
 secureHandle('runs:get-by-id', runId => db.getRunById(security.requireInteger(runId, 'Run ID')));
 secureHandle('runs:delete', runId => db.deleteRun(security.requireInteger(runId, 'Run ID')));
+secureHandle('runs:get-inventory-baseline', characterId =>
+  db.getInventoryBaseline(security.requireInteger(characterId, 'Character ID')));
+secureHandle('runs:clear-inventory-baseline', (characterId, runId) =>
+  db.clearInventoryBaseline(
+    security.requireInteger(characterId, 'Character ID'),
+    security.requireInteger(runId, 'Run ID')
+  ));
 secureHandle('runs:get-stats', characterId => db.getStats(validateOptionalCharacterId(characterId)));
 secureHandle('runs:update-appraisal', (runId, data) =>
   db.updateAppraisal(

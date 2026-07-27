@@ -385,3 +385,67 @@ test('statistics include death losses and daily activity keeps the latest 60 day
   assert.equal(daily[0].day, '2025-01-11');
   assert.equal(daily.at(-1).day, '2025-03-11');
 });
+
+test('cleared inventory baselines stay cleared until a newer survived run', () => {
+  database.saveCharacter({
+    id: 9040,
+    name: 'Baseline Pilot',
+    portrait_url: '',
+    client_id: 'baseline-client',
+  });
+  const olderRunId = database.saveRun({
+    character_id: 9040,
+    started_at: 1_719_999_000,
+    duration: 550,
+    tier: 'T3',
+    weather: 'Dark',
+    outcome: 'Survived',
+    cargo_before: 'Nanite Repair Paste, 20',
+    cargo_after: 'Triglavian Survey Database, 1',
+    drone_before: 'Vespa II, 5',
+    drone_after: 'Vespa II, 5',
+    ship_class: 'Cruiser',
+  });
+  const firstRunId = database.saveRun({
+    character_id: 9040,
+    started_at: 1_720_000_000,
+    duration: 600,
+    tier: 'T4',
+    weather: 'Electrical',
+    outcome: 'Survived',
+    cargo_before: 'Nanite Repair Paste, 10',
+    cargo_after: 'Triglavian Survey Database, 2',
+    drone_before: 'Vespa II, 5',
+    drone_after: '',
+    ship_class: 'Cruiser',
+  });
+
+  assert.equal(database.getInventoryBaseline(9040).id, firstRunId);
+  assert.equal(database.clearInventoryBaseline(9040, firstRunId), true);
+  assert.equal(database.getInventoryBaseline(9040), null);
+
+  database.close();
+  database.init();
+  assert.equal(database.getInventoryBaseline(9040), null);
+  assert.equal(database.deleteRun(firstRunId), true);
+  assert.equal(database.getRunById(olderRunId).id, olderRunId);
+  assert.equal(database.getInventoryBaseline(9040), null);
+
+  const secondRunId = database.saveRun({
+    character_id: 9040,
+    started_at: 1_720_001_000,
+    duration: 650,
+    tier: 'T4',
+    weather: 'Electrical',
+    outcome: 'Survived',
+    cargo_before: 'Triglavian Survey Database, 2',
+    cargo_after: 'Triglavian Survey Database, 5',
+    drone_before: 'Vespa II, 5',
+    drone_after: 'Vespa II, 4',
+    ship_class: 'Cruiser',
+  });
+
+  assert.equal(database.getInventoryBaseline(9040).id, secondRunId);
+  assert.equal(database.clearInventoryBaseline(9040, firstRunId), false);
+  assert.equal(database.getInventoryBaseline(9040).id, secondRunId);
+});

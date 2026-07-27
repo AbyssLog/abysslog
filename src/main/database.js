@@ -9,6 +9,7 @@ let Database;
 let databasePath;
 let backupDirectory;
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
+const INVENTORY_BASELINE_CLEAR_PREFIX = 'inventory_baseline_cleared_run_';
 const SCHEMA_VERSION = 2;
 const AUTOMATIC_BACKUP_RETENTION = 7;
 
@@ -324,7 +325,10 @@ function saveCharacter(character) {
 }
 
 function deleteCharacter(characterId) {
-  db.prepare('DELETE FROM characters WHERE id = ?').run(characterId);
+  db.transaction(() => {
+    db.prepare('DELETE FROM characters WHERE id = ?').run(characterId);
+    deleteSetting(inventoryBaselineClearKey(characterId));
+  })();
   return true;
 }
 
@@ -345,6 +349,49 @@ function getAllSettings() {
   const result = {};
   for (const row of rows) result[row.key] = row.value;
   return result;
+}
+
+function inventoryBaselineClearKey(characterId) {
+  return `${INVENTORY_BASELINE_CLEAR_PREFIX}${characterId}`;
+}
+
+function getInventoryBaseline(characterId) {
+  const latestRun = db.prepare(`
+    SELECT r.*, c.name AS character_name
+    FROM runs r
+    JOIN characters c ON r.character_id = c.id
+    WHERE r.character_id = ?
+    ORDER BY r.started_at DESC, r.id DESC
+    LIMIT 1
+  `).get(characterId);
+  if (!latestRun || latestRun.outcome !== 'Survived') return null;
+
+  const clearedThroughRunId = Number(getSetting(inventoryBaselineClearKey(characterId)));
+  if (
+    Number.isSafeInteger(clearedThroughRunId)
+    && latestRun.id <= clearedThroughRunId
+  ) {
+    return null;
+  }
+  return latestRun;
+}
+
+function clearInventoryBaseline(characterId, runId) {
+  const latestRun = db.prepare(`
+    SELECT id, outcome
+    FROM runs
+    WHERE character_id = ?
+    ORDER BY started_at DESC, id DESC
+    LIMIT 1
+  `).get(characterId);
+  if (
+    !latestRun
+    || latestRun.outcome !== 'Survived'
+    || latestRun.id !== runId
+  ) {
+    return false;
+  }
+  return setSetting(inventoryBaselineClearKey(characterId), runId);
 }
 
 // ── Runs ──────────────────────────────────────────────────────────────────
@@ -773,6 +820,8 @@ module.exports = {
   setSetting,
   deleteSetting,
   getAllSettings,
+  getInventoryBaseline,
+  clearInventoryBaseline,
   saveRun,
   saveActiveRun,
   getActiveRun,

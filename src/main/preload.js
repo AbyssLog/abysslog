@@ -58,6 +58,10 @@ contextBridge.exposeInMainWorld('api', {
     getAll: filters => ipcRenderer.invoke('runs:get-all', filters),
     getById: runId => ipcRenderer.invoke('runs:get-by-id', runId),
     delete: runId => ipcRenderer.invoke('runs:delete', runId),
+    getInventoryBaseline: characterId =>
+      ipcRenderer.invoke('runs:get-inventory-baseline', characterId),
+    clearInventoryBaseline: (characterId, runId) =>
+      ipcRenderer.invoke('runs:clear-inventory-baseline', characterId, runId),
     getStats: characterId => ipcRenderer.invoke('runs:get-stats', characterId),
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', runId, data),
     update: (runId, data) => ipcRenderer.invoke('runs:update', runId, data),

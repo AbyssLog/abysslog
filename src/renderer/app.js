@@ -249,6 +249,7 @@ const ABYSSAL_MIN = 32000000;
 const CAPSULE_IDS = [670, 33328];
 let lastShipTypeId = null;
 let lastSystemId = null;
+let inventoryBaselineRunId = null;
 let transitionTracker = runTracking.createTransitionTracker();
 
 function resetTransitionTracker(phase = 'outside') {
@@ -428,6 +429,7 @@ function reportActiveRunCheckpointError(error) {
 }
 
 function clearTrackerInputs() {
+  inventoryBaselineRunId = null;
   for (const id of [
     'cargoBeforeText',
     'cargoAfterText',
@@ -453,17 +455,16 @@ function showInventoryBaselineStatus(startedAt) {
 
 async function restoreInventoryBaseline(characterId) {
   hideInventoryBaselineStatus();
-  const [latestRun] = await window.api.runs.getAll({
-    character_id: characterId,
-    limit: 1,
-  });
-  if (!latestRun || latestRun.outcome !== 'Survived') return;
+  inventoryBaselineRunId = null;
+  const latestRun = await window.api.runs.getInventoryBaseline(characterId);
+  if (!latestRun) return;
   const nextCargo = latestRun.cargo_after || '';
   const nextDrones = latestRun.drone_after?.trim()
     ? latestRun.drone_after
     : latestRun.drone_before || '';
   if (!nextCargo.trim() && !nextDrones.trim()) return;
 
+  inventoryBaselineRunId = latestRun.id;
   document.getElementById('cargoBeforeText').value = nextCargo;
   document.getElementById('droneBeforeText').value = nextDrones;
   updatePasteHint('cargoBeforeText', 'preCargoHint');
@@ -474,7 +475,16 @@ async function restoreInventoryBaseline(characterId) {
   showInventoryBaselineStatus(latestRun.started_at);
 }
 
-function clearInventoryBaseline() {
+async function clearInventoryBaseline() {
+  const characterId = S.activeCharId;
+  const runId = inventoryBaselineRunId;
+  if (characterId && runId) {
+    const cleared = await window.api.runs.clearInventoryBaseline(characterId, runId);
+    if (!cleared) {
+      throw new Error('The remembered baseline changed; reload it before clearing');
+    }
+  }
+  inventoryBaselineRunId = null;
   document.getElementById('cargoBeforeText').value = '';
   document.getElementById('droneBeforeText').value = '';
   updatePasteHint('cargoBeforeText', 'preCargoHint');
@@ -1134,8 +1144,9 @@ async function saveCurrentRun() {
     implants
   };
 
+  let completedRunId;
   try {
-    await window.api.runs.completeActive(runData);
+    completedRunId = await window.api.runs.completeActive(runData);
   } catch (error) {
     run.finalizing = false;
     throw error;
@@ -1143,6 +1154,7 @@ async function saveCurrentRun() {
 
   // Promote post-run cargo and drone bay to pre-run for next run
   if (run.outcome === 'Survived') {
+    inventoryBaselineRunId = completedRunId;
     document.getElementById('cargoBeforeText').value = run.cargoAfter;
     // If post-run drone bay was pasted use it, otherwise carry pre-run forward unchanged
     const nextDroneBefore = (run.droneAfter && run.droneAfter.trim())
@@ -1154,6 +1166,7 @@ async function saveCurrentRun() {
       setCollapsibleState('preDroneBody', 'preDroneArrow', true);
     }
   } else {
+    inventoryBaselineRunId = null;
     document.getElementById('cargoBeforeText').value = '';
     document.getElementById('droneBeforeText').value = '';
   }
