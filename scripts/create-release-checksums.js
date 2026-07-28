@@ -10,6 +10,31 @@ function isReleaseAsset(filename) {
     filename === 'latest.yml';
 }
 
+function getUpdateManifestAssetNames(contents) {
+  return contents
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*(?:-\s*)?(?:url|path):\s*(\S+)\s*$/)?.[1])
+    .filter(Boolean);
+}
+
+function verifyUpdateManifestAssets(distPath, assets) {
+  const manifestPath = path.join(distPath, 'latest.yml');
+  const references = [...new Set(
+    getUpdateManifestAssetNames(fs.readFileSync(manifestPath, 'utf8'))
+  )];
+
+  if (references.length === 0) {
+    throw new Error('latest.yml does not reference a release asset');
+  }
+
+  const assetSet = new Set(assets);
+  for (const filename of references) {
+    if (!assetSet.has(filename)) {
+      throw new Error(`latest.yml references missing release asset: ${filename}`);
+    }
+  }
+}
+
 function createReleaseChecksums(distPath) {
   const assets = fs.readdirSync(distPath, { withFileTypes: true })
     .filter((entry) => entry.isFile() && isReleaseAsset(entry.name))
@@ -19,6 +44,8 @@ function createReleaseChecksums(distPath) {
   if (!assets.some((filename) => filename.endsWith('.exe'))) {
     throw new Error(`No Windows installer was found in ${distPath}`);
   }
+
+  verifyUpdateManifestAssets(distPath, assets);
 
   const lines = assets.map((filename) => {
     const contents = fs.readFileSync(path.join(distPath, filename));
@@ -41,4 +68,9 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { createReleaseChecksums, isReleaseAsset };
+module.exports = {
+  createReleaseChecksums,
+  getUpdateManifestAssetNames,
+  isReleaseAsset,
+  verifyUpdateManifestAssets
+};
