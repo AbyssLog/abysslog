@@ -2304,7 +2304,7 @@ async function openDiagnosticsFolder() {
 async function copyDiagnostics() {
   const status = document.getElementById('diagnosticsActionStatus');
   await window.api.diagnostics.copySummary();
-  status.textContent = 'Privacy-filtered diagnostics copied to the clipboard.';
+  status.textContent = 'Diagnostics copied to clipboard.';
   status.className = 'alert success';
   status.style.display = 'block';
 }

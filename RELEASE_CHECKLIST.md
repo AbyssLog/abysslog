@@ -51,8 +51,9 @@ are always created as drafts first.
 - [ ] Check no drone loss, partial drone loss, docking/unloading, and clearing
       the remembered inventory baseline.
 - [ ] Check the death fallback and killmail reconciliation paths.
-- [ ] Open diagnostics, copy the support summary, and confirm it contains no
-      credentials or character, inventory, or error-message data.
+- [ ] Open **Settings → Diagnostics**, select **Copy Diagnostics**, and confirm
+      the copied text contains no credentials or character, inventory, or
+      error-message data.
 
 ## 5. Prepare GitHub for publication
 
