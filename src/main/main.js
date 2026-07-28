@@ -26,6 +26,7 @@ const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
 const janice = require('./janice');
 const { createUpdateService } = require('./update-service');
+const fitting = require('../shared/fitting');
 const runTracking = require('../shared/run-tracking');
 const security = require('../shared/security');
 
@@ -672,6 +673,21 @@ secureHandle('runs:get-all', filters =>
     filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)
   )));
 secureHandle('runs:get-by-id', runId => db.getRunById(security.requireInteger(runId, 'Run ID')));
+secureHandle('runs:copy-fitting', runId => {
+  const id = security.requireInteger(runId, 'Run ID');
+  const run = db.getRunById(id);
+  if (!run) throw new Error('Run not found');
+  const exported = fitting.createEftExport(run);
+  clipboard.writeText(exported.text);
+  recordDiagnostic('run.fitting_copied', { source: 'run_detail' });
+  return {
+    copied: true,
+    fittedItemCount: exported.fittedItemCount,
+    droneCount: exported.droneCount,
+    implantCount: exported.implantCount,
+    omittedItemCount: exported.omittedItemCount,
+  };
+});
 secureHandle('runs:delete', runId => db.deleteRun(security.requireInteger(runId, 'Run ID')));
 secureHandle('runs:get-inventory-baseline', characterId =>
   db.getInventoryBaseline(security.requireInteger(characterId, 'Character ID')));

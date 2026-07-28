@@ -21,6 +21,10 @@ test('application protocol resolves only packaged renderer and image assets', ()
     path.join(appRoot, 'src', 'shared', 'security.js')
   );
   assert.equal(
+    resolveAppAssetPath(appRoot, 'abysslog-app://bundle/src/shared/fitting.js'),
+    path.join(appRoot, 'src', 'shared', 'fitting.js')
+  );
+  assert.equal(
     resolveAppAssetPath(appRoot, 'abysslog-app://bundle/assets/logo.png'),
     path.join(appRoot, 'assets', 'logo.png')
   );
