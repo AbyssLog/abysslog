@@ -1,6 +1,7 @@
 // ── State ─────────────────────────────────────────────────────────────────
 const runTracking = window.AbyssRunTracking;
 const uiErrors = window.AbyssUiErrors;
+const updateHelpers = window.AbyssUpdates;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -87,6 +88,7 @@ async function init() {
   await refreshCharacterCapabilities();
 
   loadSettingsPage();
+  await initAboutPage();
   await populateCharSelect();
 
   const savedCharId = S.settings.active_character;
@@ -1309,55 +1311,56 @@ function closeManualEntryModal() {
 }
 
 async function initAboutPage() {
-  try {
-    const version = await window.api.app.getVersion();
-    document.getElementById('aboutVersion').textContent = 'v' + version;
-  } catch(e) {}
-}
-
-function compareSemver(a, b) {
-  const pa = a.replace(/^v/, '').split('.').map(Number);
-  const pb = b.replace(/^v/, '').split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-  }
-  return 0;
+  const version = await window.api.app.getVersion();
+  document.getElementById('aboutVersion').textContent = `Version ${version}`;
 }
 
 async function checkForUpdates() {
   const btn = document.getElementById('updateBtn');
   const status = document.getElementById('updateStatus');
   btn.disabled = true;
-  status.style.color = 'var(--text-muted)';
-  status.textContent = 'Checking...';
+  status.className = 'about-update-status';
+  status.textContent = 'Checking for updates…';
 
   try {
     const result = await window.api.app.checkUpdate();
     if (!result.success) {
-      status.style.color = 'var(--red)';
-      status.textContent = 'Could not reach update server.';
-      btn.disabled = false;
+      status.classList.add('error');
+      status.textContent = 'Could not check for updates. Please try again later.';
+      return;
+    }
+    if (result.noRelease) {
+      status.textContent = 'No published release is available yet.';
       return;
     }
 
     const current = await window.api.app.getVersion();
-    const isNewer = compareSemver(result.version, current) > 0;
+    const comparison = updateHelpers.compareSemver(result.version, current);
 
-    if (isNewer) {
-      status.innerHTML = `<span style="color:var(--green)">v${esc(result.version)} available</span>
-        ${result.releaseNotes ? '<span style="color:var(--text-muted);margin-left:6px">' + esc(result.releaseNotes) + '</span>' : ''}
-        &nbsp;<a href="#" data-action="open-external" data-url="${esc(result.releaseUrl || '')}"
-          style="color:var(--cyan);font-size:11px">Download →</a>`;
+    if (comparison > 0) {
+      status.classList.add('success');
+      const message = document.createElement('span');
+      message.textContent = `Version ${result.version} is available.`;
+      const releaseLink = document.createElement('a');
+      releaseLink.href = '#';
+      releaseLink.className = 'about-release-link';
+      releaseLink.dataset.action = 'open-external';
+      releaseLink.dataset.url = result.releaseUrl;
+      releaseLink.textContent = 'View Release';
+      status.replaceChildren(message, releaseLink);
+    } else if (comparison === 0) {
+      status.classList.add('success');
+      status.textContent = 'You are running the latest version.';
     } else {
-      status.style.color = 'var(--text-muted)';
-      status.textContent = 'You are on the latest version.';
+      status.textContent = 'No newer published version is available.';
     }
-  } catch(e) {
-    status.style.color = 'var(--red)';
-    status.textContent = 'Update check failed.';
+  } catch (error) {
+    status.classList.add('error');
+    status.textContent = 'Could not check for updates. Please try again later.';
+    console.error('Update check failed:', error);
+  } finally {
+    btn.disabled = false;
   }
-  btn.disabled = false;
 }
 
 function setCollapsibleState(bodyId, arrowId, isOpen) {
@@ -2674,6 +2677,7 @@ const clickActions = {
   'test-janice-key': () => testJaniceKey(),
   'remove-janice-key': () => removeJaniceKey(),
   'open-external': element => openExternal(element.dataset.url),
+  'check-for-updates': () => checkForUpdates(),
   'save-settings': () => saveSettings(),
   'export-csv': () => exportCSV(),
   'import-csv': () => importCSV(),
@@ -2711,6 +2715,7 @@ const actionFailureContexts = Object.freeze({
   'test-janice-key': 'Could not test the Janice API key',
   'remove-janice-key': 'Could not remove the Janice API key',
   'open-external': 'Could not open the external link',
+  'check-for-updates': 'Could not check for updates',
   'save-settings': 'Could not save settings',
   'export-csv': 'Could not export run history',
   'import-csv': 'Could not import run history',

@@ -72,6 +72,10 @@ async function inspectRenderer(page) {
             bodyText: document.body?.innerText?.slice(0, 1000) || '',
             activePage: document.querySelector('.page.active')?.id || null,
             hasApiBridge: Boolean(window.api?.auth && window.api?.runs),
+            hasUpdateHelpers: typeof window.AbyssUpdates?.compareSemver === 'function',
+            aboutVersion: document.getElementById('aboutVersion')?.textContent || '',
+            updateButtonText: document.getElementById('updateBtn')?.textContent || '',
+            updateStatus: document.getElementById('updateStatus')?.textContent || '',
             errorNoticeHidden: document.getElementById('globalErrorNotice')?.hidden,
             errorMessage: document.getElementById('globalErrorMessage')?.textContent || '',
           })`,
@@ -101,6 +105,10 @@ function isRendererInitialized(renderer) {
     && renderer.title === 'AbyssLog'
     && renderer.activePage === 'page-tracker'
     && renderer.hasApiBridge === true
+    && renderer.hasUpdateHelpers === true
+    && /^Version \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(renderer.aboutVersion.trim())
+    && renderer.updateButtonText.trim() === 'Check for Updates'
+    && renderer.updateStatus.trim() === 'Updates are checked only when requested.'
     && renderer.errorNoticeHidden === true
     && typeof renderer.bodyText === 'string'
     && renderer.bodyText.trim().length > 0

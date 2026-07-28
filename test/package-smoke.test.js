@@ -16,6 +16,10 @@ function healthyRenderer(readyState) {
     bodyText: 'ABYSSLOG',
     activePage: 'page-tracker',
     hasApiBridge: true,
+    hasUpdateHelpers: true,
+    aboutVersion: 'Version 1.0.0',
+    updateButtonText: 'Check for Updates',
+    updateStatus: 'Updates are checked only when requested.',
     errorNoticeHidden: true,
   };
 }
@@ -27,6 +31,10 @@ test('packaged renderer readiness accepts an initialized interactive document', 
   assert.equal(isRendererInitialized({
     ...healthyRenderer('complete'),
     url: 'chrome-error://chromewebdata/',
+  }), false);
+  assert.equal(isRendererInitialized({
+    ...healthyRenderer('complete'),
+    aboutVersion: 'Version …',
   }), false);
 });
 

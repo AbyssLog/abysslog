@@ -25,6 +25,7 @@ const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
 const janice = require('./janice');
+const { createUpdateService } = require('./update-service');
 const runTracking = require('../shared/run-tracking');
 const security = require('../shared/security');
 
@@ -55,6 +56,7 @@ let pendingAuth = null;
 let diagnostics = null;
 let rendererRecoveryOpen = false;
 let appIsQuitting = false;
+const updateService = createUpdateService();
 
 function recordDiagnostic(event, details) {
   diagnostics?.info(event, details);
@@ -746,47 +748,19 @@ secureHandle('shell:open-external', async url => {
 });
 
 secureHandle('app:get-version', () => app.getVersion());
-secureHandle('app:check-update', async () => new Promise(resolve => {
-  const https = require('https');
-  const request = https.get(
-    'https://raw.githubusercontent.com/AbyssLog/abysslog/main/version.json',
-    { headers: { 'User-Agent': 'AbyssLog' } },
-    response => {
-      let data = '';
-      response.setEncoding('utf8');
-      response.on('data', chunk => {
-        data += chunk;
-        if (data.length > 64 * 1024) request.destroy(new Error('Update response is too large'));
-      });
-      response.on('end', () => {
-        if (response.statusCode !== 200) {
-          resolve({ success: false, error: `HTTP ${response.statusCode}` });
-          return;
-        }
-        try {
-          const result = JSON.parse(data);
-          const version = security.requireString(result.version, 'Release version', 32);
-          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-            throw new TypeError('Release version is invalid');
-          }
-          const releaseUrl = security.requireString(result.releaseUrl, 'Release URL', 2048);
-          if (!security.isAllowedExternalUrl(releaseUrl)) throw new TypeError('Release URL is not allowed');
-          const releaseNotes = security.requireString(
-            result.releaseNotes || '',
-            'Release notes',
-            2000,
-            true
-          );
-          resolve({ success: true, version, releaseUrl, releaseNotes });
-        } catch {
-          resolve({ success: false, error: 'Invalid response' });
-        }
-      });
-    }
-  );
-  request.on('error', error => resolve({ success: false, error: error.message }));
-  request.setTimeout(8000, () => request.destroy(new Error('Timeout')));
-}));
+secureHandle('app:check-update', async () => {
+  try {
+    const result = await updateService.checkForUpdate(app.getVersion());
+    recordDiagnostic('update.check_complete', {
+      source: 'github',
+      releaseAvailable: !result.noRelease,
+    });
+    return result;
+  } catch (error) {
+    recordDiagnosticFailure('update.check_failure', { source: 'github' }, error);
+    return { success: false };
+  }
+});
 
 secureHandle('runs:export-csv', async characterId => {
   const csv = db.exportRunsCSV(validateOptionalCharacterId(characterId));

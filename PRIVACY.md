@@ -56,8 +56,9 @@ AbyssLog communicates directly from your computer with:
 - **Janice** (`janice.e-351.com`) to appraise item names and quantities. Your
   Janice API key is sent to Janice with these requests, and AbyssLog requests
   non-persistent appraisals;
-- **GitHub** (`raw.githubusercontent.com` and `github.com`) to check the published
-  AbyssLog version and to open project or release links you select.
+- **GitHub** (`api.github.com` and `github.com`) to retrieve the latest published
+  stable release only when you select **Check for Updates**, and to open project
+  or release links you select.
 
 These independent services receive network information such as your IP address
 and process data under their own terms and privacy policies. AbyssLog does not

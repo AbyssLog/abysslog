@@ -68,9 +68,17 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(about, /Open Logs Folder/);
   assert.match(about, /Copy Diagnostics/);
   assert.match(about, /blob\/main\/LICENSE/);
+  assert.match(about, /id="aboutVersion"/);
+  assert.match(about, /data-action="check-for-updates"/);
+  assert.match(about, /Updates are checked only when requested/);
+  assert.match(about, /Local data · No telemetry · Open source/);
+  assert.doesNotMatch(about, /Support the Project|ISK donations|Creator/);
   assert.match(about, /endorsed by Fenris Creations/);
   assert.match(about, /© 2014 CCP hf\. All rights reserved/);
   assert.doesNotMatch(about, /trademarks of Fenris Creations/);
+  assert.match(privacy, /api\.github\.com/);
+  assert.match(privacy, /only when you select \*\*Check for Updates\*\*/);
+  assert.doesNotMatch(privacy, /raw\.githubusercontent\.com/);
 });
 
 test('release tag must match both version manifests', () => {
