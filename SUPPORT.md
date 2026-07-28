@@ -14,6 +14,12 @@ before opening a new one. For a reproducible app problem, include:
 - what you expected and what happened instead;
 - a redacted screenshot or exact error message, when useful.
 
+Use **Settings → Diagnostics → Copy Diagnostics** to copy a privacy-filtered
+summary. Review it before adding it to an issue. The summary contains app and
+operating-system versions plus bounded operational events; it does not include
+error messages, credentials, authorization URLs, character details, inventories,
+or stack traces.
+
 Do not upload an AbyssLog database or backup. Do not post OAuth tokens, Janice API
 keys, authorization URLs, or private character data. Reproduce with test data or
 redact sensitive values.

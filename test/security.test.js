@@ -461,6 +461,8 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /function runUiTask/);
   assert.match(appJs, /Promise\.resolve\(\)\s*\.then\(operation\)/);
   assert.match(appJs, /window\.addEventListener\('unhandledrejection'/);
+  assert.match(appJs, /'unhandled-rejection'/);
+  assert.match(appJs, /window\.api\.diagnostics\.copySummary/);
   assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
   assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
   assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
@@ -511,9 +513,14 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
   assert.match(main, /protocol\.registerSchemesAsPrivileged/);
   assert.match(main, /protocol\.handle\(APP_PROTOCOL_SCHEME/);
-  assert.match(main, /await mainWindow\.loadURL\(APP_RENDERER_URL\)/);
+  assert.match(main, /await window\.loadURL\(APP_RENDERER_URL\)/);
   assert.doesNotMatch(main, /\.loadFile\(/);
   assert.match(main, /if \(!validateIpcSender\(event\)\)/);
+  assert.match(main, /createDiagnostics\(\{/);
+  assert.match(main, /uncaughtExceptionMonitor/);
+  assert.match(main, /render-process-gone/);
+  assert.match(main, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
+  assert.doesNotMatch(preload, /clipboard|node:fs|require\('fs'\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);
   assert.match(main, /security\.validateRunEdit/);

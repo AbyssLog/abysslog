@@ -49,9 +49,14 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(readme, /not code signed/);
   assert.match(privacy, /does\s+not include telemetry, advertising, or crash reporting/);
   assert.match(privacy, /asset list to locate the active ship/);
+  assert.match(privacy, /privacy-filtered diagnostic event log/);
+  assert.match(privacy, /five files of 1 MB each/);
+  assert.match(privacy, /never sent automatically/);
   assert.match(security, /Private Vulnerability Reporting/);
   assert.match(security, /contains only a\s+request to establish private contact/);
   assert.match(support, /best effort/);
+  assert.match(support, /Copy Diagnostics/);
+  assert.match(support, /does not include\s+error messages, credentials/);
   assert.match(license, /^MIT License/);
   assert.match(license, /Copyright \(c\) 2026 Erinys/);
   assert.match(notice, /not affiliated with\s+or endorsed by Fenris Creations/);
@@ -60,6 +65,8 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.equal(packageJson.build.files.includes('LICENSE'), true);
   assert.equal(packageJson.build.files.includes('NOTICE.md'), true);
   assert.match(about, /blob\/main\/PRIVACY\.md/);
+  assert.match(about, /Open Logs Folder/);
+  assert.match(about, /Copy Diagnostics/);
   assert.match(about, /blob\/main\/LICENSE/);
   assert.match(about, /endorsed by Fenris Creations/);
   assert.match(about, /© 2014 CCP hf\. All rights reserved/);

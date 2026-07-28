@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -11,6 +12,7 @@ const {
 } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -20,6 +22,7 @@ const {
   resolveAppAssetPath,
 } = require('./app-protocol');
 const db = require('./database');
+const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
 const janice = require('./janice');
 const runTracking = require('../shared/run-tracking');
@@ -38,9 +41,67 @@ const SECRET_PREFIX = 'safe:v1:';
 const JANICE_SECRET_KEY = 'secret_janice_api_key';
 const MAX_IPC_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
+const RENDERER_DIAGNOSTIC_CATEGORIES = new Set([
+  'capture-error',
+  'checkpoint-error',
+  'recovery-error',
+  'ui-error',
+  'unhandled-rejection',
+  'window-error',
+]);
 
 let mainWindow;
 let pendingAuth = null;
+let diagnostics = null;
+let rendererRecoveryOpen = false;
+let appIsQuitting = false;
+
+function recordDiagnostic(event, details) {
+  diagnostics?.info(event, details);
+}
+
+function recordDiagnosticWarning(event, details) {
+  diagnostics?.warn(event, details);
+}
+
+function recordDiagnosticFailure(event, details, error) {
+  diagnostics?.failure(event, details, error);
+}
+
+function initializeDiagnostics() {
+  diagnostics = createDiagnostics({
+    directory: app.getPath('logs'),
+  });
+  const pruneTimer = setInterval(
+    () => diagnostics?.prune(),
+    6 * 60 * 60 * 1000
+  );
+  pruneTimer.unref();
+  recordDiagnostic('app.start', {
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+  });
+}
+
+function createDiagnosticsSummary() {
+  if (!diagnostics) throw new Error('Diagnostics are not available yet');
+  return diagnostics.createSummary({
+    version: app.getVersion(),
+    electronVersion: process.versions.electron,
+    platform: process.platform,
+    release: os.release(),
+    arch: process.arch,
+  });
+}
+
+process.on('uncaughtExceptionMonitor', error => {
+  recordDiagnosticFailure('process.uncaught_exception', { source: 'main' }, error);
+});
+
+process.on('unhandledRejection', reason => {
+  recordDiagnosticFailure('process.unhandled_rejection', { source: 'main' }, reason);
+});
 
 protocol.registerSchemesAsPrivileged([{
   scheme: APP_PROTOCOL_SCHEME,
@@ -198,8 +259,17 @@ function validateIpcSender(event) {
 
 function secureHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
-    if (!validateIpcSender(event)) throw new Error('Unauthorized IPC sender');
-    return handler(...args);
+    if (!validateIpcSender(event)) {
+      const error = new Error('Unauthorized IPC sender');
+      recordDiagnosticFailure('ipc.rejected', { context: channel }, error);
+      throw error;
+    }
+    try {
+      return await handler(...args);
+    } catch (error) {
+      recordDiagnosticFailure('ipc.failure', { context: channel }, error);
+      throw error;
+    }
   });
 }
 
@@ -298,8 +368,10 @@ async function handleOAuthCallback(callbackUrl) {
 
     db.saveCharacter(character);
     saveTokens(characterId, tokens);
+    recordDiagnostic('oauth.complete', { source: 'eve-sso' });
     sendAuthEvent('auth:complete', character);
   } catch (error) {
+    recordDiagnosticFailure('oauth.failure', { source: 'eve-sso' }, error);
     sendAuthEvent('auth:error', error instanceof Error ? error.message : 'Sign-in failed');
   }
 }
@@ -325,8 +397,49 @@ function registerAppProtocol() {
   });
 }
 
+async function offerRendererRecovery(window, cause) {
+  if (rendererRecoveryOpen || appIsQuitting) return;
+  rendererRecoveryOpen = true;
+  recordDiagnosticWarning('renderer.recovery_offered', { code: cause });
+  const options = {
+    type: 'error',
+    title: 'AbyssLog needs to reload',
+    message: 'The application interface stopped unexpectedly.',
+    detail: 'Your completed runs are still stored locally. Reload AbyssLog to recover any unfinished run checkpoint.',
+    buttons: ['Reload AbyssLog', 'Close'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  };
+
+  try {
+    const result = window && !window.isDestroyed()
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options);
+    if (result.response !== 0) {
+      app.quit();
+      return;
+    }
+    recordDiagnostic('renderer.recovery_requested', { code: cause });
+    if (window && !window.isDestroyed()) {
+      await window.loadURL(APP_RENDERER_URL);
+    } else {
+      await createWindow();
+    }
+  } catch (error) {
+    recordDiagnosticFailure('renderer.recovery_failure', { code: cause }, error);
+    dialog.showErrorBox(
+      'AbyssLog could not recover',
+      'Restart AbyssLog. Your completed runs remain stored locally.'
+    );
+    app.quit();
+  } finally {
+    rendererRecoveryOpen = false;
+  }
+}
+
 async function createWindow() {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
@@ -346,20 +459,45 @@ async function createWindow() {
       ? path.join(__dirname, '../../assets/transparent.png')
       : path.join(__dirname, '../../assets/icon.png'),
   });
+  mainWindow = window;
+  let rendererHasLoaded = false;
+  recordDiagnostic('window.created', { source: 'main' });
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
-    if (targetUrl !== mainWindow.webContents.getURL()) event.preventDefault();
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, targetUrl) => {
+    if (targetUrl !== window.webContents.getURL()) event.preventDefault();
   });
-  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
-  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  window.webContents.on('will-attach-webview', event => event.preventDefault());
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  window.webContents.on('did-finish-load', () => {
+    rendererHasLoaded = true;
+    recordDiagnostic('renderer.loaded', { source: 'renderer' });
+  });
+  window.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 || appIsQuitting) return;
+    const error = new Error('Renderer load failed');
+    error.code = `LOAD_${Math.abs(errorCode)}`;
+    recordDiagnosticFailure('renderer.load_failure', { source: 'renderer' }, error);
+    if (rendererHasLoaded) void offerRendererRecovery(window, 'load-failed');
+  });
+  window.webContents.on('render-process-gone', (_event, details) => {
+    if (appIsQuitting || details.reason === 'clean-exit') return;
+    const error = new Error('Renderer process exited');
+    error.code = details.reason;
+    recordDiagnosticFailure('renderer.process_gone', { source: 'renderer' }, error);
+    void offerRendererRecovery(window, 'process-gone');
+  });
+  window.on('unresponsive', () => {
+    recordDiagnosticWarning('renderer.unresponsive', { source: 'renderer' });
+    void offerRendererRecovery(window, 'unresponsive');
+  });
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null;
     pendingAuth = null;
   });
-  await mainWindow.loadURL(APP_RENDERER_URL);
+  await window.loadURL(APP_RENDERER_URL);
 }
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -376,16 +514,29 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    try {
+      initializeDiagnostics();
+    } catch {
+      diagnostics = null;
+    }
     Menu.setApplicationMenu(null);
+    recordDiagnostic('startup.phase', { phase: 'protocol' });
     registerAppProtocol();
+    recordDiagnostic('startup.phase', { phase: 'database' });
     db.init();
     migrateLegacyJaniceKey();
     if (!db.getSetting('janice_api_key')) {
       db.hardenSensitiveStorage();
-      db.finishStartup();
+      const startupDataStatus = db.finishStartup();
+      if (startupDataStatus.latestBackup) {
+        recordDiagnostic('backup.verified', { source: 'automatic' });
+      }
     }
+    recordDiagnostic('startup.phase', { phase: 'window' });
     await createWindow();
+    recordDiagnostic('startup.complete', { source: 'main' });
   }).catch(error => {
+    recordDiagnosticFailure('startup.failure', { source: 'main' }, error);
     const message = error instanceof Error ? error.message : 'Unknown startup error';
     dialog.showErrorBox('AbyssLog could not start safely', message);
     app.quit();
@@ -402,12 +553,15 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  appIsQuitting = true;
+  recordDiagnostic('app.quit', { source: 'main' });
   db.close();
 });
 
 app.on('activate', () => {
   if (mainWindow === null) {
     void createWindow().catch(error => {
+      recordDiagnosticFailure('window.reopen_failure', { source: 'main' }, error);
       const message = error instanceof Error ? error.message : 'Unknown startup error';
       dialog.showErrorBox('AbyssLog could not open its window', message);
       app.quit();
@@ -546,12 +700,42 @@ secureHandle('data:create-backup', () => {
   if (db.getSetting('janice_api_key')) {
     throw new Error('Backup is unavailable until the legacy API key can be migrated securely');
   }
-  return db.createManualBackup();
+  const result = db.createManualBackup();
+  recordDiagnostic('backup.created', { source: 'manual' });
+  return result;
 });
 secureHandle('data:open-backup-folder', async () => {
   const { backupDirectory } = db.getDataStatus();
   const error = await shell.openPath(backupDirectory);
   if (error) throw new Error(`Could not open backup folder: ${error}`);
+  return true;
+});
+
+secureHandle('diagnostics:get-status', () => {
+  if (!diagnostics) return { available: false };
+  return { available: true, ...diagnostics.getStatus() };
+});
+secureHandle('diagnostics:open-folder', async () => {
+  if (!diagnostics) throw new Error('Diagnostics are unavailable');
+  const error = await shell.openPath(diagnostics.getStatus().directory);
+  if (error) throw new Error(`Could not open diagnostics folder: ${error}`);
+  recordDiagnostic('diagnostics.folder_opened', { source: 'settings' });
+  return true;
+});
+secureHandle('diagnostics:copy-summary', () => {
+  clipboard.writeText(createDiagnosticsSummary());
+  recordDiagnostic('diagnostics.summary_copied', { source: 'settings' });
+  return true;
+});
+secureHandle('diagnostics:record-renderer-error', category => {
+  const safeCategory = security.requireString(category, 'Diagnostic category', 64);
+  if (!RENDERER_DIAGNOSTIC_CATEGORIES.has(safeCategory)) {
+    throw new TypeError('Diagnostic category is invalid');
+  }
+  recordDiagnosticWarning('renderer.reported_error', {
+    category: safeCategory,
+    source: 'renderer',
+  });
   return true;
 });
 

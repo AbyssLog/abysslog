@@ -7,7 +7,17 @@ function dismissGlobalError() {
   if (notice) notice.hidden = true;
 }
 
-function reportUiError(context, error) {
+function recordRendererDiagnostic(category) {
+  try {
+    const request = window.api?.diagnostics?.recordRendererError(category);
+    if (request && typeof request.catch === 'function') request.catch(() => {});
+  } catch {
+    // Diagnostics must never create a second application error.
+  }
+}
+
+function reportUiError(context, error, diagnosticCategory = 'ui-error') {
+  recordRendererDiagnostic(diagnosticCategory);
   console.error(`${context}:`, error);
   const notice = document.getElementById('globalErrorNotice');
   const message = document.getElementById('globalErrorMessage');
@@ -25,6 +35,7 @@ function runUiTask(context, operation, onFailure) {
         try {
           onFailure();
         } catch (recoveryError) {
+          recordRendererDiagnostic('recovery-error');
           console.error('UI recovery failed:', recoveryError);
         }
       }
@@ -41,6 +52,7 @@ const S = {
   hasJaniceKey: false,
   secureStorage: { available: false, backend: 'unknown' },
   dataStatus: null,
+  diagnosticsStatus: null,
   settings: {},
   runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraising | appraisal | died | loss
   activeRun: null,
@@ -57,12 +69,20 @@ async function init() {
   window.api.auth.onComplete(handleAuthComplete);
   window.api.auth.onError(handleAuthError);
 
-  [S.settings, S.characters, S.secureStorage, S.hasJaniceKey, S.dataStatus] = await Promise.all([
+  [
+    S.settings,
+    S.characters,
+    S.secureStorage,
+    S.hasJaniceKey,
+    S.dataStatus,
+    S.diagnosticsStatus,
+  ] = await Promise.all([
     window.api.settings.getAll(),
     window.api.auth.getCharacters(),
     window.api.secrets.status(),
     window.api.secrets.hasJaniceKey(),
     window.api.data.getStatus(),
+    window.api.diagnostics.getStatus(),
   ]);
   await refreshCharacterCapabilities();
 
@@ -425,7 +445,11 @@ function reportActiveRunCheckpointError(error) {
     return;
   }
   activeCheckpointErrorReportedAt = now;
-  reportUiError('Could not save the current run recovery checkpoint', error);
+  reportUiError(
+    'Could not save the current run recovery checkpoint',
+    error,
+    'checkpoint-error'
+  );
 }
 
 function clearTrackerInputs() {
@@ -719,12 +743,13 @@ async function captureActiveRunDetails(run, shipTypeId) {
         : implantResult.reason;
       reportUiError(
         `Could not capture ${failedFeatures.join(' or ')} for loss tracking`,
-        firstFailure
+        firstFailure,
+        'capture-error'
       );
     }
     if (S.activeRun === run && !run.finalizing && !run.suspended) await persistActiveRun();
   } catch (e) {
-    reportUiError('Could not capture loss-tracking details', e);
+    reportUiError('Could not capture loss-tracking details', e, 'capture-error');
   }
 }
 
@@ -2187,6 +2212,7 @@ function loadSettingsPage() {
   if (S.settings.default_weather) document.getElementById('defaultWeatherInput').value = S.settings.default_weather;
   renderCharList();
   renderDataStatus();
+  renderDiagnosticsStatus();
 }
 
 function formatBytes(bytes) {
@@ -2212,6 +2238,28 @@ function renderDataStatus() {
   }
   location.textContent = `Backup folder: ${S.dataStatus.backupDirectory}`;
   createButton.disabled = !S.dataStatus.automaticBackupsEnabled;
+}
+
+function renderDiagnosticsStatus() {
+  if (!S.diagnosticsStatus) return;
+  const summary = document.getElementById('diagnosticsSummary');
+  const location = document.getElementById('diagnosticsLocation');
+  const openButton = document.getElementById('openDiagnosticsFolderBtn');
+  const copyButton = document.getElementById('copyDiagnosticsBtn');
+  if (!S.diagnosticsStatus.available) {
+    summary.textContent = 'Local diagnostics are unavailable in this session.';
+    summary.style.color = 'var(--red)';
+    location.textContent = '';
+    openButton.disabled = true;
+    copyButton.disabled = true;
+    return;
+  }
+  summary.style.color = 'var(--text-dim)';
+  summary.textContent =
+    `Local diagnostics are retained for ${S.diagnosticsStatus.retentionDays} days, up to ${S.diagnosticsStatus.maxFiles} files of ${formatBytes(S.diagnosticsStatus.maxFileBytes)} each.`;
+  location.textContent = `Diagnostics folder: ${S.diagnosticsStatus.directory}`;
+  openButton.disabled = false;
+  copyButton.disabled = false;
 }
 
 async function createFullBackup() {
@@ -2240,6 +2288,22 @@ async function openBackupFolder() {
     status.className = 'alert err';
     status.style.display = 'block';
   }
+}
+
+async function openDiagnosticsFolder() {
+  const status = document.getElementById('diagnosticsActionStatus');
+  await window.api.diagnostics.openFolder();
+  status.textContent = 'Diagnostics folder opened.';
+  status.className = 'alert success';
+  status.style.display = 'block';
+}
+
+async function copyDiagnostics() {
+  const status = document.getElementById('diagnosticsActionStatus');
+  await window.api.diagnostics.copySummary();
+  status.textContent = 'Privacy-filtered diagnostics copied to the clipboard.';
+  status.className = 'alert success';
+  status.style.display = 'block';
 }
 
 async function testJaniceKey() {
@@ -2615,6 +2679,8 @@ const clickActions = {
   'import-csv': () => importCSV(),
   'create-full-backup': () => createFullBackup(),
   'open-backup-folder': () => openBackupFolder(),
+  'open-diagnostics-folder': () => openDiagnosticsFolder(),
+  'copy-diagnostics': () => copyDiagnostics(),
   'clear-inventory-baseline': () => clearInventoryBaseline(),
   'close-modal': element => closeModal(element.dataset.modal),
   'start-sso': () => startSSO(),
@@ -2650,6 +2716,8 @@ const actionFailureContexts = Object.freeze({
   'import-csv': 'Could not import run history',
   'create-full-backup': 'Could not create a backup',
   'open-backup-folder': 'Could not open the backup folder',
+  'open-diagnostics-folder': 'Could not open the diagnostics folder',
+  'copy-diagnostics': 'Could not copy diagnostics',
   'clear-inventory-baseline': 'Could not clear the inventory baseline',
   'start-sso': 'Could not start EVE sign-in',
   'submit-manual-entry': 'Could not save the manual run',
@@ -2725,13 +2793,17 @@ document.addEventListener('error', event => {
 
 window.addEventListener('unhandledrejection', event => {
   event.preventDefault();
-  reportUiError('An unexpected background operation failed', event.reason);
+  reportUiError(
+    'An unexpected background operation failed',
+    event.reason,
+    'unhandled-rejection'
+  );
 });
 
 window.addEventListener('error', event => {
   if (!event.error) return;
   event.preventDefault();
-  reportUiError('An unexpected application error occurred', event.error);
+  reportUiError('An unexpected application error occurred', event.error, 'window-error');
 });
 
 // Start

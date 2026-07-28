@@ -124,6 +124,12 @@ OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` be
 
 While the app is open, one verified full-database backup is created per local day and the latest seven automatic backups are retained. The backup folder and manual backup control are available in **Settings → Data & Recovery**.
 
+The app also keeps privacy-filtered local diagnostic events for seven days,
+bounded to five 1 MB files. These events contain operational categories and
+status codes rather than error messages or EVE data, and they are never sent
+automatically. Use **Settings → Diagnostics** to open the folder or copy a
+reviewable support summary.
+
 See the [privacy notice](PRIVACY.md) for the complete local-data, external-service,
 retention, and deletion details.
 

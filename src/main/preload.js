@@ -76,6 +76,14 @@ contextBridge.exposeInMainWorld('api', {
     openBackupFolder: () => ipcRenderer.invoke('data:open-backup-folder'),
   },
 
+  diagnostics: {
+    getStatus: () => ipcRenderer.invoke('diagnostics:get-status'),
+    openFolder: () => ipcRenderer.invoke('diagnostics:open-folder'),
+    copySummary: () => ipcRenderer.invoke('diagnostics:copy-summary'),
+    recordRendererError: category =>
+      ipcRenderer.invoke('diagnostics:record-renderer-error', category),
+  },
+
   shell: {
     openExternal: url => ipcRenderer.invoke('shell:open-external', url),
   },

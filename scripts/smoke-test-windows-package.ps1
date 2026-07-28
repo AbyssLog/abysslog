@@ -46,6 +46,7 @@ if (($smokeParent -ne $tempRoot) -or (-not $hasSafeName)) {
 
 $databasePath = Join-Path $normalizedSmokeDirectory 'abysslog.db'
 $backupDirectory = Join-Path $normalizedSmokeDirectory 'backups'
+$diagnosticsPath = Join-Path $normalizedSmokeDirectory 'logs\abysslog.log'
 $devToolsPortPath = Join-Path $normalizedSmokeDirectory 'DevToolsActivePort'
 $executableName = [IO.Path]::GetFileName($resolvedAppPath)
 $smokeProcess = $null
@@ -88,6 +89,7 @@ try {
   $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
   $databaseReady = $false
   $backupReady = $false
+  $diagnosticsReady = $false
   $rendererDebugReady = $false
   $processCount = 0
   $startupReady = $false
@@ -109,10 +111,13 @@ try {
           -File `
           -ErrorAction SilentlyContinue
       ).Count -gt 0
+    $diagnosticsReady = (Test-Path -LiteralPath $diagnosticsPath -PathType Leaf) `
+      -and (Get-Item -LiteralPath $diagnosticsPath).Length -gt 0
     $rendererDebugReady = Test-Path -LiteralPath $devToolsPortPath -PathType Leaf
     $processCount = @(Get-SmokeProcesses).Count
     $startupReady = $databaseReady `
       -and $backupReady `
+      -and $diagnosticsReady `
       -and $rendererDebugReady `
       -and $processCount -ge 2
   } while (-not $startupReady -and [DateTime]::UtcNow -lt $deadline)
@@ -121,7 +126,8 @@ try {
     throw (
       'Packaged application did not finish a clean startup within ' +
       "$TimeoutSeconds seconds (database=$databaseReady, backup=$backupReady, " +
-      "rendererDebug=$rendererDebugReady, processes=$processCount)"
+      "diagnostics=$diagnosticsReady, rendererDebug=$rendererDebugReady, " +
+      "processes=$processCount)"
     )
   }
 
@@ -133,8 +139,8 @@ try {
   }
 
   Write-Host (
-    "Packaged application smoke test passed: renderer, database, and backup ready; " +
-    "$processCount Electron processes running"
+    "Packaged application smoke test passed: renderer, database, backup, and " +
+    "diagnostics ready; $processCount Electron processes running"
   )
 } finally {
   if ($null -ne $smokeProcess) {

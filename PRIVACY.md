@@ -1,6 +1,6 @@
 # AbyssLog Privacy Notice
 
-Last updated: 27 July 2026
+Last updated: 28 July 2026
 
 AbyssLog is a locally installed, non-commercial hobby project. The developer does
 not operate an AbyssLog account service or application server, and the app does
@@ -26,6 +26,20 @@ The app creates one full local database backup per day while it is open and
 retains the latest seven automatic backups. Manual backups are retained until
 you delete them. Backups contain the same personal data and encrypted credentials
 as the live database.
+
+## Local diagnostics
+
+AbyssLog keeps a privacy-filtered diagnostic event log on your device. It records
+the app version, operating-system type, startup phases, failure categories, HTTP
+status codes, and whether specific local operations succeeded. It does not record
+error messages, stack traces, OAuth tokens, API keys, authorization URLs,
+character details, cargo, drones, fittings, implants, killmails, or appraisal
+contents.
+
+Diagnostic files are limited to five files of 1 MB each and are deleted after
+seven days. They are never sent automatically. **Settings → Diagnostics** lets
+you open the folder or manually copy a filtered summary to the clipboard so you
+can review it before sharing it in a support request.
 
 ## Network services
 
@@ -58,8 +72,8 @@ the live database.
 
 Deleted records can remain in existing backups. Use **Settings → Data & Recovery**
 to open the backup folder and delete backups you no longer want. To remove all
-local AbyssLog data, close the app and delete its database and backup folder;
-uninstalling the app may not remove that data automatically.
+local AbyssLog data, close the app and delete its database, backup, and diagnostics
+folders; uninstalling the app may not remove that data automatically.
 
 You can also revoke AbyssLog from your EVE Online account settings. Revocation
 prevents future ESI access but does not delete data already stored on your
