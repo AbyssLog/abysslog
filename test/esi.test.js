@@ -70,6 +70,14 @@ test('ESI uses current unversioned routes and the v2 token verifier', async () =
     calls[1].url,
     'https://login.eveonline.com/v2/oauth/verify'
   );
+  assert.equal(calls[1].options.headers['X-Compatibility-Date'], undefined);
+});
+
+test('ESI compatibility headers require an exact parsed origin', () => {
+  assert.equal(esi.isEsiUrl('https://esi.evetech.net/characters/123/'), true);
+  assert.equal(esi.isEsiUrl('https://esi.evetech.net.evil.example/'), false);
+  assert.equal(esi.isEsiUrl('https://evil.example/https://esi.evetech.net'), false);
+  assert.equal(esi.isEsiUrl('not a URL'), false);
 });
 
 test('ESI caches stable system and type metadata', async () => {
