@@ -40,12 +40,14 @@ test('public release documentation covers privacy, security, support, and CCP at
   const support = read('SUPPORT.md');
   const license = read('LICENSE');
   const notice = read('NOTICE.md');
+  const checklist = read('RELEASE_CHECKLIST.md');
   const about = read(path.join('src', 'renderer', 'index.html'));
   const packageJson = JSON.parse(read('package.json'));
   const packageLock = JSON.parse(read('package-lock.json'));
 
   assert.match(readme, /\[Privacy\]\(PRIVACY\.md\)/);
   assert.match(readme, /\[License\]\(LICENSE\)/);
+  assert.match(readme, /\[release checklist\]\(RELEASE_CHECKLIST\.md\)/);
   assert.match(readme, /not code signed/);
   assert.match(privacy, /does\s+not include telemetry, advertising, or crash reporting/);
   assert.match(privacy, /asset list to locate the active ship/);
@@ -60,6 +62,12 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(license, /^MIT License/);
   assert.match(license, /Copyright \(c\) 2026 Erinys/);
   assert.match(notice, /not affiliated with\s+or endorsed by Fenris Creations/);
+  assert.match(checklist, /Enable immutable releases/);
+  assert.match(checklist, /Enable secret scanning and push protection/);
+  assert.match(checklist, /Enable CodeQL default setup and Private Vulnerability Reporting/);
+  assert.match(checklist, /Install the release candidate over the previous public version/);
+  assert.match(checklist, /npm audit --omit=dev --audit-level=high/);
+  assert.match(checklist, /An immutable tag name must not be reused/);
   assert.equal(packageJson.license, 'MIT');
   assert.equal(packageLock.packages[''].license, 'MIT');
   assert.equal(packageJson.build.files.includes('LICENSE'), true);
@@ -71,6 +79,9 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(about, /id="aboutVersion"/);
   assert.match(about, /data-action="check-for-updates"/);
   assert.match(about, /Updates are checked only when requested/);
+  assert.match(about, /src="\.\.\/\.\.\/assets\/logo\.png"/);
+  assert.match(about, /src="\.\.\/\.\.\/assets\/icon\.png"/);
+  assert.doesNotMatch(about, /data:image\/png;base64/);
   assert.match(about, /Local data · No telemetry · Open source/);
   assert.doesNotMatch(about, /Support the Project|ISK donations|Creator/);
   assert.match(about, /endorsed by Fenris Creations/);

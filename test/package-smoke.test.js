@@ -20,6 +20,7 @@ function healthyRenderer(readyState) {
     aboutVersion: 'Version 1.0.0',
     updateButtonText: 'Check for Updates',
     updateStatus: 'Updates are checked only when requested.',
+    topbarImageReady: true,
     errorNoticeHidden: true,
   };
 }
@@ -35,6 +36,10 @@ test('packaged renderer readiness accepts an initialized interactive document', 
   assert.equal(isRendererInitialized({
     ...healthyRenderer('complete'),
     aboutVersion: 'Version …',
+  }), false);
+  assert.equal(isRendererInitialized({
+    ...healthyRenderer('complete'),
+    topbarImageReady: false,
   }), false);
 });
 

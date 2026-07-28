@@ -76,6 +76,15 @@ async function inspectRenderer(page) {
             aboutVersion: document.getElementById('aboutVersion')?.textContent || '',
             updateButtonText: document.getElementById('updateBtn')?.textContent || '',
             updateStatus: document.getElementById('updateStatus')?.textContent || '',
+            topbarImageReady: (() => {
+              const image = document.querySelector('.topbar img');
+              return Boolean(
+                image
+                && image.complete
+                && image.naturalWidth > 0
+                && image.src === 'abysslog-app://bundle/assets/icon.png'
+              );
+            })(),
             errorNoticeHidden: document.getElementById('globalErrorNotice')?.hidden,
             errorMessage: document.getElementById('globalErrorMessage')?.textContent || '',
           })`,
@@ -109,6 +118,7 @@ function isRendererInitialized(renderer) {
     && /^Version \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(renderer.aboutVersion.trim())
     && renderer.updateButtonText.trim() === 'Check for Updates'
     && renderer.updateStatus.trim() === 'Updates are checked only when requested.'
+    && renderer.topbarImageReady === true
     && renderer.errorNoticeHidden === true
     && typeof renderer.bodyText === 'string'
     && renderer.bodyText.trim().length > 0

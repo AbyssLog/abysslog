@@ -111,6 +111,10 @@ After testing the exact draft asset and comparing its hash with
 `SHA256SUMS.txt`, manually publish the draft release. The release workflow never
 publishes a release automatically.
 
+Use the complete [release checklist](RELEASE_CHECKLIST.md) for privacy review,
+upgrade testing, repository hardening, draft inspection, and post-publication
+verification.
+
 ---
 
 ## Data Storage

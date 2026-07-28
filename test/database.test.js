@@ -31,7 +31,41 @@ test.after(() => {
 test('database lifecycle creates verified backups and round-trips multiline CSV safely', () => {
   const Database = require('better-sqlite3');
   const previousDatabase = new Database(path.join(userDataDirectory, 'abysslog.db'));
-  previousDatabase.pragma('user_version = 1');
+  previousDatabase.exec(`
+    CREATE TABLE characters (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      portrait_url TEXT,
+      client_id TEXT,
+      created_at INTEGER DEFAULT (strftime('%s','now'))
+    );
+    CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      character_id INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
+      duration INTEGER NOT NULL DEFAULT 0,
+      tier TEXT,
+      weather TEXT,
+      outcome TEXT NOT NULL,
+      loot_value REAL DEFAULT 0,
+      consumed_cost REAL DEFAULT 0,
+      net_isk REAL DEFAULT 0,
+      total_loss REAL DEFAULT 0,
+      system_id INTEGER,
+      notes TEXT,
+      created_at INTEGER DEFAULT (strftime('%s','now')),
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+    INSERT INTO characters (id, name, portrait_url, client_id)
+    VALUES (8999, 'Legacy Pilot', '', 'legacy-client');
+    INSERT INTO runs (
+      character_id, started_at, duration, tier, weather, outcome,
+      loot_value, consumed_cost, net_isk, total_loss, notes
+    ) VALUES (
+      8999, 1600000000, 780, 'T3', 'Dark', 'Survived',
+      90, 20, 70, 0, 'Created by the original schema'
+    );
+  `);
   previousDatabase.close();
 
   database.init();
@@ -39,6 +73,11 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
 
   const startupStatus = database.finishStartup();
   assert.equal(startupStatus.schemaVersion, 2);
+  const migratedRun = database.getRuns({ character_id: 8999 })[0];
+  assert.equal(migratedRun.notes, 'Created by the original schema');
+  assert.equal(migratedRun.cargo_before, null);
+  assert.equal(migratedRun.drone_after, null);
+  assert.equal(migratedRun.ship_class, null);
   assert.equal(startupStatus.automaticBackupRetention, 7);
   assert.ok(startupStatus.latestBackup);
   assert.equal(fs.existsSync(startupStatus.latestBackup.filePath), true);
@@ -132,6 +171,24 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   const manualStatus = database.createManualBackup();
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
+
+  database.saveRun({
+    ...sourceRun,
+    started_at: sourceRun.started_at + 1,
+    notes: 'Created after the recovery point',
+  });
+  assert.equal(database.getRuns({ character_id: 9001 }).length, 2);
+  database.close();
+  fs.copyFileSync(
+    manualStatus.filePath,
+    path.join(userDataDirectory, 'abysslog.db')
+  );
+  database.init();
+  assert.equal(database.getRuns({ character_id: 9001 }).length, 1);
+  assert.equal(
+    database.getRuns({ character_id: 9001 })[0].notes,
+    sourceRun.notes
+  );
 
   const activeSnapshot = {
     version: 1,
