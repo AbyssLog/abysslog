@@ -2,6 +2,8 @@
 
 EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, and Janice price appraisals.
 
+[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md)
+
 ## Features
 
 - **ESI auto-detection** — polls every 5 seconds, auto-starts/stops timer on abyssal entry/exit
@@ -23,9 +25,9 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 
 ### 1. Download
 
-Download production Windows installers from the [GitHub Releases page](https://github.com/AbyssLog/abysslog/releases/latest). Release builds are required to be Authenticode signed and include `SHA256SUMS.txt` so the downloaded files can be verified.
+Download Windows installers from the [GitHub Releases page](https://github.com/AbyssLog/abysslog/releases/latest). Releases currently are not code signed, so Windows may show a SmartScreen warning. Each release includes `SHA256SUMS.txt`; verify the installer's SHA-256 hash before running it.
 
-Unsigned preview builds for Windows, macOS, and Linux are available from the [GitHub Actions page](https://github.com/AbyssLog/abysslog/actions). Preview builds are intended for testing, not normal installation.
+Unsigned preview builds for Windows, macOS, and Linux are available from the [GitHub Actions page](https://github.com/AbyssLog/abysslog/actions). Preview artifacts expire and are intended for testing.
 
 ### 2. EVE Online Sign-In
 
@@ -86,12 +88,10 @@ Dependency lifecycle scripts are disabled by default in `.npmrc`. `npm run setup
 
 ## Publishing a Windows Release
 
-Production Windows releases are built from version tags and must be Authenticode signed. Enable immutable releases in the repository settings. Configure a protected GitHub environment named `release`, require a reviewer, and add these environment secrets:
-
-- `WIN_CSC_LINK` — a base64-encoded `.pfx` code-signing certificate
-- `WIN_CSC_KEY_PASSWORD` — the certificate password
-
-Protect the `v*` tag pattern in the repository settings. Update both `package.json` and `version.json` to the same version, merge and validate the change on `main`, then create and push a matching annotated tag:
+Windows releases are currently unsigned. Enable immutable releases in the
+repository settings before the first public release. Update both `package.json`
+and `version.json` to the same version, merge and validate the change on `main`,
+then create and push a matching annotated tag:
 
 ```bash
 git tag -a v1.0.1 -m "AbyssLog v1.0.1"
@@ -103,11 +103,13 @@ The release workflow:
 1. verifies that the tag matches both version files;
 2. requires an annotated tag whose commit is already part of `main`;
 3. runs tests and audits production dependencies;
-4. refuses to build without signing credentials;
-5. verifies and timestamps every packaged Authenticode signature;
-6. publishes the installer, update metadata, and SHA-256 checksums to GitHub Releases.
+4. builds and smoke-tests the unsigned Windows installer;
+5. creates SHA-256 checksums for the release assets;
+6. creates a draft GitHub release for manual installation testing and review.
 
-The signing certificate and password must only exist in GitHub secrets; never add either one to the repository.
+After testing the exact draft asset and comparing its hash with
+`SHA256SUMS.txt`, manually publish the draft release. The release workflow never
+publishes a release automatically.
 
 ---
 
@@ -121,3 +123,16 @@ Run history is stored in a local SQLite database at:
 OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` before they are written to the local database. AbyssLog disables sign-in and credential storage when a secure OS-backed provider is unavailable; credentials are never persisted with the insecure plaintext/basic-text fallback.
 
 While the app is open, one verified full-database backup is created per local day and the latest seven automatic backups are retained. The backup folder and manual backup control are available in **Settings → Data & Recovery**.
+
+See the [privacy notice](PRIVACY.md) for the complete local-data, external-service,
+retention, and deletion details.
+
+---
+
+## EVE Online Notice
+
+AbyssLog is an independent third-party application and is not affiliated with or
+endorsed by CCP hf.
+
+© 2014 CCP hf. All rights reserved. “EVE”, “EVE Online”, “CCP”, and all related
+logos and images are trademarks or registered trademarks of CCP hf.

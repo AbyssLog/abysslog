@@ -13,6 +13,45 @@ const {
 } = require('../scripts/create-release-checksums');
 const { verifyReleaseTag } = require('../scripts/verify-release-tag');
 
+const projectRoot = path.resolve(__dirname, '..');
+
+test('release workflow builds an unsigned draft with checksums', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')
+  );
+  const workflow = fs.readFileSync(
+    path.join(projectRoot, '.github', 'workflows', 'release.yml'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(packageJson.scripts['build:win:release'], /forceCodeSigning/);
+  assert.match(workflow, /build-unsigned-windows:/);
+  assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: 'false'/);
+  assert.match(workflow, /npm run release:checksums/);
+  assert.match(workflow, /gh release create[\s\S]*--draft/);
+  assert.doesNotMatch(workflow, /WIN_CSC|Authenticode|--draft=false/);
+});
+
+test('public release documentation covers privacy, security, support, and CCP attribution', () => {
+  const read = filename => fs.readFileSync(path.join(projectRoot, filename), 'utf8');
+  const readme = read('README.md');
+  const privacy = read('PRIVACY.md');
+  const security = read('SECURITY.md');
+  const support = read('SUPPORT.md');
+  const about = read(path.join('src', 'renderer', 'index.html'));
+
+  assert.match(readme, /\[Privacy\]\(PRIVACY\.md\)/);
+  assert.match(readme, /not code signed/);
+  assert.match(privacy, /does\s+not include telemetry, advertising, or crash reporting/);
+  assert.match(privacy, /asset list to locate the active ship/);
+  assert.match(security, /Private Vulnerability Reporting/);
+  assert.match(security, /contains only a\s+request to establish private contact/);
+  assert.match(support, /best effort/);
+  assert.match(about, /blob\/main\/PRIVACY\.md/);
+  assert.match(about, /© 2014 CCP hf\. All rights reserved/);
+  assert.doesNotMatch(about, /trademarks of Fenris Creations/);
+});
+
 test('release tag must match both version manifests', () => {
   assert.equal(verifyReleaseTag('v1.2.3', '1.2.3', '1.2.3'), 'v1.2.3');
   assert.throws(

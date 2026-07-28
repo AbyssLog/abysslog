@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/AbyssLog/abysslog/blob/main/SECURITY.md
+    about: Read the private reporting instructions before sharing any technical details.
+  - name: Support guidance
+    url: https://github.com/AbyssLog/abysslog/blob/main/SUPPORT.md
+    about: Read what to include and how to protect sensitive data.

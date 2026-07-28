@@ -6,7 +6,7 @@
   const EXTERNAL_URL_RULES = [
     { host: 'login.eveonline.com', path: '/v2/oauth/authorize' },
     { host: 'discord.gg', path: '/janice' },
-    { host: 'github.com', path: '/AbyssLog/abysslog/releases' },
+    { host: 'github.com', path: '/AbyssLog/abysslog' },
   ];
 
   const PUBLIC_SETTING_KEYS = new Set([

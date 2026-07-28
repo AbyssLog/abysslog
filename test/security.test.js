@@ -31,6 +31,10 @@ test('external URL allowlist accepts only intended HTTPS destinations', () => {
     security.isAllowedExternalUrl('https://github.com/AbyssLog/abysslog/releases/latest'),
     true
   );
+  assert.equal(
+    security.isAllowedExternalUrl('https://github.com/AbyssLog/abysslog/blob/main/PRIVACY.md'),
+    true
+  );
 
   for (const value of [
     'javascript:alert(1)',
@@ -38,6 +42,7 @@ test('external URL allowlist accepts only intended HTTPS destinations', () => {
     'http://github.com/AbyssLog/abysslog/releases/latest',
     'https://github.com.attacker.example/AbyssLog/abysslog/releases/latest',
     'https://github.com/openai/openai/releases/latest',
+    'https://github.com/AbyssLog/abysslogger',
     'https://user:password@github.com/AbyssLog/abysslog/releases/latest',
     'https://github.com:444/AbyssLog/abysslog/releases/latest',
   ]) {
@@ -541,7 +546,7 @@ test('CI uses read-only permissions, immutable Actions, and no build token', () 
   }
 });
 
-test('release publishing fails closed and isolates its write token', () => {
+test('unsigned release publishing is gated, draft-only, and isolates its write token', () => {
   const workflow = fs.readFileSync(
     path.join(projectRoot, '.github/workflows/release.yml'),
     'utf8'
@@ -552,12 +557,15 @@ test('release publishing fails closed and isolates its write token', () => {
   const beforePublishJob = workflow.split(/\n  publish:\s*\n/)[0];
 
   assert.match(workflow, /environment: release/);
-  assert.match(packageJson.scripts['build:win:release'], /--config\.forceCodeSigning=true/);
-  assert.match(workflow, /Get-AuthenticodeSignature/);
-  assert.match(workflow, /TimeStamperCertificate/);
-  assert.match(workflow, /Build signed Windows installer[\s\S]*Smoke test packaged application/);
+  assert.doesNotMatch(packageJson.scripts['build:win:release'], /forceCodeSigning/);
+  assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: 'false'/);
+  assert.doesNotMatch(workflow, /WIN_CSC|Get-AuthenticodeSignature|TimeStamperCertificate/);
+  assert.match(workflow, /Build unsigned Windows installer[\s\S]*Smoke test packaged application/);
   assert.match(workflow, /run: npm run test:package:win/);
+  assert.match(workflow, /run: npm run release:checksums/);
   assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/);
+  assert.match(workflow, /gh release create[\s\S]*--draft/);
+  assert.doesNotMatch(workflow, /--draft=false|gh release edit/);
   assert.doesNotMatch(beforePublishJob, /GH_TOKEN|GITHUB_TOKEN|github\.token/);
   assert.match(workflow, /permissions:\s*\n\s+contents: write/);
   for (const line of workflow.split(/\r?\n/).filter(value => value.includes('uses: actions/'))) {

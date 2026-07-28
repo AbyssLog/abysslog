@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a reproducible problem in AbyssLog
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve AbyssLog. Search existing issues first and do not attach databases, backups, OAuth tokens, API keys, or authorization URLs.
+  - type: input
+    id: version
+    attributes:
+      label: AbyssLog version
+      description: Find this on the About page.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Install source
+      options:
+        - GitHub Release
+        - GitHub Actions preview
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Use test data and redact private character information.
+      placeholder: |
+        1. Open …
+        2. Select …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include the exact redacted error text when available.
+    validations:
+      required: true
+  - type: checkboxes
+    id: sensitive-data
+    attributes:
+      label: Sensitive data check
+      options:
+        - label: I have not included credentials, authorization URLs, database files, backups, or private EVE data.
+          required: true
