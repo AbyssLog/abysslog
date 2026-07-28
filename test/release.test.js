@@ -25,6 +25,10 @@ test('release workflow builds an unsigned draft with checksums', () => {
   );
 
   assert.doesNotMatch(packageJson.scripts['build:win:release'], /forceCodeSigning/);
+  assert.equal(
+    packageJson.build.nsis.artifactName,
+    '${productName}-Setup-${version}.${ext}'
+  );
   assert.match(workflow, /build-unsigned-windows:/);
   assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: 'false'/);
   assert.match(workflow, /npm run release:checksums/);
@@ -116,13 +120,18 @@ test('release checksums are deterministic and exclude unrelated files', (context
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'abysslog-release-'));
   context.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
+  const manifest = 'version: 1.0.0\nfiles:\n  - url: AbyssLog.exe\npath: AbyssLog.exe\n';
   fs.writeFileSync(path.join(tempDir, 'AbyssLog.exe'), 'installer', 'utf8');
-  fs.writeFileSync(path.join(tempDir, 'latest.yml'), 'version: 1.0.0', 'utf8');
+  fs.writeFileSync(
+    path.join(tempDir, 'latest.yml'),
+    manifest,
+    'utf8'
+  );
   fs.writeFileSync(path.join(tempDir, 'builder-debug.yml'), 'private build details', 'utf8');
 
   const result = createReleaseChecksums(tempDir);
   const installerHash = crypto.createHash('sha256').update('installer').digest('hex');
-  const manifestHash = crypto.createHash('sha256').update('version: 1.0.0').digest('hex');
+  const manifestHash = crypto.createHash('sha256').update(manifest).digest('hex');
   const checksumFile = fs.readFileSync(result.outputPath, 'utf8');
 
   assert.deepEqual(result.assets, ['AbyssLog.exe', 'latest.yml']);
@@ -139,4 +148,27 @@ test('release checksums require a Windows installer', (context) => {
 
   fs.writeFileSync(path.join(tempDir, 'latest.yml'), 'version: 1.0.0', 'utf8');
   assert.throws(() => createReleaseChecksums(tempDir), /No Windows installer/);
+});
+
+test('release checksums reject update metadata that names a missing asset', (context) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'abysslog-release-'));
+  context.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(tempDir, 'AbyssLog Setup 1.0.0.exe'), 'installer', 'utf8');
+  fs.writeFileSync(
+    path.join(tempDir, 'latest.yml'),
+    [
+      'version: 1.0.0',
+      'files:',
+      '  - url: AbyssLog-Setup-1.0.0.exe',
+      'path: AbyssLog-Setup-1.0.0.exe',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
+
+  assert.throws(
+    () => createReleaseChecksums(tempDir),
+    /latest\.yml references missing release asset: AbyssLog-Setup-1\.0\.0\.exe/
+  );
 });
