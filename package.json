@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "EVE Online Abyssal Deadspace run tracker",
   "author": "Erinys",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/AbyssLog/abysslog.git"
@@ -62,7 +63,9 @@
       "src/**/*",
       "assets/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "NOTICE.md"
     ],
     "electronFuses": {
       "runAsNode": false,

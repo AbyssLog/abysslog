@@ -2,7 +2,7 @@
 
 EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, and Janice price appraisals.
 
-[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md)
+[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
 
 ## Features
 
@@ -132,7 +132,18 @@ retention, and deletion details.
 ## EVE Online Notice
 
 AbyssLog is an independent third-party application and is not affiliated with or
-endorsed by CCP hf.
+endorsed by Fenris Creations.
+
+The current [EVE Online Developer License Agreement](https://developers.eveonline.com/license-agreement)
+requires this proprietary notice:
 
 © 2014 CCP hf. All rights reserved. “EVE”, “EVE Online”, “CCP”, and all related
 logos and images are trademarks or registered trademarks of CCP hf.
+
+---
+
+## License
+
+AbyssLog-authored software and documentation are released under the
+[MIT License](LICENSE). The license does not grant rights to EVE Online game
+data, third-party material, or trademarks. See [NOTICE.md](NOTICE.md).
