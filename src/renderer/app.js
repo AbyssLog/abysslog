@@ -2024,7 +2024,7 @@ async function showShipSetup(runId) {
   </div>
   <div id="copyFittingStatus" role="status" aria-live="polite" style="margin-top:10px"></div>
   <div class="ship-setup-actions">
-    <button class="btn gold" data-action="copy-run-fitting" data-run-id="${esc(run.id)}">Copy for EVE</button>
+    <button class="btn gold" data-action="copy-run-fitting" data-run-id="${esc(run.id)}">Copy to Clipboard</button>
     <button class="btn sm ghost" data-action="close-ship-setup">Back to run details</button>
   </div>`;
 
