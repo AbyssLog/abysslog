@@ -1800,6 +1800,27 @@ async function showRunDetail(runId) {
     </div></div>
   </div>`;
 
+  if (run.fitting.length || run.implants.length) {
+    const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
+    const counts = [];
+    if (summary.fittedItemCount > 0) {
+      counts.push(`${summary.fittedItemCount} fitted item${summary.fittedItemCount === 1 ? '' : 's'}`);
+    }
+    if (summary.droneCount > 0) {
+      counts.push(`${summary.droneCount} drone${summary.droneCount === 1 ? '' : 's'}`);
+    }
+    if (summary.implantCount > 0) {
+      counts.push(`${summary.implantCount} implant${summary.implantCount === 1 ? '' : 's'}`);
+    }
+    html += `<div class="fit-summary-card">
+      <div>
+        <div class="fit-summary-title">Ship setup captured at run start</div>
+        <div class="fit-summary-counts">${esc(counts.join(' · ') || 'Ship hull captured')}</div>
+      </div>
+      <button class="btn sm ghost" data-action="show-ship-setup" data-run-id="${esc(run.id)}">View fit &amp; implants</button>
+    </div>`;
+  }
+
   if (gained.length) {
     html += itemTableHtml('Loot Gained', gained, 'gained', 'unit_price_buy');
   }
@@ -1808,12 +1829,6 @@ async function showRunDetail(runId) {
   }
   if (lost.length) {
     html += itemTableHtml('Items Lost', lost, 'consumed', 'unit_price_sell');
-  }
-  if (run.fitting.length) {
-    html += fittingTableHtml('Ship Fitting (at run start)', run.fitting);
-  }
-  if (run.implants.length) {
-    html += implantTableHtml('Implants (at run start)', run.implants);
   }
 
   // Cargo paste section — always shown, editable for re-appraisal
@@ -1961,33 +1976,76 @@ function itemTableHtml(title, items, priceClass, priceField) {
   return html;
 }
 
-function fittingTableHtml(title, fitting) {
-  let html = `<div class="appraisal-section"><div class="appraisal-header">${title}</div>
-    <table class="item-table"><thead><tr><th>Module</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Sell</th><th style="text-align:right">Total</th></tr></thead><tbody>`;
-  for (const item of fitting) {
-    const total = (item.unit_price_sell || 0) * item.qty;
-    html += `<tr>
-      <td class="name">${esc(item.type_name)}</td>
-      <td class="qty">${item.qty}</td>
-      <td class="price consumed">${fmtIsk(item.unit_price_sell || 0)}</td>
-      <td class="price consumed">${fmtIsk(total)}</td>
-    </tr>`;
+function shipSetupSectionHtml(title, items) {
+  if (!items.length) return '';
+  let html = `<div class="ship-setup-section">
+    <div class="ship-setup-section-title">${esc(title)}</div>`;
+  for (const item of items) {
+    html += `<div class="ship-setup-row">
+      <span class="ship-setup-item">${esc(item.name)}</span>
+      <span class="ship-setup-qty">×${item.qty.toLocaleString()}</span>
+    </div>`;
   }
-  html += `</tbody></table></div>`;
-  return html;
+  return `${html}</div>`;
 }
 
-function implantTableHtml(title, implants) {
-  let html = `<div class="appraisal-section"><div class="appraisal-header">${title}</div>
-    <table class="item-table"><thead><tr><th>Implant</th><th style="text-align:right">Unit Sell</th></tr></thead><tbody>`;
-  for (const imp of implants) {
-    html += `<tr>
-      <td class="name">${esc(imp.type_name)}</td>
-      <td class="price consumed">${fmtIsk(imp.unit_price_sell || 0)}</td>
-    </tr>`;
+async function showShipSetup(runId) {
+  const run = await window.api.runs.getById(runId);
+  if (!run) return;
+
+  const grouped = window.AbyssFitting.groupSnapshot(run.fitting, run.implants);
+  const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
+  const hullName = grouped.hull?.name || run.ship_name || 'Unknown ship';
+  const startedAt = new Date(run.started_at * 1000);
+  const runContext = [run.tier, run.weather]
+    .filter(value => value && value !== 'Unknown')
+    .join(' ');
+
+  document.getElementById('shipSetupTitle').textContent = 'Fit & Implants';
+  let html = `<div class="ship-setup-meta">
+    <div class="ship-setup-hull">${esc(hullName)}</div>
+    <div class="ship-setup-context">${esc(
+      ['Captured at run start', runContext, startedAt.toLocaleString()]
+        .filter(Boolean)
+        .join(' · ')
+    )}</div>
+  </div>`;
+
+  for (const section of window.AbyssFitting.DISPLAY_SECTIONS) {
+    html += shipSetupSectionHtml(section.label, grouped.sections[section.id]);
   }
-  html += `</tbody></table></div>`;
-  return html;
+  html += shipSetupSectionHtml('Implants', grouped.implants);
+
+  if (summary.unclassifiedCount > 0) {
+    html += `<div class="alert warn">${summary.unclassifiedCount} unclassified fitted item${summary.unclassifiedCount === 1 ? '' : 's'} will not be included in the EVE clipboard export.</div>`;
+  }
+  html += `<div class="field-note">
+    Implants are included as cargo in the copied fitting. Loaded charges and other cargo may not be included.
+  </div>
+  <div id="copyFittingStatus" role="status" aria-live="polite" style="margin-top:10px"></div>
+  <div class="ship-setup-actions">
+    <button class="btn gold" data-action="copy-run-fitting" data-run-id="${esc(run.id)}">Copy for EVE</button>
+    <button class="btn sm ghost" data-action="close-ship-setup">Back to run details</button>
+  </div>`;
+
+  document.getElementById('shipSetupContent').innerHTML = html;
+  closeModal('runDetailModal');
+  openModal('shipSetupModal');
+}
+
+function closeShipSetupModal() {
+  closeModal('shipSetupModal');
+  openModal('runDetailModal');
+}
+
+async function copyRunFitting(runId) {
+  const status = document.getElementById('copyFittingStatus');
+  if (status) status.innerHTML = '';
+  const result = await window.api.runs.copyFitting(runId);
+  if (!status) return;
+  status.innerHTML = result.omittedItemCount > 0
+    ? `<div class="alert warn">Fitting copied. Implants are included as cargo; ${result.omittedItemCount} unclassified item${result.omittedItemCount === 1 ? ' was' : 's were'} omitted.</div>`
+    : '<div class="alert success">Fitting copied. Implants are included as cargo.</div>';
 }
 
 async function deleteRun(runId) {
@@ -2580,6 +2638,7 @@ function closeModal(id) {
 
 function requestCloseModal(id) {
   if (id === 'manualEntryModal') closeManualEntryModal();
+  else if (id === 'shipSetupModal') closeShipSetupModal();
   else closeModal(id);
 }
 
@@ -2692,6 +2751,9 @@ const clickActions = {
   'submit-manual-entry': element => submitManualEntry(element.dataset.appraise === 'true'),
   'sort-history': element => sortHistory(element.dataset.sortColumn),
   'show-run-detail': element => showRunDetail(Number(element.dataset.runId)),
+  'show-ship-setup': element => showShipSetup(Number(element.dataset.runId)),
+  'copy-run-fitting': element => copyRunFitting(Number(element.dataset.runId)),
+  'close-ship-setup': () => closeShipSetupModal(),
   'reappraise-run': element => reappraiseRun(Number(element.dataset.runId)),
   'edit-run': element => openEditRunModal(Number(element.dataset.runId)),
   'delete-run': element => deleteRun(Number(element.dataset.runId)),
@@ -2728,6 +2790,8 @@ const actionFailureContexts = Object.freeze({
   'submit-manual-entry': 'Could not save the manual run',
   'sort-history': 'Could not sort run history',
   'show-run-detail': 'Could not open the run details',
+  'show-ship-setup': 'Could not open the captured ship setup',
+  'copy-run-fitting': 'Could not copy the fitting',
   'reappraise-run': 'Could not re-appraise the run',
   'edit-run': 'Could not edit the run',
   'delete-run': 'Could not delete the run',
