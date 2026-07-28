@@ -33,8 +33,16 @@ function authenticatedHeaders(accessToken) {
   };
 }
 
+function isEsiUrl(value) {
+  try {
+    return new URL(value).origin === ESI_BASE;
+  } catch {
+    return false;
+  }
+}
+
 function getJson(url, headers = {}, options = {}) {
-  const compatibilityHeaders = url.startsWith(ESI_BASE)
+  const compatibilityHeaders = isEsiUrl(url)
     ? { 'X-Compatibility-Date': ESI_COMPATIBILITY_DATE }
     : {};
   return http.requestJson(url, {
@@ -287,5 +295,6 @@ module.exports = {
   exchangeAuthorizationCode,
   refreshToken,
   verifyToken,
+  isEsiUrl,
   clearMetadataCaches,
 };
