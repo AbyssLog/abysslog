@@ -2,6 +2,7 @@
 const runTracking = window.AbyssRunTracking;
 const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
+const statistics = window.AbyssStatistics;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -194,6 +195,7 @@ async function performCharacterSwitch(charId, save = true) {
     S.hasAuth = false;
     S.capabilities = normalizeCapabilities(null);
     showNoCharPrompt();
+    if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
     return;
   }
 
@@ -226,6 +228,7 @@ async function performCharacterSwitch(charId, save = true) {
   }
 
   renderCharList();
+  if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
 }
 
 function showNoCharPrompt() {
@@ -242,6 +245,7 @@ function loadDefaultSelects() {
 async function startSSO() {
   try {
     document.getElementById('ssoStatus').textContent = 'Browser opened — waiting for authorisation...';
+    document.getElementById('ssoStatus').textContent += ' AbyssLog will return to the foreground when sign-in finishes.';
     document.getElementById('ssoSpinner').style.display = 'inline-block';
     await window.api.auth.startSso(getSelectedCapabilities());
   } catch (error) {
@@ -256,6 +260,7 @@ async function handleAuthComplete(character) {
   await populateCharSelect();
   await switchCharacter(character.id);
   document.getElementById('ssoStatus').textContent = `✓ Logged in as ${character.name}`;
+  document.getElementById('ssoStatus').textContent += '. You can close the browser tab.';
   document.getElementById('ssoSpinner').style.display = 'none';
   setTimeout(() => closeModal('addCharModal'), 1500);
   renderCharList();
@@ -2057,40 +2062,99 @@ async function deleteRun(runId) {
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────
+let statsRenderGeneration = 0;
+
+function handleStatsRangeChange() {
+  const preset = document.getElementById('statsRangePreset').value;
+  const customRange = document.getElementById('statsCustomRange');
+  const from = document.getElementById('statsDateFrom');
+  const to = document.getElementById('statsDateTo');
+  const isCustom = preset === 'custom';
+  customRange.hidden = !isCustom;
+  if (isCustom && (!from.value || !to.value)) {
+    const defaults = statistics.defaultCustomDates();
+    from.value ||= defaults.from;
+    to.value ||= defaults.to;
+  }
+  return renderStats();
+}
+
+function getSelectedStatsRange() {
+  return statistics.resolveDateRange({
+    preset: document.getElementById('statsRangePreset').value,
+    from: document.getElementById('statsDateFrom').value,
+    to: document.getElementById('statsDateTo').value,
+  });
+}
+
+function createStatsFilters(range) {
+  const filters = {};
+  if (S.activeCharId) filters.character_id = S.activeCharId;
+  if (range.range_start !== undefined) filters.range_start = range.range_start;
+  if (range.range_end !== undefined) filters.range_end = range.range_end;
+  return filters;
+}
+
 async function renderStats() {
+  const generation = ++statsRenderGeneration;
   const el = document.getElementById('statsContent');
+  const filterError = document.getElementById('statsFilterError');
+  let range;
+  try {
+    range = getSelectedStatsRange();
+  } catch (error) {
+    filterError.textContent = error instanceof Error ? error.message : 'Date range is invalid';
+    filterError.hidden = false;
+    el.innerHTML = '';
+    return;
+  }
+  filterError.hidden = true;
+  document.getElementById('statsRangeSummary').textContent = range.label;
+  const filters = createStatsFilters(range);
   const [stats, daily] = await Promise.all([
-    window.api.runs.getStats(S.activeCharId),
-    window.api.runs.getDailyStats(S.activeCharId)
+    window.api.runs.getStats(filters),
+    window.api.runs.getDailyStats(filters)
   ]);
+  if (generation !== statsRenderGeneration) return;
   const o = stats.overall;
 
   if (!o || o.total_runs === 0) {
-    el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
+    const message = range.preset === 'all' ? 'No runs logged yet' : 'No runs in selected period';
+    el.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
 
   const survRate = o.total_runs > 0 ? Math.round(o.survived / o.total_runs * 100) : 0;
+  const chart = statistics.createChartSeries(daily, {
+    start: range.start,
+    end: range.end,
+    firstRun: o.first_run,
+    lastRun: o.last_run,
+  });
+  const chartTitle = chart.bucket === 'week' ? 'Weekly Activity' : 'Daily Activity';
+  const chartNote = chart.bucket === 'week'
+    ? 'Seven-day totals; inactive days are included' : 'Daily totals; inactive days are shown as zero';
 
   let html = `<div class="stat-grid">
     <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
     <div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">${survRate}%</div></div>
     <div class="stat-card"><div class="stat-card-label">Avg Survival Duration</div><div class="stat-card-value">${fmtDuration(Math.round(o.avg_duration_survived || 0))}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Profit / Hour</div><div class="stat-card-value ${stats.iskPerHour >= 0 ? 'gold' : 'red'}">${fmtIsk(stats.iskPerHour)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Total Profit / Loss</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${fmtIsk(o.total_net_isk || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Profit / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${fmtIsk(o.avg_net_isk || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Loss on Death</div><div class="stat-card-value red">${fmtIsk(o.avg_loss || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Total Losses</div><div class="stat-card-value red">${fmtIsk(o.total_loss || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Net / Hour</div><div class="stat-card-value ${stats.iskPerHour >= 0 ? 'gold' : 'red'}">${fmtIsk(stats.iskPerHour)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Net</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${fmtIsk(o.total_net_isk || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Net / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${fmtIsk(o.avg_net_isk || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Avg Death Loss</div><div class="stat-card-value red">${fmtIsk(o.avg_loss || 0)}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Death Losses</div><div class="stat-card-value red">${fmtIsk(o.total_loss || 0)}</div></div>
   </div>`;
 
   // Daily chart — always shown
-  html += `<div class="section-title">Daily Activity</div>
+  html += `<div class="section-title">${chartTitle}</div>
+    <div class="stats-chart-note">${chartNote}</div>
     <div id="dailyChart" style="background:var(--panel);border:1px solid var(--border);padding:16px;margin-bottom:16px"></div>`;
 
   if (stats.byTier.length) {
     html += `<div class="section-title">By Tier</div>
     <table class="data-table" style="margin-bottom:16px"><thead><tr>
-      <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Survival Duration</th><th>Avg Profit</th>
+      <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Survival Duration</th><th>Avg Net</th>
     </tr></thead><tbody>`;
     for (const t of stats.byTier) {
       const sr = t.total_runs > 0 ? Math.round(t.survived / t.total_runs * 100) : 0;
@@ -2110,7 +2174,7 @@ async function renderStats() {
   if (stats.byWeather.length) {
     html += `<div class="section-title">By Weather</div>
     <table class="data-table"><thead><tr>
-      <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Profit</th>
+      <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Net</th>
     </tr></thead><tbody>`;
     for (const w of stats.byWeather) {
       const sr = w.total_runs > 0 ? Math.round(w.survived / w.total_runs * 100) : 0;
@@ -2129,10 +2193,10 @@ async function renderStats() {
   el.innerHTML = html;
 
   // Render chart after DOM is set
-  renderDailyChart(daily);
+  renderDailyChart(chart.rows, chart.bucket);
 }
 
-function renderDailyChart(daily) {
+function renderDailyChart(daily, bucket = 'day') {
   const container = document.getElementById('dailyChart');
   if (!container) return;
   if (!daily || daily.length === 0) {
@@ -2238,13 +2302,14 @@ function renderDailyChart(daily) {
     const x = Math.round(i * cw / n);
     const w = Math.round(cw / n);
     const iskStr = d.net_isk >= 0 ? '+' + fmtIsk(d.net_isk) : '-' + fmtIsk(Math.abs(d.net_isk));
-    const title = `${d.day}  |  ${d.total_runs} runs  |  Profit/Loss: ${iskStr}`;
+    const period = bucket === 'week' ? `Week of ${d.day}` : d.day;
+    const title = `${period}  |  ${d.total_runs} runs  |  Net: ${iskStr}`;
     svg += `<rect x="${x}" y="0" width="${w}" height="${ch}" fill="transparent"><title>${title}</title></rect>`;
   });
 
   // Legend
   svg += `<circle cx="${cw - 120}" cy="-4" r="4" fill="#66bb6a"/>
-    <text x="${cw - 112}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Profit/Loss</text>
+    <text x="${cw - 112}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Net</text>
     <rect x="${cw - 54}" y="-8" width="8" height="8" fill="#4fc3f7" opacity="0.4" rx="1"/>
     <text x="${cw - 42}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Runs</text>`;
 
@@ -2582,11 +2647,11 @@ async function updateRecentRuns() {
 
 async function updateIskPerHour() {
   if (!S.activeCharId) return;
-  const stats = await window.api.runs.getStats(S.activeCharId);
+  const iskPerHour = await window.api.runs.getRecentIskPerHour(S.activeCharId);
   const el = document.getElementById('iskPerHourDisplay');
-  if (stats.overall?.total_runs > 0) {
-    const color = stats.iskPerHour >= 0 ? 'var(--gold)' : 'var(--red)';
-    el.innerHTML = `<span style="color:var(--text-muted)">Profit/hr (recent 20):</span> <span style="color:${color};font-family:var(--font-mono)">${fmtIsk(stats.iskPerHour)}</span>`;
+  if (iskPerHour !== null) {
+    const color = iskPerHour >= 0 ? 'var(--gold)' : 'var(--red)';
+    el.innerHTML = `<span style="color:var(--text-muted)">Net / hr (recent 20):</span> <span style="color:${color};font-family:var(--font-mono)">${fmtIsk(iskPerHour)}</span>`;
   } else {
     el.textContent = '';
   }
@@ -2855,6 +2920,10 @@ document.addEventListener('change', event => {
     );
   } else if (element.dataset.changeAction === 'render-history') {
     void runUiTask('Could not refresh run history', () => renderHistory());
+  } else if (element.dataset.changeAction === 'stats-range') {
+    void runUiTask('Could not change the Statistics date range', () => handleStatsRangeChange());
+  } else if (element.dataset.changeAction === 'render-stats') {
+    void runUiTask('Could not refresh Statistics', () => renderStats());
   } else if (element.dataset.changeAction === 'manual-outcome') {
     void runUiTask('Could not update the manual run form', () => updateManualOutcomeUI());
   }

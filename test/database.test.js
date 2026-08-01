@@ -416,7 +416,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
   assert.equal(cargoOnly.items[0].qty, 2);
 });
 
-test('statistics include death losses and daily activity keeps the latest 60 days', () => {
+test('statistics include death losses and apply consistent date ranges', () => {
   database.saveCharacter({
     id: 9010,
     name: 'Profit Pilot',
@@ -456,13 +456,14 @@ test('statistics include death losses and daily activity keeps the latest 60 day
     total_loss: 50,
   });
 
-  const stats = database.getStats(9010);
+  const stats = database.getStats({ character_id: 9010 });
   assert.equal(stats.overall.total_net_isk, 50);
   assert.equal(stats.overall.avg_net_isk, 25);
   assert.equal(stats.byTier[0].avg_net_isk, 25);
   assert.equal(stats.byWeather[0].avg_net_isk, 25);
   assert.equal(stats.iskPerHour, 900);
-  assert.deepEqual(database.getDailyStats(9010), [{
+  assert.equal(database.getRecentIskPerHour(9010), 900);
+  assert.deepEqual(database.getDailyStats({ character_id: 9010 }), [{
     day: '2025-01-01',
     total_runs: 2,
     survived: 1,
@@ -486,10 +487,28 @@ test('statistics include death losses and daily activity keeps the latest 60 day
     });
   }
 
-  const daily = database.getDailyStats(9011);
-  assert.equal(daily.length, 60);
-  assert.equal(daily[0].day, '2025-01-11');
+  const daily = database.getDailyStats({ character_id: 9011 });
+  assert.equal(daily.length, 70);
+  assert.equal(daily[0].day, '2025-01-01');
   assert.equal(daily.at(-1).day, '2025-03-11');
+  assert.equal(database.getStats({ character_id: 9011 }).iskPerHour, 1242);
+  assert.equal(database.getRecentIskPerHour(9011), 2142);
+
+  const range = {
+    character_id: 9011,
+    range_start: baseRun.started_at + 10 * 86_400,
+    range_end: baseRun.started_at + 13 * 86_400,
+  };
+  const filtered = database.getStats(range);
+  assert.equal(filtered.overall.total_runs, 3);
+  assert.equal(filtered.byTier[0].total_runs, 3);
+  assert.equal(filtered.overall.total_net_isk, 33);
+  assert.equal(filtered.iskPerHour, 396);
+  const filteredDaily = database.getDailyStats(range);
+  assert.deepEqual(
+    filteredDaily.map(day => [day.day, day.net_isk]),
+    [['2025-01-11', 10], ['2025-01-12', 11], ['2025-01-13', 12]]
+  );
 });
 
 test('cleared inventory baselines stay cleared until a newer survived run', () => {

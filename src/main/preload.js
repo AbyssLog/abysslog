@@ -63,12 +63,13 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('runs:get-inventory-baseline', characterId),
     clearInventoryBaseline: (characterId, runId) =>
       ipcRenderer.invoke('runs:clear-inventory-baseline', characterId, runId),
-    getStats: characterId => ipcRenderer.invoke('runs:get-stats', characterId),
+    getStats: filters => ipcRenderer.invoke('runs:get-stats', filters),
+    getRecentIskPerHour: characterId => ipcRenderer.invoke('runs:get-recent-isk-per-hour', characterId),
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', runId, data),
     update: (runId, data) => ipcRenderer.invoke('runs:update', runId, data),
     exportCSV: characterId => ipcRenderer.invoke('runs:export-csv', characterId),
     importCSV: characterId => ipcRenderer.invoke('runs:import-csv', characterId),
-    getDailyStats: characterId => ipcRenderer.invoke('runs:get-daily-stats', characterId),
+    getDailyStats: filters => ipcRenderer.invoke('runs:get-daily-stats', filters),
   },
 
   data: {

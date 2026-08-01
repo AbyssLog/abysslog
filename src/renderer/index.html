@@ -241,6 +241,14 @@ input, select, textarea { font-family: var(--font); }
 .stat-card-value.green { color: var(--green); }
 .stat-card-value.gold { color: var(--gold); }
 .stat-card-value.red { color: var(--red); }
+.stats-filter-row { background: var(--panel); border: 1px solid var(--border); padding: 10px 12px; }
+.stats-filter-field { min-width: 150px; }
+.stats-filter-field .field-select, .stats-filter-field .field-input { width: auto; min-width: 150px; }
+.stats-custom-range { display: flex; gap: 8px; align-items: flex-end; }
+.stats-custom-range[hidden] { display: none; }
+.stats-range-summary { margin-left: auto; color: var(--text-dim); font-size: 11px; letter-spacing: 0.5px; }
+.stats-chart-note { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; margin: -8px 0 8px; }
+.stats-filter-error { color: var(--red); font-size: 11px; }
 
 /* ── Settings Page ────────────────────────────────────────────────────── */
 .settings-section { max-width: 600px; margin-bottom: 24px; }
@@ -576,6 +584,36 @@ input, select, textarea { font-family: var(--font); }
 
     <!-- ── STATS PAGE ──────────────────────────────────────────────────── -->
     <div class="page" id="page-stats" aria-hidden="true">
+      <div class="filter-row stats-filter-row">
+        <div class="stats-filter-field">
+          <label class="field-label" for="statsRangePreset">Date Range</label>
+          <select class="field-select" id="statsRangePreset" data-change-action="stats-range">
+            <option value="all">All Time</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+            <option value="90d">Last 90 Days</option>
+            <option value="month">This Month</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div class="stats-custom-range" id="statsCustomRange" hidden>
+          <div class="stats-filter-field">
+            <label class="field-label" for="statsDateFrom">From</label>
+            <input class="field-input" id="statsDateFrom" type="date" data-change-action="render-stats">
+          </div>
+          <div class="stats-filter-field">
+            <label class="field-label" for="statsDateTo">Through</label>
+            <input class="field-input" id="statsDateTo" type="date" data-change-action="render-stats">
+          </div>
+        </div>
+        <div
+          class="stats-range-summary"
+          id="statsRangeSummary"
+          role="status"
+          aria-live="polite"
+        >All time</div>
+      </div>
+      <div class="stats-filter-error" id="statsFilterError" role="alert" hidden></div>
       <div id="statsContent"></div>
     </div>
 
@@ -855,6 +893,7 @@ input, select, textarea { font-family: var(--font); }
 <script src="../shared/run-tracking.js"></script>
 <script src="../shared/ui-errors.js"></script>
 <script src="../shared/updates.js"></script>
+<script src="../shared/statistics.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

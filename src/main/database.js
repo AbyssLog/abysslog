@@ -709,9 +709,29 @@ function deleteRun(runId) {
   return true;
 }
 
-function getStats(characterId) {
-  const where = characterId ? 'WHERE character_id = ?' : '';
-  const params = characterId ? [characterId] : [];
+function buildStatsWhere(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.character_id != null) {
+    clauses.push('character_id = ?');
+    params.push(filters.character_id);
+  }
+  if (filters.range_start != null) {
+    clauses.push('started_at >= ?');
+    params.push(filters.range_start);
+  }
+  if (filters.range_end != null) {
+    clauses.push('started_at < ?');
+    params.push(filters.range_end);
+  }
+  return {
+    where: clauses.length > 0 ? 'WHERE ' + clauses.join(' AND ') : '',
+    params,
+  };
+}
+
+function getStats(filters = {}) {
+  const { where, params } = buildStatsWhere(filters);
 
   const overall = db.prepare(`
     SELECT
@@ -747,24 +767,31 @@ function getStats(characterId) {
     GROUP BY weather ORDER BY weather
   `).all(...params);
 
-  // Profit/hour based on the last 20 runs, including ship losses.
+  const hourly = db.prepare(`
+    SELECT
+      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as profit,
+      SUM(duration) as duration
+    FROM runs
+    ${where ? where + ' AND' : 'WHERE'} duration > 0
+  `).get(...params);
+  const iskPerHour = hourly?.duration > 0 ? hourly.profit / (hourly.duration / 3600) : 0;
+
+  return { overall, byTier, byWeather, iskPerHour };
+}
+
+function getRecentIskPerHour(characterId, limit = 20) {
   const recentRuns = db.prepare(`
     SELECT
       CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END as profit,
       duration
     FROM runs
-    ${where ? where + ' AND' : 'WHERE'} duration > 0
-    ORDER BY started_at DESC LIMIT 20
-  `).all(...params);
-
-  let iskPerHour = 0;
-  if (recentRuns.length > 0) {
-    const totalIsk = recentRuns.reduce((sum, run) => sum + run.profit, 0);
-    const totalHours = recentRuns.reduce((s, r) => s + r.duration, 0) / 3600;
-    iskPerHour = totalHours > 0 ? totalIsk / totalHours : 0;
-  }
-
-  return { overall, byTier, byWeather, iskPerHour };
+    WHERE character_id = ? AND duration > 0
+    ORDER BY started_at DESC LIMIT ?
+  `).all(characterId, limit);
+  const totalDuration = recentRuns.reduce((sum, run) => sum + run.duration, 0);
+  if (totalDuration <= 0) return null;
+  const totalProfit = recentRuns.reduce((sum, run) => sum + run.profit, 0);
+  return totalProfit / (totalDuration / 3600);
 }
 
 function deleteSetting(key) {
@@ -851,22 +878,17 @@ function updateRun(runId, { meta, cargo, appraisal }) {
   return true;
 }
 
-function getDailyStats(characterId) {
-  const where = characterId ? 'WHERE character_id = ?' : '';
-  const params = characterId ? [characterId] : [];
+function getDailyStats(filters = {}) {
+  const { where, params } = buildStatsWhere(filters);
   return db.prepare(`
-    SELECT * FROM (
-      SELECT
-        date(started_at, 'unixepoch', 'localtime') as day,
-        COUNT(*) as total_runs,
-        SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-        SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as net_isk,
-        SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss
-      FROM runs ${where}
-      GROUP BY day
-      ORDER BY day DESC
-      LIMIT 60
-    )
+    SELECT
+      date(started_at, 'unixepoch', 'localtime') as day,
+      COUNT(*) as total_runs,
+      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
+      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as net_isk,
+      SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss
+    FROM runs ${where}
+    GROUP BY day
     ORDER BY day ASC
   `).all(...params);
 }
@@ -1005,6 +1027,7 @@ module.exports = {
   getRunById,
   deleteRun,
   getStats,
+  getRecentIskPerHour,
   getDailyStats,
   exportRunsCSV,
   importRunsCSV,

@@ -118,6 +118,17 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     character_id: 123,
     limit: 5,
   });
+  assert.deepEqual(security.validateStatsFilters({
+    character_id: '123',
+    range_start: 1_700_000_000,
+    range_end: 1_700_086_400,
+  }), {
+    character_id: 123,
+    range_start: 1_700_000_000,
+    range_end: 1_700_086_400,
+  });
+  assert.throws(() => security.validateStatsFilters({ range_start: 20, range_end: 20 }));
+  assert.throws(() => security.validateStatsFilters({ unexpected: true }));
   assert.throws(() => security.validateRunData({ ...run, outcome: 'Won' }));
   assert.throws(() => security.validateRunData({ ...run, unexpected: true }));
   assert.throws(() => security.validateRunFilters({ limit: 1001 }));

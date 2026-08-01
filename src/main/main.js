@@ -338,6 +338,13 @@ function sendAuthEvent(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
 async function handleOAuthCallback(callbackUrl) {
   try {
     const callback = security.parseOAuthCallback(callbackUrl);
@@ -377,9 +384,11 @@ async function handleOAuthCallback(callbackUrl) {
     saveTokens(characterId, tokens);
     recordDiagnostic('oauth.complete', { source: 'eve-sso' });
     sendAuthEvent('auth:complete', character);
+    focusMainWindow();
   } catch (error) {
     recordDiagnosticFailure('oauth.failure', { source: 'eve-sso' }, error);
     sendAuthEvent('auth:error', error instanceof Error ? error.message : 'Sign-in failed');
+    focusMainWindow();
   }
 }
 
@@ -512,10 +521,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, commandLine) => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    focusMainWindow();
     const callbackUrl = commandLine.find(arg => arg.startsWith('eveauth-abysslog://'));
     if (callbackUrl) void handleOAuthCallback(callbackUrl);
   });
@@ -700,7 +706,12 @@ secureHandle('runs:clear-inventory-baseline', (characterId, runId) =>
     security.requireInteger(characterId, 'Character ID'),
     security.requireInteger(runId, 'Run ID')
   ));
-secureHandle('runs:get-stats', characterId => db.getStats(validateOptionalCharacterId(characterId)));
+secureHandle('runs:get-stats', filters =>
+  db.getStats(security.validateStatsFilters(
+    filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
+  )));
+secureHandle('runs:get-recent-isk-per-hour', characterId =>
+  db.getRecentIskPerHour(security.requireInteger(characterId, 'Character ID')));
 secureHandle('runs:update-appraisal', (runId, data) =>
   db.updateAppraisal(
     security.requireInteger(runId, 'Run ID'),
@@ -711,8 +722,10 @@ secureHandle('runs:update', (runId, data) =>
     security.requireInteger(runId, 'Run ID'),
     security.validateRunEdit(validateObjectPayload(data, 'Run edit'))
   ));
-secureHandle('runs:get-daily-stats', characterId =>
-  db.getDailyStats(validateOptionalCharacterId(characterId)));
+secureHandle('runs:get-daily-stats', filters =>
+  db.getDailyStats(security.validateStatsFilters(
+    filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
+  )));
 
 secureHandle('data:get-status', () => ({
   ...db.getDataStatus(),
