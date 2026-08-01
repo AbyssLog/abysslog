@@ -2340,6 +2340,32 @@ async function createFullBackup() {
   }
 }
 
+async function restoreFullBackup() {
+  const status = document.getElementById('backupActionStatus');
+  const restoreButton = document.querySelector('[data-action="restore-full-backup"]');
+  restoreButton.disabled = true;
+  status.textContent = 'Select a full backup to restore...';
+  status.className = 'alert';
+  status.style.display = 'block';
+
+  try {
+    const result = await window.api.data.restoreBackup();
+    if (!result.success) {
+      status.textContent = 'Restore cancelled. No data was changed.';
+      status.className = 'alert';
+      restoreButton.disabled = false;
+      return;
+    }
+
+    status.textContent = 'Backup restored successfully. AbyssLog is restarting...';
+    status.className = 'alert success';
+  } catch (error) {
+    status.textContent = `Restore failed: ${error.message}`;
+    status.className = 'alert err';
+    restoreButton.disabled = false;
+  }
+}
+
 async function openBackupFolder() {
   const status = document.getElementById('backupActionStatus');
   try {
@@ -2741,6 +2767,7 @@ const clickActions = {
   'export-csv': () => exportCSV(),
   'import-csv': () => importCSV(),
   'create-full-backup': () => createFullBackup(),
+  'restore-full-backup': () => restoreFullBackup(),
   'open-backup-folder': () => openBackupFolder(),
   'open-diagnostics-folder': () => openDiagnosticsFolder(),
   'copy-diagnostics': () => copyDiagnostics(),
@@ -2782,6 +2809,7 @@ const actionFailureContexts = Object.freeze({
   'export-csv': 'Could not export run history',
   'import-csv': 'Could not import run history',
   'create-full-backup': 'Could not create a backup',
+  'restore-full-backup': 'Could not restore a backup',
   'open-backup-folder': 'Could not open the backup folder',
   'open-diagnostics-folder': 'Could not open the diagnostics folder',
   'copy-diagnostics': 'Could not copy diagnostics',

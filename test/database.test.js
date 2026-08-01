@@ -171,6 +171,12 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   const manualStatus = database.createManualBackup();
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
+  assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
+    schemaVersion: 2,
+    characterCount: 4,
+    runCount: 3,
+    size: fs.statSync(manualStatus.filePath).size,
+  });
 
   database.saveRun({
     ...sourceRun,
@@ -178,12 +184,55 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     notes: 'Created after the recovery point',
   });
   assert.equal(database.getRuns({ character_id: 9001 }).length, 2);
-  database.close();
-  fs.copyFileSync(
-    manualStatus.filePath,
-    path.join(userDataDirectory, 'abysslog.db')
+
+  const corruptRestorePath = path.join(userDataDirectory, 'corrupt-restore.db');
+  fs.writeFileSync(corruptRestorePath, 'not a SQLite database');
+  assert.throws(
+    () => database.restoreBackup(corruptRestorePath),
+    /database|backup|file/i
   );
-  database.init();
+  assert.equal(database.getRuns({ character_id: 9001 }).length, 2);
+
+  const newerRestorePath = path.join(userDataDirectory, 'newer-restore.db');
+  const newerDatabase = new Database(newerRestorePath);
+  newerDatabase.pragma('user_version = 999');
+  newerDatabase.close();
+  assert.throws(
+    () => database.inspectBackup(newerRestorePath),
+    /newer version of AbyssLog/
+  );
+
+  const lookalikeRestorePath = path.join(userDataDirectory, 'lookalike-restore.db');
+  const lookalikeDatabase = new Database(lookalikeRestorePath);
+  lookalikeDatabase.exec(`
+    CREATE TABLE characters (unexpected TEXT);
+    CREATE TABLE settings (unexpected TEXT);
+    CREATE TABLE runs (unexpected TEXT);
+    CREATE TABLE run_items (unexpected TEXT);
+    CREATE TABLE run_fitting (unexpected TEXT);
+    CREATE TABLE run_implants (unexpected TEXT);
+    CREATE TABLE active_run_state (unexpected TEXT);
+    PRAGMA user_version = 2;
+  `);
+  lookalikeDatabase.close();
+  assert.throws(
+    () => database.inspectBackup(lookalikeRestorePath),
+    /not an AbyssLog full backup/
+  );
+  assert.throws(
+    () => database.restoreBackup(database.getDataStatus().databasePath),
+    /cannot be selected as its own backup/
+  );
+
+  const restoreResult = database.restoreBackup(manualStatus.filePath);
+  assert.equal(restoreResult.schemaVersion, 2);
+  assert.equal(restoreResult.characterCount, 4);
+  assert.equal(restoreResult.runCount, 3);
+  assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
+  assert.equal(
+    backupDirectoryEntries().filter(name => name.includes('-before-restore-')).length,
+    1
+  );
   assert.equal(database.getRuns({ character_id: 9001 }).length, 1);
   assert.equal(
     database.getRuns({ character_id: 9001 })[0].notes,

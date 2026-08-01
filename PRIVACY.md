@@ -23,9 +23,13 @@ before they are stored. AbyssLog disables sign-in and secret storage if a secure
 operating-system-backed encryption provider is unavailable.
 
 The app creates one full local database backup per day while it is open and
-retains the latest seven automatic backups. Manual backups are retained until
-you delete them. Backups contain the same personal data and encrypted credentials
-as the live database.
+retains the latest seven automatic backups. Manual and before-restore safety
+backups are retained until you delete them. Backups contain the same personal
+data and encrypted credentials as the live database. A restore replaces the
+live database after creating a before-restore safety backup. Credentials restored
+under a different operating-system installation or user profile may no longer
+decrypt; AbyssLog then treats them as disconnected until you sign in or enter the
+credential again.
 
 ## Local diagnostics
 

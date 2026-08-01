@@ -91,24 +91,194 @@ function copyDatabaseToBackup(fileName) {
   return destination;
 }
 
-function verifyBackup(filePath) {
+function inspectBackup(filePath) {
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    throw new TypeError('Backup path is invalid');
+  }
+
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile() || stat.size === 0) {
+    throw new Error('The selected backup is not a non-empty file');
+  }
+
   let backupDb;
   try {
     backupDb = new Database(filePath, { readonly: true, fileMustExist: true });
     assertConnectionIntegrity(backupDb);
+
+    const schemaVersion = backupDb.pragma('user_version', { simple: true });
+    if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 0) {
+      throw new Error('The selected backup has an invalid schema version');
+    }
+    if (schemaVersion > SCHEMA_VERSION) {
+      throw new Error('The selected backup was created by a newer version of AbyssLog');
+    }
+
+    const tables = new Set(backupDb.prepare(`
+      SELECT name
+      FROM sqlite_schema
+      WHERE type = 'table'
+    `).all().map(row => row.name));
+    const requiredColumns = {
+      characters: ['id', 'name', 'portrait_url', 'client_id', 'created_at'],
+      settings: ['key', 'value'],
+      runs: [
+        'id', 'character_id', 'started_at', 'duration', 'tier', 'weather',
+        'outcome', 'loot_value', 'consumed_cost', 'net_isk', 'total_loss',
+        'system_id', 'notes', 'created_at',
+      ],
+      run_items: [
+        'id', 'run_id', 'item_name', 'qty', 'type', 'unit_price_buy', 'unit_price_sell',
+      ],
+      run_fitting: [
+        'id', 'run_id', 'type_id', 'type_name', 'qty', 'slot', 'unit_price_sell',
+      ],
+      run_implants: [
+        'id', 'run_id', 'type_id', 'type_name', 'slot', 'unit_price_sell',
+      ],
+    };
+    if (schemaVersion >= 1) {
+      requiredColumns.runs.push(
+        'cargo_before', 'cargo_after', 'drone_before', 'drone_after',
+        'ship_name', 'ship_class'
+      );
+    }
+    if (schemaVersion >= 2) {
+      requiredColumns.active_run_state = ['character_id', 'snapshot', 'updated_at'];
+    }
+
+    for (const [table, expectedColumns] of Object.entries(requiredColumns)) {
+      if (!tables.has(table)) {
+        throw new Error('The selected file is not an AbyssLog full backup');
+      }
+      const columns = new Set(backupDb.pragma(`table_info(${table})`).map(column => column.name));
+      if (expectedColumns.some(column => !columns.has(column))) {
+        throw new Error('The selected file is not an AbyssLog full backup');
+      }
+    }
+    if (backupDb.pragma('foreign_key_check').length > 0) {
+      throw new Error('The selected backup contains inconsistent related data');
+    }
+
+    return {
+      schemaVersion,
+      characterCount: backupDb.prepare('SELECT COUNT(*) AS count FROM characters').get().count,
+      runCount: backupDb.prepare('SELECT COUNT(*) AS count FROM runs').get().count,
+      size: stat.size,
+    };
   } finally {
     if (backupDb?.open) backupDb.close();
-    for (const suffix of ['-shm', '-wal']) {
-      const sidecarPath = `${filePath}${suffix}`;
-      if (fs.existsSync(sidecarPath)) fs.unlinkSync(sidecarPath);
+  }
+}
+
+function removeDatabaseSidecars(filePath) {
+  for (const suffix of ['-shm', '-wal']) {
+    const sidecarPath = `${filePath}${suffix}`;
+    if (fs.existsSync(sidecarPath)) fs.unlinkSync(sidecarPath);
+  }
+}
+
+function verifyBackup(filePath) {
+  try {
+    inspectBackup(filePath);
+  } finally {
+    // Files created by AbyssLog are standalone backups and must not retain WAL state.
+    // Never call this helper for a user-selected source file because its sidecars belong
+    // to the user; restoreBackup validates a private staged copy instead.
+    removeDatabaseSidecars(filePath);
+  }
+}
+
+function samePath(left, right) {
+  const normalize = value => {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
+function restoreBackup(sourcePath) {
+  if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
+    throw new TypeError('Backup path is invalid');
+  }
+  if (samePath(sourcePath, databasePath)) {
+    throw new Error('The active AbyssLog database cannot be selected as its own backup');
+  }
+
+  const inspection = inspectBackup(sourcePath);
+  const operationId = `${process.pid}-${Date.now()}`;
+  const stagedPath = path.join(path.dirname(databasePath), `.abysslog-restore-${operationId}.tmp`);
+  const displacedPath = path.join(path.dirname(databasePath), `.abysslog-before-restore-${operationId}.tmp`);
+  let safetyBackupPath = null;
+  let currentMoved = false;
+  let restoredInstalled = false;
+  let restoredOpened = false;
+
+  try {
+    fs.copyFileSync(sourcePath, stagedPath, fs.constants.COPYFILE_EXCL);
+    verifyBackup(stagedPath);
+
+    const safetyFileName = `abysslog-before-restore-${backupTimestamp()}.db`;
+    safetyBackupPath = copyDatabaseToBackup(safetyFileName);
+
+    close();
+    removeDatabaseSidecars(databasePath);
+    fs.renameSync(databasePath, displacedPath);
+    currentMoved = true;
+    fs.renameSync(stagedPath, databasePath);
+    restoredInstalled = true;
+
+    // Opening now exercises schema migration before the current database is discarded.
+    // A migration failure therefore rolls back to the untouched database below.
+    init();
+    restoredOpened = true;
+    fs.unlinkSync(displacedPath);
+    currentMoved = false;
+
+    return { ...inspection, safetyBackupPath };
+  } catch (error) {
+    if (restoredOpened || !db) close();
+
+    let rollbackError = null;
+    if (currentMoved) {
+      try {
+        removeDatabaseSidecars(databasePath);
+        if (restoredInstalled && fs.existsSync(databasePath)) fs.unlinkSync(databasePath);
+        fs.renameSync(displacedPath, databasePath);
+        currentMoved = false;
+        init();
+      } catch (failure) {
+        rollbackError = failure;
+      }
+    } else if (!db && fs.existsSync(databasePath)) {
+      try {
+        init();
+      } catch (failure) {
+        rollbackError = failure;
+      }
     }
+
+    const message = error instanceof Error ? error.message : 'Unknown restore error';
+    if (rollbackError) {
+      const rollbackMessage = rollbackError instanceof Error
+        ? rollbackError.message
+        : 'Unknown rollback error';
+      throw new Error(
+        `Restore failed: ${message}. Automatic rollback also failed: ${rollbackMessage}. `
+        + `The safety backup is ${safetyBackupPath || 'unavailable'}.`
+      );
+    }
+    throw new Error(`Restore failed and the previous database was preserved: ${message}`);
+  } finally {
+    if (fs.existsSync(stagedPath)) fs.unlinkSync(stagedPath);
+    if (!currentMoved && fs.existsSync(displacedPath)) fs.unlinkSync(displacedPath);
   }
 }
 
 function listBackups() {
   fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
   return fs.readdirSync(backupDirectory, { withFileTypes: true })
-    .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z)\.db$/.test(entry.name))
+    .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z|before-restore-\d+T\d+Z)\.db$/.test(entry.name))
     .map(entry => {
       const filePath = path.join(backupDirectory, entry.name);
       const stat = fs.statSync(filePath);
@@ -811,6 +981,8 @@ module.exports = {
   close,
   finishStartup,
   createManualBackup,
+  inspectBackup,
+  restoreBackup,
   getDataStatus,
   hardenSensitiveStorage,
   getCharacters,

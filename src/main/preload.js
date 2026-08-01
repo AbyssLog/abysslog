@@ -74,6 +74,7 @@ contextBridge.exposeInMainWorld('api', {
   data: {
     getStatus: () => ipcRenderer.invoke('data:get-status'),
     createBackup: () => ipcRenderer.invoke('data:create-backup'),
+    restoreBackup: () => ipcRenderer.invoke('data:restore-backup'),
     openBackupFolder: () => ipcRenderer.invoke('data:open-backup-folder'),
   },
 

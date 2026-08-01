@@ -57,6 +57,7 @@ let pendingAuth = null;
 let diagnostics = null;
 let rendererRecoveryOpen = false;
 let appIsQuitting = false;
+let restoreRestartScheduled = false;
 const updateService = createUpdateService();
 
 function recordDiagnostic(event, details) {
@@ -266,6 +267,9 @@ function secureHandle(channel, handler) {
       const error = new Error('Unauthorized IPC sender');
       recordDiagnosticFailure('ipc.rejected', { context: channel }, error);
       throw error;
+    }
+    if (restoreRestartScheduled) {
+      throw new Error('AbyssLog is restarting after restoring a backup');
     }
     try {
       return await handler(...args);
@@ -721,6 +725,51 @@ secureHandle('data:create-backup', () => {
   const result = db.createManualBackup();
   recordDiagnostic('backup.created', { source: 'manual' });
   return result;
+});
+secureHandle('data:restore-backup', async () => {
+  const { backupDirectory } = db.getDataStatus();
+  const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Restore Full Backup',
+    defaultPath: backupDirectory,
+    buttonLabel: 'Select Backup',
+    filters: [{ name: 'AbyssLog Database Backups', extensions: ['db'] }],
+    properties: ['openFile', 'dontAddToRecent'],
+  });
+  if (canceled || !filePaths.length) return { success: false, canceled: true };
+
+  const inspection = db.inspectBackup(filePaths[0]);
+  const characterLabel = inspection.characterCount === 1 ? 'character' : 'characters';
+  const runLabel = inspection.runCount === 1 ? 'run' : 'runs';
+  const confirmation = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Restore Full Backup',
+    message: 'Replace the current AbyssLog data with this backup?',
+    detail:
+      `The backup contains ${inspection.characterCount} ${characterLabel} and `
+      + `${inspection.runCount} ${runLabel}. AbyssLog will first preserve the current `
+      + 'database as a before-restore backup, then restart.\n\n'
+      + 'Credentials encrypted on another operating-system installation may not be '
+      + 'recoverable; affected characters and the Janice API key will need to be reconnected.',
+    buttons: ['Cancel', 'Restore and Restart'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  if (confirmation.response !== 1) return { success: false, canceled: true };
+
+  const result = db.restoreBackup(filePaths[0]);
+  recordDiagnostic('backup.restored', {
+    source: 'manual',
+    schemaVersion: result.schemaVersion,
+    characterCount: result.characterCount,
+    runCount: result.runCount,
+  });
+  restoreRestartScheduled = true;
+  setTimeout(() => {
+    app.relaunch();
+    app.quit();
+  }, 500);
+  return { success: true, restarting: true };
 });
 secureHandle('data:open-backup-folder', async () => {
   const { backupDirectory } = db.getDataStatus();
