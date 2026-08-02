@@ -671,6 +671,31 @@
     return filters;
   }
 
+  function validateStatsFilters(value) {
+    if (!isPlainObject(value)) throw new TypeError('Statistics filters must be an object');
+    assertAllowedKeys(value, 'Statistics filters', new Set([
+      'character_id', 'range_start', 'range_end',
+    ]));
+    const filters = {};
+    if (value.character_id != null && value.character_id !== '') {
+      filters.character_id = requireInteger(value.character_id, 'Character ID');
+    }
+    if (value.range_start != null) {
+      filters.range_start = requireInteger(value.range_start, 'Statistics range start', { min: 0 });
+    }
+    if (value.range_end != null) {
+      filters.range_end = requireInteger(value.range_end, 'Statistics range end', { min: 1 });
+    }
+    if (
+      filters.range_start != null
+      && filters.range_end != null
+      && filters.range_end <= filters.range_start
+    ) {
+      throw new TypeError('Statistics range end must be after its start');
+    }
+    return filters;
+  }
+
   function validateRunMeta(value) {
     if (!isPlainObject(value)) throw new TypeError('Run update must be an object');
     assertAllowedKeys(value, 'Run update', new Set([
@@ -870,6 +895,7 @@
     validateRunData,
     validateRunEdit,
     validateRunFilters,
+    validateStatsFilters,
     validateRunMeta,
   };
 });

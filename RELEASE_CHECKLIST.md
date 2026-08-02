@@ -37,8 +37,13 @@ are always created as drafts first.
 - [ ] Confirm an unfinished run is recovered after restarting the application.
 - [ ] Export run history to CSV, import it into a disposable character, and
       confirm duplicate rows are skipped.
-- [ ] On a disposable profile, restore the copied database backup while the
-      application is closed and confirm it opens successfully.
+- [ ] On a disposable profile, restore the copied full backup through
+      **Settings → Data & Recovery → Restore from Backup** and confirm the
+      character and run counts before continuing.
+- [ ] Confirm the app restarts with the recovered data and retains a
+      before-restore safety backup of the replaced database.
+- [ ] Confirm a corrupt database and a backup from a newer schema are rejected
+      without changing the current data.
 
 ## 4. Complete functional checks
 
@@ -78,8 +83,8 @@ are always created as drafts first.
 Create an annotated tag only after the release commit is on `main`:
 
 ```bash
-git tag -a v1.1.0 -m "AbyssLog v1.1.0"
-git push origin v1.1.0
+git tag -a v1.1.1 -m "AbyssLog v1.1.1"
+git push origin v1.1.1
 ```
 
 - [ ] Confirm the Release workflow succeeds.

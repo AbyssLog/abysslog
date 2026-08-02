@@ -57,6 +57,7 @@ let pendingAuth = null;
 let diagnostics = null;
 let rendererRecoveryOpen = false;
 let appIsQuitting = false;
+let restoreRestartScheduled = false;
 const updateService = createUpdateService();
 
 function recordDiagnostic(event, details) {
@@ -267,6 +268,9 @@ function secureHandle(channel, handler) {
       recordDiagnosticFailure('ipc.rejected', { context: channel }, error);
       throw error;
     }
+    if (restoreRestartScheduled) {
+      throw new Error('AbyssLog is restarting after restoring a backup');
+    }
     try {
       return await handler(...args);
     } catch (error) {
@@ -334,6 +338,13 @@ function sendAuthEvent(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
 async function handleOAuthCallback(callbackUrl) {
   try {
     const callback = security.parseOAuthCallback(callbackUrl);
@@ -373,9 +384,11 @@ async function handleOAuthCallback(callbackUrl) {
     saveTokens(characterId, tokens);
     recordDiagnostic('oauth.complete', { source: 'eve-sso' });
     sendAuthEvent('auth:complete', character);
+    focusMainWindow();
   } catch (error) {
     recordDiagnosticFailure('oauth.failure', { source: 'eve-sso' }, error);
     sendAuthEvent('auth:error', error instanceof Error ? error.message : 'Sign-in failed');
+    focusMainWindow();
   }
 }
 
@@ -508,10 +521,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, commandLine) => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    focusMainWindow();
     const callbackUrl = commandLine.find(arg => arg.startsWith('eveauth-abysslog://'));
     if (callbackUrl) void handleOAuthCallback(callbackUrl);
   });
@@ -696,7 +706,12 @@ secureHandle('runs:clear-inventory-baseline', (characterId, runId) =>
     security.requireInteger(characterId, 'Character ID'),
     security.requireInteger(runId, 'Run ID')
   ));
-secureHandle('runs:get-stats', characterId => db.getStats(validateOptionalCharacterId(characterId)));
+secureHandle('runs:get-stats', filters =>
+  db.getStats(security.validateStatsFilters(
+    filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
+  )));
+secureHandle('runs:get-recent-isk-per-hour', characterId =>
+  db.getRecentIskPerHour(security.requireInteger(characterId, 'Character ID')));
 secureHandle('runs:update-appraisal', (runId, data) =>
   db.updateAppraisal(
     security.requireInteger(runId, 'Run ID'),
@@ -707,8 +722,10 @@ secureHandle('runs:update', (runId, data) =>
     security.requireInteger(runId, 'Run ID'),
     security.validateRunEdit(validateObjectPayload(data, 'Run edit'))
   ));
-secureHandle('runs:get-daily-stats', characterId =>
-  db.getDailyStats(validateOptionalCharacterId(characterId)));
+secureHandle('runs:get-daily-stats', filters =>
+  db.getDailyStats(security.validateStatsFilters(
+    filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
+  )));
 
 secureHandle('data:get-status', () => ({
   ...db.getDataStatus(),
@@ -721,6 +738,51 @@ secureHandle('data:create-backup', () => {
   const result = db.createManualBackup();
   recordDiagnostic('backup.created', { source: 'manual' });
   return result;
+});
+secureHandle('data:restore-backup', async () => {
+  const { backupDirectory } = db.getDataStatus();
+  const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Restore Full Backup',
+    defaultPath: backupDirectory,
+    buttonLabel: 'Select Backup',
+    filters: [{ name: 'AbyssLog Database Backups', extensions: ['db'] }],
+    properties: ['openFile', 'dontAddToRecent'],
+  });
+  if (canceled || !filePaths.length) return { success: false, canceled: true };
+
+  const inspection = db.inspectBackup(filePaths[0]);
+  const characterLabel = inspection.characterCount === 1 ? 'character' : 'characters';
+  const runLabel = inspection.runCount === 1 ? 'run' : 'runs';
+  const confirmation = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Restore Full Backup',
+    message: 'Replace the current AbyssLog data with this backup?',
+    detail:
+      `The backup contains ${inspection.characterCount} ${characterLabel} and `
+      + `${inspection.runCount} ${runLabel}. AbyssLog will first preserve the current `
+      + 'database as a before-restore backup, then restart.\n\n'
+      + 'Credentials encrypted on another operating-system installation may not be '
+      + 'recoverable; affected characters and the Janice API key will need to be reconnected.',
+    buttons: ['Cancel', 'Restore and Restart'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  if (confirmation.response !== 1) return { success: false, canceled: true };
+
+  const result = db.restoreBackup(filePaths[0]);
+  recordDiagnostic('backup.restored', {
+    source: 'manual',
+    schemaVersion: result.schemaVersion,
+    characterCount: result.characterCount,
+    runCount: result.runCount,
+  });
+  restoreRestartScheduled = true;
+  setTimeout(() => {
+    app.relaunch();
+    app.quit();
+  }, 500);
+  return { success: true, restarting: true };
 });
 secureHandle('data:open-backup-folder', async () => {
   const { backupDirectory } = db.getDataStatus();

@@ -171,6 +171,12 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   const manualStatus = database.createManualBackup();
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
+  assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
+    schemaVersion: 2,
+    characterCount: 4,
+    runCount: 3,
+    size: fs.statSync(manualStatus.filePath).size,
+  });
 
   database.saveRun({
     ...sourceRun,
@@ -178,12 +184,55 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     notes: 'Created after the recovery point',
   });
   assert.equal(database.getRuns({ character_id: 9001 }).length, 2);
-  database.close();
-  fs.copyFileSync(
-    manualStatus.filePath,
-    path.join(userDataDirectory, 'abysslog.db')
+
+  const corruptRestorePath = path.join(userDataDirectory, 'corrupt-restore.db');
+  fs.writeFileSync(corruptRestorePath, 'not a SQLite database');
+  assert.throws(
+    () => database.restoreBackup(corruptRestorePath),
+    /database|backup|file/i
   );
-  database.init();
+  assert.equal(database.getRuns({ character_id: 9001 }).length, 2);
+
+  const newerRestorePath = path.join(userDataDirectory, 'newer-restore.db');
+  const newerDatabase = new Database(newerRestorePath);
+  newerDatabase.pragma('user_version = 999');
+  newerDatabase.close();
+  assert.throws(
+    () => database.inspectBackup(newerRestorePath),
+    /newer version of AbyssLog/
+  );
+
+  const lookalikeRestorePath = path.join(userDataDirectory, 'lookalike-restore.db');
+  const lookalikeDatabase = new Database(lookalikeRestorePath);
+  lookalikeDatabase.exec(`
+    CREATE TABLE characters (unexpected TEXT);
+    CREATE TABLE settings (unexpected TEXT);
+    CREATE TABLE runs (unexpected TEXT);
+    CREATE TABLE run_items (unexpected TEXT);
+    CREATE TABLE run_fitting (unexpected TEXT);
+    CREATE TABLE run_implants (unexpected TEXT);
+    CREATE TABLE active_run_state (unexpected TEXT);
+    PRAGMA user_version = 2;
+  `);
+  lookalikeDatabase.close();
+  assert.throws(
+    () => database.inspectBackup(lookalikeRestorePath),
+    /not an AbyssLog full backup/
+  );
+  assert.throws(
+    () => database.restoreBackup(database.getDataStatus().databasePath),
+    /cannot be selected as its own backup/
+  );
+
+  const restoreResult = database.restoreBackup(manualStatus.filePath);
+  assert.equal(restoreResult.schemaVersion, 2);
+  assert.equal(restoreResult.characterCount, 4);
+  assert.equal(restoreResult.runCount, 3);
+  assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
+  assert.equal(
+    backupDirectoryEntries().filter(name => name.includes('-before-restore-')).length,
+    1
+  );
   assert.equal(database.getRuns({ character_id: 9001 }).length, 1);
   assert.equal(
     database.getRuns({ character_id: 9001 })[0].notes,
@@ -367,7 +416,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
   assert.equal(cargoOnly.items[0].qty, 2);
 });
 
-test('statistics include death losses and daily activity keeps the latest 60 days', () => {
+test('statistics include death losses and apply consistent date ranges', () => {
   database.saveCharacter({
     id: 9010,
     name: 'Profit Pilot',
@@ -407,13 +456,14 @@ test('statistics include death losses and daily activity keeps the latest 60 day
     total_loss: 50,
   });
 
-  const stats = database.getStats(9010);
+  const stats = database.getStats({ character_id: 9010 });
   assert.equal(stats.overall.total_net_isk, 50);
   assert.equal(stats.overall.avg_net_isk, 25);
   assert.equal(stats.byTier[0].avg_net_isk, 25);
   assert.equal(stats.byWeather[0].avg_net_isk, 25);
   assert.equal(stats.iskPerHour, 900);
-  assert.deepEqual(database.getDailyStats(9010), [{
+  assert.equal(database.getRecentIskPerHour(9010), 900);
+  assert.deepEqual(database.getDailyStats({ character_id: 9010 }), [{
     day: '2025-01-01',
     total_runs: 2,
     survived: 1,
@@ -437,10 +487,28 @@ test('statistics include death losses and daily activity keeps the latest 60 day
     });
   }
 
-  const daily = database.getDailyStats(9011);
-  assert.equal(daily.length, 60);
-  assert.equal(daily[0].day, '2025-01-11');
+  const daily = database.getDailyStats({ character_id: 9011 });
+  assert.equal(daily.length, 70);
+  assert.equal(daily[0].day, '2025-01-01');
   assert.equal(daily.at(-1).day, '2025-03-11');
+  assert.equal(database.getStats({ character_id: 9011 }).iskPerHour, 1242);
+  assert.equal(database.getRecentIskPerHour(9011), 2142);
+
+  const range = {
+    character_id: 9011,
+    range_start: baseRun.started_at + 10 * 86_400,
+    range_end: baseRun.started_at + 13 * 86_400,
+  };
+  const filtered = database.getStats(range);
+  assert.equal(filtered.overall.total_runs, 3);
+  assert.equal(filtered.byTier[0].total_runs, 3);
+  assert.equal(filtered.overall.total_net_isk, 33);
+  assert.equal(filtered.iskPerHour, 396);
+  const filteredDaily = database.getDailyStats(range);
+  assert.deepEqual(
+    filteredDaily.map(day => [day.day, day.net_isk]),
+    [['2025-01-11', 10], ['2025-01-12', 11], ['2025-01-13', 12]]
+  );
 });
 
 test('cleared inventory baselines stay cleared until a newer survived run', () => {

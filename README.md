@@ -126,7 +126,9 @@ Run history is stored in a local SQLite database at:
 
 OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` before they are written to the local database. AbyssLog disables sign-in and credential storage when a secure OS-backed provider is unavailable; credentials are never persisted with the insecure plaintext/basic-text fallback.
 
-While the app is open, one verified full-database backup is created per local day and the latest seven automatic backups are retained. The backup folder and manual backup control are available in **Settings → Data & Recovery**.
+While the app is open, one verified full-database backup is created per local day and the latest seven automatic backups are retained. Use **Settings → Data & Recovery** to create a manual backup, open the backup folder, or restore a full `.db` backup. Restore validates the selected database, preserves the current database as a retained before-restore backup, replaces the live data, and restarts AbyssLog.
+
+A full restore replaces rather than merges the current database. Credentials encrypted by a different operating-system installation or user profile may no longer decrypt after a restore; reconnect affected EVE characters and re-enter the Janice API key.
 
 The app also keeps privacy-filtered local diagnostic events for seven days,
 bounded to five 1 MB files. These events contain operational categories and

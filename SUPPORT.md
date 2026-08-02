@@ -32,5 +32,8 @@ redact sensitive values.
 - ESI availability problems: EVE developer/community status channels
 - Janice access or pricing-service problems: Janice support
 
-For data recovery, open **Settings → Data & Recovery** and make a copy of the
-newest backup before changing or removing any files.
+For data recovery, open **Settings → Data & Recovery** and choose **Restore from
+Backup**. AbyssLog validates the selected full backup, preserves the current
+database as a before-restore backup, and restarts. Restores replace rather than
+merge the current database. After reinstalling the operating system, reconnect
+any EVE characters and re-enter any Janice API key that cannot be decrypted.
