@@ -282,6 +282,16 @@ function secureHandle(channel, handler) {
   });
 }
 
+function isTrustedClipboardPermission(window, webContents, permission, requestingUrl, isMainFrame) {
+  return (
+    permission === 'clipboard-read'
+    && webContents === window.webContents
+    && window.webContents.getURL() === APP_RENDERER_URL
+    && requestingUrl === APP_RENDERER_URL
+    && isMainFrame === true
+  );
+}
+
 function validateObjectPayload(value, label, maxBytes = MAX_IPC_JSON_BYTES) {
   if (!security.isPlainObject(value)) throw new TypeError(`${label} must be an object`);
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > maxBytes) {
@@ -486,8 +496,23 @@ async function createWindow() {
     if (targetUrl !== window.webContents.getURL()) event.preventDefault();
   });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
-  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+  window.webContents.session.setPermissionCheckHandler((webContents, permission, _origin, details) => (
+    isTrustedClipboardPermission(
+      window,
+      webContents,
+      permission,
+      details.requestingUrl,
+      details.isMainFrame
+    )
+  ));
+  window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isTrustedClipboardPermission(
+      window,
+      webContents,
+      permission,
+      details.requestingUrl,
+      details.isMainFrame
+    ));
   });
   window.webContents.on('did-finish-load', () => {
     rendererHasLoaded = true;

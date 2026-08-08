@@ -514,6 +514,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
+  const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
   const handlerChannels = new Set(
     [...main.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
@@ -525,6 +526,11 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.deepEqual([...invokedChannels].sort(), [...handlerChannels].sort());
   assert.match(main, /sandbox:\s*true/);
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
+  assert.match(main, /setPermissionCheckHandler/);
+  assert.match(main, /permission === 'clipboard-read'/);
+  assert.match(main, /webContents === window\.webContents/);
+  assert.match(main, /requestingUrl === APP_RENDERER_URL/);
+  assert.match(main, /isMainFrame === true/);
   assert.match(main, /protocol\.registerSchemesAsPrivileged/);
   assert.match(main, /protocol\.handle\(APP_PROTOCOL_SCHEME/);
   assert.match(main, /await window\.loadURL\(APP_RENDERER_URL\)/);
@@ -535,6 +541,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /render-process-gone/);
   assert.match(main, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
   assert.doesNotMatch(preload, /clipboard|node:fs|require\('fs'\)/);
+  assert.match(inventoryEditor, /await navigator\.clipboard\.readText\(\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);
   assert.match(main, /security\.validateRunEdit/);

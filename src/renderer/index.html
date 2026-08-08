@@ -108,6 +108,71 @@ input, select, textarea { font-family: var(--font); }
 }
 .field-textarea:focus { border-color: var(--cyan); }
 .field-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+.inventory-editor {
+  background: var(--surface); border: 1px solid var(--border-bright); min-height: 116px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.inventory-editor:focus { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan-dim); outline: none; }
+.inventory-editor-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 39px; padding: 6px 8px 6px 11px; border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.015);
+}
+.inventory-editor-summary { color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; white-space: nowrap; }
+.inventory-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex-wrap: wrap; }
+.inventory-editor-button, .inventory-editor-drop-target, .inventory-item-remove {
+  background: transparent; border: 1px solid transparent; color: var(--text-dim);
+  font-size: 10px; padding: 4px 7px; transition: all 0.15s;
+}
+.inventory-editor-button:hover, .inventory-item-remove:hover { color: var(--text); border-color: var(--border-bright); }
+.inventory-editor-button.primary { color: var(--cyan); border-color: var(--border-bright); }
+.inventory-editor-button.primary:hover { border-color: var(--cyan); background: var(--cyan-dim); }
+.inventory-editor-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100px; padding: 18px; text-align: center; border: 1px dashed var(--border-bright); margin: 9px;
+  background: linear-gradient(135deg, rgba(79,195,247,0.025), rgba(255,167,38,0.025));
+}
+.inventory-editor-empty-title { color: var(--text); font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.inventory-editor-empty-help { color: var(--text-muted); font-size: 10px; max-width: 360px; }
+.inventory-editor-drop-target {
+  color: var(--cyan); border-color: var(--cyan); margin-top: 10px; padding: 5px 10px;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.inventory-editor-drop-target:hover { background: var(--cyan-dim); }
+.inventory-item-list { max-height: 260px; overflow-y: auto; }
+.inventory-item-row {
+  display: grid; grid-template-columns: 7px minmax(120px, 1fr) auto auto auto;
+  align-items: center; gap: 8px; min-height: 39px; padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.inventory-item-row:last-child { border-bottom: 0; }
+.inventory-item-row:hover { background: rgba(255,255,255,0.018); }
+.inventory-item-marker { width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); opacity: 0.65; }
+.inventory-item-name, .inventory-item-quantity input {
+  min-width: 0; background: transparent; border: 1px solid transparent; color: var(--text);
+  outline: none; padding: 4px 5px; font-size: 12px;
+}
+.inventory-item-name:focus, .inventory-item-quantity input:focus { border-color: var(--cyan); background: var(--panel); }
+.inventory-item-name[readonly], .inventory-item-quantity input[readonly] { pointer-events: none; }
+.inventory-item-quantity { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+.inventory-item-quantity input { width: 76px; color: var(--text-dim); font-family: var(--font-mono); text-align: right; }
+.inventory-item-delta { min-width: 42px; font-family: var(--font-mono); font-size: 10px; text-align: right; }
+.inventory-item-delta.gained { color: var(--green); }
+.inventory-item-delta.consumed { color: var(--red); }
+.inventory-item-remove { color: var(--text-muted); font-size: 16px; line-height: 1; padding: 3px 6px; }
+.inventory-item-remove:hover { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+.inventory-diff-summary { display: flex; gap: 6px; padding: 6px 9px; border-top: 1px solid var(--border); }
+.inventory-diff-pill { padding: 2px 6px; font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; }
+.inventory-diff-pill.gained { color: var(--green); background: var(--green-dim); }
+.inventory-diff-pill.consumed { color: var(--red); background: var(--red-dim); }
+.inventory-editor-raw { padding: 8px; }
+.inventory-editor-raw .field-textarea { min-height: 130px !important; resize: vertical; }
+.inventory-editor-status { padding: 5px 9px 7px; color: var(--text-dim); font-size: 10px; }
+.inventory-editor-status.success { color: var(--green); }
+.inventory-editor-status.warning { color: var(--gold); }
+.inventory-editor-status.error { color: var(--red); }
+.inventory-editor-status.info { color: var(--cyan); }
+.inventory-editor [hidden] { display: none !important; }
 
 .collapsible-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -163,9 +228,18 @@ input, select, textarea { font-family: var(--font); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Tracker Page ─────────────────────────────────────────────────────── */
-.tracker-grid { display: grid; grid-template-columns: 1fr 380px; gap: 12px; max-width: 1100px; }
-.hud-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-.hud-card { background: var(--panel); border: 1px solid var(--border); padding: 12px 14px; }
+#tracker-ui { max-width: 1380px; margin: 0 auto; }
+.tracker-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(310px, 360px);
+  align-items: start; gap: 16px;
+}
+.tracker-workspace { min-width: 0; }
+.tracker-sidebar { display: grid; gap: 12px; min-width: 0; position: sticky; top: 0; }
+.tracker-sidebar .panel { margin: 0; }
+.tracker-sidebar #state-awaiting { margin: 0; }
+.tracker-current-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
+.hud-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.hud-card { min-width: 0; background: var(--panel); border: 1px solid var(--border); padding: 10px 12px; }
 .hud-card.active { border-color: var(--cyan); }
 .hud-card-label { font-size: 10px; letter-spacing: 2px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
 .hud-card-value { font-family: var(--font-mono); font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -175,8 +249,10 @@ input, select, textarea { font-family: var(--font); }
 .hud-card-value.red { color: var(--red); }
 
 .timer {
-  font-family: var(--font-mono); font-size: 40px; letter-spacing: 5px; color: var(--cyan);
-  text-align: center; padding: 20px; background: var(--panel); border: 1px solid var(--border-bright);
+  font-family: var(--font-mono); font-size: 44px; letter-spacing: 6px; color: var(--cyan);
+  text-align: center; padding: 17px 20px;
+  background: linear-gradient(135deg, var(--panel), var(--surface));
+  border: 1px solid var(--border-bright);
   margin-bottom: 10px; transition: all 0.3s;
 }
 .timer.survived { color: var(--green); border-color: var(--green); }
@@ -282,6 +358,58 @@ input, select, textarea { font-family: var(--font); }
 .modal-title { font-size: 15px; font-weight: 600; letter-spacing: 2px; color: var(--cyan); text-transform: uppercase; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
 .modal-close { background: none; border: none; color: var(--text-dim); font-size: 18px; line-height: 1; cursor: pointer; }
 .modal-close:hover { color: var(--text); }
+#runDetailModal { padding: 16px; }
+#runDetailModal .modal {
+  display: flex; flex-direction: column; width: min(1180px, 100%); max-width: 1180px;
+  max-height: calc(100vh - 32px); padding: 0; overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.65);
+}
+#runDetailModal .modal-title {
+  flex: 0 0 auto; margin: 0; padding: 16px 20px;
+  background: var(--surface); border-bottom: 1px solid var(--border-bright);
+}
+#runDetailContent { min-height: 0; overflow-y: auto; padding: 18px 20px 0; }
+.run-detail-summary {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  background: var(--surface); border: 1px solid var(--border); margin-bottom: 14px;
+}
+.run-detail-metric, .run-detail-summary > div { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--border); }
+.run-detail-metric:last-child, .run-detail-summary > div:last-child { border-right: 0; }
+.run-detail-value { color: var(--text); font-size: 12px; overflow-wrap: anywhere; }
+.run-detail-value.mono { font-family: var(--font-mono); }
+.run-detail-value.emphasis { font-size: 15px; }
+.run-detail-appraisals {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  align-items: start; gap: 12px; margin-bottom: 4px;
+}
+.run-detail-appraisals .appraisal-section {
+  min-width: 0; margin: 0; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.run-detail-appraisals .item-table .name { max-width: 260px; }
+.run-detail-inventory-title { margin-top: 16px; }
+.run-detail-inventory-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch; gap: 14px; margin-bottom: 10px;
+}
+.run-detail-inventory-card { display: flex; flex-direction: column; min-width: 0; }
+.run-detail-inventory-card .inventory-editor { flex: 1; }
+.inventory-unchanged-badge {
+  display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 6px;
+  color: var(--cyan); background: rgba(57,190,214,0.1); border: 1px solid rgba(57,190,214,0.3);
+  border-radius: 999px; font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.run-detail-inventory-grid .inventory-item-list { max-height: 172px; }
+.run-detail-inventory-grid .inventory-editor-empty { min-height: 78px; }
+.run-detail-reappraisal-status { margin-bottom: 8px; }
+.run-detail-actions {
+  position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center;
+  gap: 8px; flex-wrap: nowrap; margin: 12px -20px 0; padding: 12px 20px;
+  background: rgba(20,26,34,0.97); border-top: 1px solid var(--border-bright);
+  box-shadow: 0 -12px 28px rgba(10,12,16,0.5);
+}
+.run-detail-actions .btn { flex: 0 0 auto; }
+.run-detail-actions .btn.red { margin-left: auto; }
 .fit-summary-card {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   background: var(--surface); border: 1px solid var(--border); padding: 10px 12px;
@@ -309,6 +437,21 @@ input, select, textarea { font-family: var(--font); }
 .ship-setup-item { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
 .ship-setup-qty { color: var(--text-dim); font-family: var(--font-mono); flex-shrink: 0; }
 .ship-setup-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+@media (max-width: 1080px) {
+  .tracker-grid { grid-template-columns: 1fr; }
+  .tracker-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); position: static; }
+  .hud-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .hud-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tracker-sidebar { grid-template-columns: 1fr; }
+  .run-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .run-detail-metric, .run-detail-summary > div { border-bottom: 1px solid var(--border); }
+  .run-detail-inventory-grid { grid-template-columns: 1fr; }
+  .run-detail-actions { flex-wrap: wrap; }
+  .run-detail-actions .btn.red { margin-left: 0; }
+}
 
 .global-error-notice {
   position: fixed; top: 68px; right: 18px; z-index: 400;
@@ -392,7 +535,7 @@ input, select, textarea { font-family: var(--font); }
         <div id="recoveryStatus" class="alert success" role="status" aria-live="polite" style="display:none;margin-bottom:12px"></div>
         <div class="tracker-grid">
           <!-- Left: HUD + Timer + Run Controls -->
-          <div>
+          <div class="tracker-workspace">
             <div class="hud-row">
               <div class="hud-card" id="hudLocation">
                 <div class="hud-card-label">Location</div>
@@ -438,7 +581,7 @@ input, select, textarea { font-family: var(--font); }
                 <span class="collapsible-arrow open" id="preCargoArrow">▼</span>
               </button>
               <div class="collapsible-body open" id="preCargoBody">
-                <textarea class="field-textarea" id="cargoBeforeText" aria-label="Pre-run cargo hold contents" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Expected format (tab-separated columns):&#10;Item Name   Qty   Category   Volume   ISK Value&#10;&#10;Example:&#10;Caldari Navy Inferno Heavy Missile   156   Heavy Missile   4.68 m3   160,956.00 ISK" style="min-height:80px" data-input-action="paste-hint" data-hint="preCargoHint"></textarea>
+                <textarea class="field-textarea" id="cargoBeforeText" aria-label="Pre-run cargo hold contents" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Expected format (tab-separated columns):&#10;Item Name   Qty   Category   Volume   ISK Value&#10;&#10;Example:&#10;Caldari Navy Inferno Heavy Missile   156   Heavy Missile   4.68 m3   160,956.00 ISK" style="min-height:80px" data-input-action="paste-hint" data-hint="preCargoHint" data-inventory-editor></textarea>
               </div>
               <button type="button" class="collapsible-header" data-action="toggle-collapsible" data-body="preDroneBody" data-arrow="preDroneArrow" data-hint="preDroneHint" aria-expanded="false" aria-controls="preDroneBody">
                 <span class="collapsible-label">Drone Bay</span>
@@ -446,7 +589,7 @@ input, select, textarea { font-family: var(--font); }
                 <span class="collapsible-arrow" id="preDroneArrow">▼</span>
               </button>
               <div class="collapsible-body" id="preDroneBody">
-                <textarea class="field-textarea" id="droneBeforeText" aria-label="Pre-run drone bay contents" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Same format as cargo hold." style="min-height:70px" data-input-action="paste-hint" data-hint="preDroneHint"></textarea>
+                <textarea class="field-textarea" id="droneBeforeText" aria-label="Pre-run drone bay contents" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Same format as cargo hold." style="min-height:70px" data-input-action="paste-hint" data-hint="preDroneHint" data-inventory-editor></textarea>
               </div>
             </div>
 
@@ -511,7 +654,7 @@ input, select, textarea { font-family: var(--font); }
                   <span class="collapsible-arrow open" id="postCargoArrow">▼</span>
                 </button>
                 <div class="collapsible-body open" id="postCargoBody">
-                  <textarea class="field-textarea" id="cargoAfterText" aria-label="Post-run cargo hold contents" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here." style="min-height:80px" data-input-action="paste-hint" data-hint="postCargoHint"></textarea>
+                  <textarea class="field-textarea" id="cargoAfterText" aria-label="Post-run cargo hold contents" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here." style="min-height:80px" data-input-action="paste-hint" data-hint="postCargoHint" data-inventory-editor data-inventory-compare="cargoBeforeText"></textarea>
                 </div>
                 <button type="button" class="collapsible-header" data-action="toggle-collapsible" data-body="postDroneBody" data-arrow="postDroneArrow" data-hint="postDroneHint" aria-expanded="false" aria-controls="postDroneBody">
                   <span class="collapsible-label">Drone Bay</span>
@@ -519,7 +662,7 @@ input, select, textarea { font-family: var(--font); }
                   <span class="collapsible-arrow" id="postDroneArrow">▼</span>
                 </button>
                 <div class="collapsible-body" id="postDroneBody">
-                  <textarea class="field-textarea" id="droneAfterText" aria-label="Post-run drone bay contents" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Only paste if you lost drones. Leave empty if all drones survived." style="min-height:70px" data-input-action="paste-hint" data-hint="postDroneHint"></textarea>
+                  <textarea class="field-textarea" id="droneAfterText" aria-label="Post-run drone bay contents" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Only paste if you lost drones. Leave empty if all drones survived." style="min-height:70px" data-input-action="paste-hint" data-hint="postDroneHint" data-inventory-editor data-inventory-compare="droneBeforeText"></textarea>
                 </div>
               </div>
               <div class="action-row">
@@ -556,10 +699,10 @@ input, select, textarea { font-family: var(--font); }
           </div>
 
           <!-- Right: Info Panel -->
-          <div>
-            <div class="panel" style="margin-bottom:10px">
+          <aside class="tracker-sidebar" aria-label="Run overview">
+            <div class="panel tracker-current-panel">
               <div class="panel-title">Current Run</div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div class="tracker-current-grid">
                 <div><div class="field-label">Tier</div><div id="infoTier" style="font-size:13px;color:var(--text-dim)">—</div></div>
                 <div><div class="field-label">Weather</div><div id="infoWeather" style="font-size:13px;color:var(--text-dim)">—</div></div>
                 <div><div class="field-label">Started</div><div id="infoStarted" style="font-size:12px;font-family:var(--font-mono);color:var(--text-dim)">—</div></div>
@@ -570,7 +713,7 @@ input, select, textarea { font-family: var(--font); }
               <div class="panel-title">Recent Runs</div>
               <div id="recentRunsList" style="font-size:12px;color:var(--text-dim)">No runs yet</div>
             </div>
-          </div>
+          </aside>
         </div>
       </div>
     </div>
@@ -866,15 +1009,15 @@ input, select, textarea { font-family: var(--font); }
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px" id="manualCargoGrid">
       <div>
         <label class="field-label" for="manualCargoBefore">Pre-Run Cargo</label>
-        <textarea class="field-textarea" id="manualCargoBefore" style="min-height:80px" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Tab-separated: Item Name   Qty   Category   Volume   ISK"></textarea>
+        <textarea class="field-textarea" id="manualCargoBefore" style="min-height:80px" placeholder="In-game: open cargo hold → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Tab-separated: Item Name   Qty   Category   Volume   ISK" data-inventory-editor></textarea>
         <label class="field-label" for="manualDroneBefore" style="margin-top:8px">Drone Bay (before)</label>
-        <textarea class="field-textarea" id="manualDroneBefore" style="min-height:60px" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here."></textarea>
+        <textarea class="field-textarea" id="manualDroneBefore" style="min-height:60px" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here." data-inventory-editor></textarea>
       </div>
       <div id="manualCargoAfterCol">
         <label class="field-label" for="manualCargoAfter">Post-Run Cargo</label>
-        <textarea class="field-textarea" id="manualCargoAfter" style="min-height:80px" placeholder="Paste post-run cargo here for loot diff."></textarea>
+        <textarea class="field-textarea" id="manualCargoAfter" style="min-height:80px" placeholder="Paste post-run cargo here for loot diff." data-inventory-editor data-inventory-compare="manualCargoBefore"></textarea>
         <label class="field-label" for="manualDroneAfter" style="margin-top:8px">Drone Bay (after)</label>
-        <textarea class="field-textarea" id="manualDroneAfter" style="min-height:60px" placeholder="Only paste if drones changed. Leave empty if all drones survived."></textarea>
+        <textarea class="field-textarea" id="manualDroneAfter" style="min-height:60px" placeholder="Only paste if drones changed. Leave empty if all drones survived." data-inventory-editor data-inventory-compare="manualDroneBefore"></textarea>
       </div>
     </div>
     <div id="manualEntryStatus" role="alert" aria-live="assertive" style="margin-bottom:10px"></div>
@@ -910,11 +1053,11 @@ input, select, textarea { font-family: var(--font); }
     <div class="loadout-editor-grid">
       <div>
         <label class="field-label" for="loadoutCargoText">Cargo Hold</label>
-        <textarea class="field-textarea" id="loadoutCargoText" style="min-height:180px" placeholder="Item name    Qty"></textarea>
+        <textarea class="field-textarea" id="loadoutCargoText" style="min-height:180px" placeholder="Item name    Qty" data-inventory-editor></textarea>
       </div>
       <div>
         <label class="field-label" for="loadoutDroneText">Drone Bay</label>
-        <textarea class="field-textarea" id="loadoutDroneText" style="min-height:180px" placeholder="Item name    Qty"></textarea>
+        <textarea class="field-textarea" id="loadoutDroneText" style="min-height:180px" placeholder="Item name    Qty" data-inventory-editor></textarea>
       </div>
     </div>
     <div id="loadoutEditorStatus" role="alert" aria-live="assertive" style="margin-top:10px" hidden></div>
@@ -954,6 +1097,7 @@ input, select, textarea { font-family: var(--font); }
 <script src="../shared/ui-errors.js"></script>
 <script src="../shared/updates.js"></script>
 <script src="../shared/statistics.js"></script>
+<script src="./inventory-editor.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

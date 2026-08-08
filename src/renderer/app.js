@@ -4,6 +4,7 @@ const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
 const statistics = window.AbyssStatistics;
 const loadoutHelpers = window.AbyssLoadouts;
+const inventoryEditors = window.AbyssInventoryEditor;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -70,6 +71,8 @@ const S = {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
+  inventoryEditors.initialize(document);
+  initializeTrackerLayout();
   window.api.auth.onComplete(handleAuthComplete);
   window.api.auth.onError(handleAuthError);
 
@@ -107,6 +110,14 @@ async function init() {
   }
 
 }
+
+function initializeTrackerLayout() {
+  const runSetup = document.getElementById('state-awaiting');
+  const recentRunsPanel = document.getElementById('recentRunsList')?.closest('.panel');
+  if (!runSetup || !recentRunsPanel) return;
+  recentRunsPanel.after(runSetup);
+}
+
 
 // ── Navigation ────────────────────────────────────────────────────────────
 function showPage(name) {
@@ -472,7 +483,7 @@ function clearTrackerInputs() {
     'droneBeforeText',
     'droneAfterText',
   ]) {
-    document.getElementById(id).value = '';
+    setInventoryText(id, '');
   }
   hideInventoryBaselineStatus();
   document.getElementById('loadoutApplyStatus').hidden = true;
@@ -502,8 +513,8 @@ async function restoreInventoryBaseline(characterId) {
   if (!nextCargo.trim() && !nextDrones.trim()) return;
 
   inventoryBaselineRunId = latestRun.id;
-  document.getElementById('cargoBeforeText').value = nextCargo;
-  document.getElementById('droneBeforeText').value = nextDrones;
+  setInventoryText('cargoBeforeText', nextCargo);
+  setInventoryText('droneBeforeText', nextDrones);
   updatePasteHint('cargoBeforeText', 'preCargoHint');
   updatePasteHint('droneBeforeText', 'preDroneHint');
   if (nextDrones.trim()) {
@@ -522,8 +533,8 @@ async function clearInventoryBaseline() {
     }
   }
   inventoryBaselineRunId = null;
-  document.getElementById('cargoBeforeText').value = '';
-  document.getElementById('droneBeforeText').value = '';
+  setInventoryText('cargoBeforeText', '');
+  setInventoryText('droneBeforeText', '');
   updatePasteHint('cargoBeforeText', 'preCargoHint');
   updatePasteHint('droneBeforeText', 'preDroneHint');
   hideInventoryBaselineStatus();
@@ -582,12 +593,12 @@ function showLoadoutEditorPreset(preset) {
   loadoutEditId = preset?.id || null;
   document.getElementById('loadoutManagerSelect').value = loadoutEditId || '';
   document.getElementById('loadoutNameInput').value = preset?.name || '';
-  document.getElementById('loadoutCargoText').value = preset
+  setInventoryText('loadoutCargoText', preset
     ? loadoutHelpers.formatInventoryItems(preset.cargo)
-    : document.getElementById('cargoBeforeText').value;
-  document.getElementById('loadoutDroneText').value = preset
+    : document.getElementById('cargoBeforeText').value);
+  setInventoryText('loadoutDroneText', preset
     ? loadoutHelpers.formatInventoryItems(preset.drone)
-    : document.getElementById('droneBeforeText').value;
+    : document.getElementById('droneBeforeText').value);
   document.getElementById('deleteLoadoutBtn').hidden = !preset;
   setLoadoutEditorStatus();
 }
@@ -655,8 +666,8 @@ function applyLoadoutPreset() {
 
   const cargoText = loadoutHelpers.formatInventoryItems(preset.cargo);
   const droneText = loadoutHelpers.formatInventoryItems(preset.drone);
-  document.getElementById('cargoBeforeText').value = cargoText;
-  document.getElementById('droneBeforeText').value = droneText;
+  setInventoryText('cargoBeforeText', cargoText);
+  setInventoryText('droneBeforeText', droneText);
   inventoryBaselineRunId = null;
   hideInventoryBaselineStatus();
   updatePasteHint('cargoBeforeText', 'preCargoHint');
@@ -750,10 +761,10 @@ async function restoreActiveRun(characterId) {
   hideInventoryBaselineStatus();
   S.activeRun = snapshot.run;
   lastSystemId = snapshot.run.system_id;
-  document.getElementById('cargoBeforeText').value = snapshot.run.cargoBefore;
-  document.getElementById('cargoAfterText').value = snapshot.run.cargoAfter;
-  document.getElementById('droneBeforeText').value = snapshot.run.droneBefore;
-  document.getElementById('droneAfterText').value = snapshot.run.droneAfter;
+  setInventoryText('cargoBeforeText', snapshot.run.cargoBefore);
+  setInventoryText('cargoAfterText', snapshot.run.cargoAfter);
+  setInventoryText('droneBeforeText', snapshot.run.droneBefore);
+  setInventoryText('droneAfterText', snapshot.run.droneAfter);
   document.getElementById('fitCaptured').style.display =
     snapshot.run.fitCaptured ? 'block' : 'none';
   updateRunInfo();
@@ -1332,20 +1343,20 @@ async function saveCurrentRun() {
   // Promote post-run cargo and drone bay to pre-run for next run
   if (run.outcome === 'Survived') {
     inventoryBaselineRunId = completedRunId;
-    document.getElementById('cargoBeforeText').value = run.cargoAfter;
+    setInventoryText('cargoBeforeText', run.cargoAfter);
     // If post-run drone bay was pasted use it, otherwise carry pre-run forward unchanged
     const nextDroneBefore = (run.droneAfter && run.droneAfter.trim())
       ? run.droneAfter
       : run.droneBefore || '';
-    document.getElementById('droneBeforeText').value = nextDroneBefore;
+    setInventoryText('droneBeforeText', nextDroneBefore);
     updatePasteHint('droneBeforeText', 'preDroneHint');
     if (nextDroneBefore.trim()) {
       setCollapsibleState('preDroneBody', 'preDroneArrow', true);
     }
   } else {
     inventoryBaselineRunId = null;
-    document.getElementById('cargoBeforeText').value = '';
-    document.getElementById('droneBeforeText').value = '';
+    setInventoryText('cargoBeforeText', '');
+    setInventoryText('droneBeforeText', '');
   }
 
   S.activeRun = null;
@@ -1424,10 +1435,10 @@ function openManualEntryModal(runToEdit = null) {
   document.getElementById('manualWeather').value = S.settings.default_weather || '';
   document.getElementById('manualOutcome').value = 'Survived';
   document.getElementById('manualDuration').value = '';
-  document.getElementById('manualCargoBefore').value = '';
-  document.getElementById('manualDroneBefore').value = '';
-  document.getElementById('manualCargoAfter').value = '';
-  document.getElementById('manualDroneAfter').value = '';
+  setInventoryText('manualCargoBefore', '');
+  setInventoryText('manualDroneBefore', '');
+  setInventoryText('manualCargoAfter', '');
+  setInventoryText('manualDroneAfter', '');
   document.getElementById('manualEntryStatus').innerHTML = '';
   // Default date to now
   const now = new Date();
@@ -1462,10 +1473,10 @@ async function openEditRunModal(runId) {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
   document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
-  document.getElementById('manualCargoBefore').value = run.cargo_before || '';
-  document.getElementById('manualDroneBefore').value = run.drone_before || '';
-  document.getElementById('manualDroneAfter').value = run.drone_after || '';
-  document.getElementById('manualCargoAfter').value = run.cargo_after || '';
+  setInventoryText('manualCargoBefore', run.cargo_before || '');
+  setInventoryText('manualDroneBefore', run.drone_before || '');
+  setInventoryText('manualDroneAfter', run.drone_after || '');
+  setInventoryText('manualCargoAfter', run.cargo_after || '');
   document.getElementById('manualEntryStatus').innerHTML = '';
   updateManualOutcomeUI();
   closeModal('runDetailModal');
@@ -1794,8 +1805,8 @@ function backToAppraise() {
     S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
     S.activeRun.droneBefore = document.getElementById('droneBeforeText').value;
   }
-  document.getElementById('cargoAfterText').value = S.activeRun ? S.activeRun.cargoAfter : '';
-  document.getElementById('droneAfterText').value = S.activeRun ? (S.activeRun.droneAfter || '') : '';
+  setInventoryText('cargoAfterText', S.activeRun ? S.activeRun.cargoAfter : '');
+  setInventoryText('droneAfterText', S.activeRun ? (S.activeRun.droneAfter || '') : '');
   setRunState('awaiting-cargo');
   void persistActiveRun().catch(reportActiveRunCheckpointError);
 }
@@ -1809,8 +1820,8 @@ function resetRunUI() {
   document.getElementById('infoWeather').textContent = '—';
   document.getElementById('infoStarted').textContent = '—';
   document.getElementById('infoOutcome').textContent = '—';
-  document.getElementById('cargoAfterText').value = '';
-  document.getElementById('droneAfterText').value = '';
+  setInventoryText('cargoAfterText', '');
+  setInventoryText('droneAfterText', '');
   document.getElementById('fitCaptured').style.display = 'none';
   document.getElementById('appraise-error').style.display = 'none';
   document.getElementById('recoveryStatus').style.display = 'none';
@@ -1896,6 +1907,10 @@ function updateFilamentInference() {
     `Detected ${inference.tier} ${inference.weather} from ${inference.name}. You can change it manually.`;
   status.style.color = 'var(--cyan)';
   status.style.display = 'block';
+}
+
+function setInventoryText(id, value, options = {}) {
+  return inventoryEditors.setValue(id, value, options);
 }
 
 function parseCargo(raw) {
@@ -1998,8 +2013,19 @@ async function showRunDetail(runId) {
   const gained = run.items.filter(i => i.type === 'gained');
   const consumed = run.items.filter(i => i.type === 'consumed');
   const lost = run.items.filter(i => i.type === 'lost');
+  const droneAfterSnapshot = inventoryEditors.resolveDroneAfterSnapshot(
+    run.drone_before, run.drone_after, run.outcome
+  );
+  const displayUnchangedDroneBay = droneAfterSnapshot.usesFallback;
+  const displayedDroneAfter = droneAfterSnapshot.text;
+  const unchangedDroneAttribute = displayUnchangedDroneBay
+    ? ' data-inventory-fallback="unchanged"'
+    : '';
+  const unchangedDroneBadge = displayUnchangedDroneBay
+    ? '<span class="inventory-unchanged-badge">Unchanged</span>'
+    : '';
 
-  let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+  let html = `<div class="run-detail-summary">
     <div><div class="field-label">Date</div><div class="mono" style="font-size:12px">${d.toLocaleString()}</div></div>
     <div><div class="field-label">Duration</div><div class="mono" style="font-size:12px">${fmtDuration(run.duration)}</div></div>
     <div><div class="field-label">Outcome</div><div><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${esc(run.outcome)}</span></div></div>
@@ -2031,6 +2057,7 @@ async function showRunDetail(runId) {
     </div>`;
   }
 
+  html += '<div class="run-detail-appraisals">';
   if (gained.length) {
     html += itemTableHtml('Loot Gained', gained, 'gained', 'unit_price_buy');
   }
@@ -2040,28 +2067,33 @@ async function showRunDetail(runId) {
   if (lost.length) {
     html += itemTableHtml('Items Lost', lost, 'consumed', 'unit_price_sell');
   }
+  html += '</div>';
 
   // Cargo paste section — always shown, editable for re-appraisal
   const hasCargo = run.cargo_before || run.cargo_after;
-  html += `<div class="section-title" style="margin-top:18px">Cargo Pastes</div>`;
+  html += `<div class="section-title run-detail-inventory-title">Inventory Snapshots</div>`;
 
   if (run.outcome === 'Survived') {
-    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-      <div>
+    html += `<div class="run-detail-inventory-grid">
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailCargoBefore">Pre-Run Cargo</label>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px">${esc(run.cargo_before || '')}</textarea>
-        <label class="field-label" for="detailDroneBefore" style="margin-top:8px">Pre-Run Drone Bay</label>
-        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px">${esc(run.drone_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px" data-inventory-editor>${esc(run.cargo_before || '')}</textarea>
       </div>
-      <div>
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailCargoAfter">Post-Run Cargo</label>
-        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px">${esc(run.cargo_after || '')}</textarea>
-        <label class="field-label" for="detailDroneAfter" style="margin-top:8px">Post-Run Drone Bay</label>
-        <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px">${esc(run.drone_after || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px" data-inventory-editor data-inventory-compare="detailCargoBefore">${esc(run.cargo_after || '')}</textarea>
+      </div>
+      <div class="run-detail-inventory-card">
+        <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay</label>
+        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px" data-inventory-editor>${esc(run.drone_before || '')}</textarea>
+      </div>
+      <div class="run-detail-inventory-card">
+        <label class="field-label" for="detailDroneAfter">Post-Run Drone Bay ${unchangedDroneBadge}</label>
+        <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px" data-inventory-editor data-inventory-compare="detailDroneBefore"${unchangedDroneAttribute}>${esc(displayedDroneAfter)}</textarea>
       </div>
     </div>
-    <div id="reappraise-status-${run.id}" role="status" aria-live="polite" style="margin-bottom:8px"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+    <div class="run-detail-reappraisal-status" id="reappraise-status-${run.id}" role="status" aria-live="polite"></div>
+    <div class="run-detail-actions">
       <button class="btn gold sm" data-action="reappraise-run" data-run-id="${esc(run.id)}"><span id="reappraise-spinner-${esc(run.id)}" style="display:none" class="spinner"></span> Re-Appraise Loot</button>
       <button class="btn green sm" id="reappraise-save-${esc(run.id)}" data-action="save-reappraisal" data-run-id="${esc(run.id)}" hidden>Save Changes</button>
       <button class="btn sm ghost" id="reappraise-discard-${esc(run.id)}" data-action="discard-reappraisal" data-run-id="${esc(run.id)}" hidden>Discard</button>
@@ -2070,23 +2102,24 @@ async function showRunDetail(runId) {
     </div>`;
   } else {
     // Died — only pre-run cargo, no post-run
-    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-      <div>
+    html += `<div class="run-detail-inventory-grid">
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailCargoBefore">Pre-Run Cargo (at time of death)</label>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly data-inventory-editor>${esc(run.cargo_before || '')}</textarea>
       </div>
-      <div>
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay (at time of death)</label>
-        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.drone_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly data-inventory-editor>${esc(run.drone_before || '')}</textarea>
       </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+    <div class="run-detail-actions">
       <button class="btn sm ghost" data-action="edit-run" data-run-id="${esc(run.id)}">✎ Edit Run</button>
       <button class="btn sm red" data-action="delete-run" data-run-id="${esc(run.id)}">Delete Run</button>
     </div>`;
   }
 
   document.getElementById('runDetailContent').innerHTML = html;
+  inventoryEditors.initialize(document.getElementById('runDetailContent'));
   openModal('runDetailModal');
 }
 
@@ -2148,7 +2181,10 @@ async function reappraiseRun(runId) {
   const cargoBefore = cargoBeforeEl.value;
   const cargoAfter = cargoAfterEl.value;
   const droneBefore = document.getElementById('detailDroneBefore')?.value || '';
-  const droneAfter = document.getElementById('detailDroneAfter')?.value || '';
+  const droneAfterEl = document.getElementById('detailDroneAfter');
+  const droneAfter = droneAfterEl?.dataset.inventoryFallback === 'unchanged'
+    ? ''
+    : droneAfterEl?.value || '';
 
   if (!cargoAfter.trim()) {
     setReappraisalStatus(runId, 'Post-run cargo is empty - paste it first.', 'warn');
@@ -3286,6 +3322,10 @@ document.addEventListener('change', event => {
 
 document.addEventListener('input', event => {
   const element = event.target;
+  if (element.dataset.inventoryFallback === 'unchanged') {
+    delete element.dataset.inventoryFallback;
+    element.labels?.[0]?.querySelector('.inventory-unchanged-badge')?.remove();
+  }
   invalidateManualEditAppraisalPreview(element);
   invalidateHistoricalReappraisalPreview(element);
   if (element.dataset.inputAction === 'paste-hint') {
