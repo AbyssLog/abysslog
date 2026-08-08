@@ -27,6 +27,7 @@ const esi = require('./esi');
 const janice = require('./janice');
 const { createUpdateService } = require('./update-service');
 const fitting = require('../shared/fitting');
+const loadouts = require('../shared/loadouts');
 const runTracking = require('../shared/run-tracking');
 const security = require('../shared/security');
 
@@ -41,6 +42,7 @@ const LEGACY_OAUTH_SCOPES = [
 ];
 const SECRET_PREFIX = 'safe:v1:';
 const JANICE_SECRET_KEY = 'secret_janice_api_key';
+const LOADOUT_PRESETS_KEY = 'loadout_presets_v1';
 const MAX_IPC_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
 const RENDERER_DIAGNOSTIC_CATEGORIES = new Set([
@@ -600,6 +602,23 @@ secureHandle('settings:get', key => {
 });
 secureHandle('settings:set', (key, value) => db.setSetting(key, security.validatePublicSetting(key, value)));
 secureHandle('settings:get-all', () => getPublicSettings());
+
+secureHandle('loadouts:get', () =>
+  loadouts.parseStoredPresets(db.getSetting(LOADOUT_PRESETS_KEY)));
+secureHandle('loadouts:save', payload => {
+  const data = validateObjectPayload(
+    payload,
+    'Loadout presets',
+    loadouts.MAX_STORED_BYTES + 1024
+  );
+  if (Object.keys(data).length !== 1 || !Object.hasOwn(data, 'presets')) {
+    throw new TypeError('Loadout presets payload is invalid');
+  }
+  const serialized = loadouts.serializePresets(data.presets);
+  db.setSetting(LOADOUT_PRESETS_KEY, serialized);
+  recordDiagnostic('loadouts.saved', { presetCount: data.presets.length });
+  return loadouts.parseStoredPresets(serialized);
+});
 
 secureHandle('secrets:status', () => getSecureStorageStatus());
 secureHandle('secrets:has-janice-key', () => Boolean(getJaniceApiKey()));

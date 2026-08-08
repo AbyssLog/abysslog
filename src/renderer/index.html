@@ -189,6 +189,13 @@ input, select, textarea { font-family: var(--font); }
 .cargo-tabs { display: flex; }
 .cargo-tab { background: none; border: 1px solid var(--border); color: var(--text-dim); font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; padding: 6px 14px; cursor: pointer; transition: all 0.15s; }
 .cargo-tab.active { background: var(--cyan-dim); color: var(--cyan); border-color: var(--cyan); }
+.loadout-toolbar { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.loadout-picker { flex: 1; min-width: 210px; }
+.loadout-picker .field-select { width: 100%; }
+.loadout-apply-status { color: var(--green); font-size: 11px; margin: -2px 0 9px; }
+.loadout-editor-row { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 14px; }
+.loadout-editor-row > div { flex: 1; }
+.loadout-editor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
 
 .fit-capture { background: var(--green-dim); border: 1px solid var(--green); padding: 8px 12px; font-size: 12px; color: var(--green); margin-top: 10px; display: none; }
 
@@ -410,6 +417,17 @@ input, select, textarea { font-family: var(--font); }
             <!-- Always-visible pre-run paste section -->
             <div class="run-panel" style="margin-bottom:8px">
               <div class="panel-title">Pre-Run Contents</div>
+              <div class="loadout-toolbar">
+                <div class="loadout-picker">
+                  <label class="field-label" for="loadoutPresetSelect">Loadout Preset</label>
+                  <select class="field-select" id="loadoutPresetSelect" data-change-action="loadout-selection" aria-label="Saved cargo and drone loadout">
+                    <option value="">-- No presets saved --</option>
+                  </select>
+                </div>
+                <button class="btn sm" id="applyLoadoutBtn" data-action="apply-loadout" disabled>Apply</button>
+                <button class="btn sm ghost" data-action="manage-loadouts">Manage</button>
+              </div>
+              <div class="loadout-apply-status" id="loadoutApplyStatus" role="status" aria-live="polite" hidden></div>
               <div id="inventoryBaselineStatus" class="alert warn" role="status" aria-live="polite" style="display:none;margin-bottom:8px">
                 <span id="inventoryBaselineText"></span>
                 <button class="btn sm ghost" data-action="clear-inventory-baseline" style="margin-left:8px">Clear baseline</button>
@@ -589,6 +607,8 @@ input, select, textarea { font-family: var(--font); }
           <label class="field-label" for="statsRangePreset">Date Range</label>
           <select class="field-select" id="statsRangePreset" data-change-action="stats-range">
             <option value="all">All Time</option>
+            <option value="hour">Last Hour</option>
+            <option value="today">Today</option>
             <option value="7d">Last 7 Days</option>
             <option value="30d">Last 30 Days</option>
             <option value="90d">Last 90 Days</option>
@@ -860,12 +880,51 @@ input, select, textarea { font-family: var(--font); }
     <div id="manualEntryStatus" role="alert" aria-live="assertive" style="margin-bottom:10px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn gold" data-action="submit-manual-entry" data-appraise="true"><span id="manualSpinner" style="display:none" class="spinner"></span> <span id="manualSubmitLabel">Appraise &amp; Save</span></button>
-      <button class="btn sm ghost" id="saveWithoutAppraiseBtn" data-action="submit-manual-entry" data-appraise="false" style="display:none">Save without Re-Appraising</button>
+      <button class="btn sm ghost" id="manualSaveBtn" data-action="submit-manual-entry" data-appraise="false" style="display:none">Save</button>
       <button class="btn ghost sm" data-action="close-manual-entry">Cancel</button>
     </div>
   </div>
 </div>
 
+<!-- Loadout Presets Modal -->
+<div class="modal-overlay" id="loadoutModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="loadoutModalTitle">
+  <div class="modal" tabindex="-1" style="max-width:720px">
+    <div class="modal-title">
+      <span id="loadoutModalTitle">Loadout Presets</span>
+      <button class="modal-close" data-action="close-modal" data-modal="loadoutModal" aria-label="Close loadout presets dialog">&times;</button>
+    </div>
+    <p class="field-note" style="margin-bottom:14px">
+      Paste EVE inventory lists or enter one item per line. Only item names and quantities are saved; categories, prices, and other columns are discarded. A blank quantity counts as one.
+    </p>
+    <div class="loadout-editor-row">
+      <div>
+        <label class="field-label" for="loadoutManagerSelect">Saved Preset</label>
+        <select class="field-select" id="loadoutManagerSelect" data-change-action="loadout-editor-selection"></select>
+      </div>
+      <button class="btn sm ghost" data-action="new-loadout">+ New Preset</button>
+    </div>
+    <div>
+      <label class="field-label" for="loadoutNameInput">Preset Name</label>
+      <input class="field-input" id="loadoutNameInput" maxlength="80" placeholder="e.g. Gamma T6" data-initial-focus>
+    </div>
+    <div class="loadout-editor-grid">
+      <div>
+        <label class="field-label" for="loadoutCargoText">Cargo Hold</label>
+        <textarea class="field-textarea" id="loadoutCargoText" style="min-height:180px" placeholder="Item name    Qty"></textarea>
+      </div>
+      <div>
+        <label class="field-label" for="loadoutDroneText">Drone Bay</label>
+        <textarea class="field-textarea" id="loadoutDroneText" style="min-height:180px" placeholder="Item name    Qty"></textarea>
+      </div>
+    </div>
+    <div id="loadoutEditorStatus" role="alert" aria-live="assertive" style="margin-top:10px" hidden></div>
+    <div class="action-row">
+      <button class="btn gold" data-action="save-loadout">Save Preset</button>
+      <button class="btn red sm" id="deleteLoadoutBtn" data-action="delete-loadout" hidden>Delete</button>
+      <button class="btn ghost sm" data-action="close-modal" data-modal="loadoutModal">Close</button>
+    </div>
+  </div>
+</div>
 <!-- ── Run Detail Modal ────────────────────────────────────────────────── -->
 <div class="modal-overlay" id="runDetailModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="runDetailTitle">
   <div class="modal" tabindex="-1">
@@ -891,6 +950,7 @@ input, select, textarea { font-family: var(--font); }
 <script src="../shared/fitting.js"></script>
 <script src="../shared/security.js"></script>
 <script src="../shared/run-tracking.js"></script>
+<script src="../shared/loadouts.js"></script>
 <script src="../shared/ui-errors.js"></script>
 <script src="../shared/updates.js"></script>
 <script src="../shared/statistics.js"></script>

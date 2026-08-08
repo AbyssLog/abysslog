@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld('api', {
     testKey: apiKey => ipcRenderer.invoke('janice:test-key', apiKey),
   },
 
+  loadouts: {
+    get: () => ipcRenderer.invoke('loadouts:get'),
+    save: presets => ipcRenderer.invoke('loadouts:save', { presets }),
+  },
+
   runs: {
     save: runData => ipcRenderer.invoke('runs:save', runData),
     completeActive: runData => ipcRenderer.invoke('runs:complete-active', runData),

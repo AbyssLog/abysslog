@@ -17,6 +17,20 @@ test('statistics presets resolve to inclusive local calendar dates', () => {
   });
 });
 
+test('session statistics presets resolve today and the rolling last hour', () => {
+  const now = new Date(2026, 7, 8, 12, 34, 56, 789);
+  const today = statistics.resolveDateRange({ preset: 'today' }, now);
+  const hour = statistics.resolveDateRange({ preset: 'hour' }, now);
+
+  assert.equal(today.label, 'Today');
+  assert.equal(today.range_start, Math.floor(new Date(2026, 7, 8).getTime() / 1000));
+  assert.equal(today.range_end, Math.floor(new Date(2026, 7, 9).getTime() / 1000));
+
+  assert.equal(hour.label, 'Last hour');
+  assert.equal(hour.range_start, Math.floor(new Date(2026, 7, 8, 11, 34, 56, 789).getTime() / 1000));
+  assert.equal(hour.range_end, Math.floor(now.getTime() / 1000));
+});
+
 test('custom statistics ranges include the complete through date', () => {
   const range = statistics.resolveDateRange({
     preset: 'custom',
