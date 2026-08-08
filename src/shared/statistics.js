@@ -46,7 +46,15 @@
     let end = null;
     let label = 'All time';
 
-    if (preset === '7d' || preset === '30d' || preset === '90d') {
+    if (preset === 'hour') {
+      start = new Date(now.getTime() - 60 * 60 * 1000);
+      end = new Date(now.getTime());
+      label = 'Last hour';
+    } else if (preset === 'today') {
+      start = today;
+      end = tomorrow;
+      label = 'Today';
+    } else if (preset === '7d' || preset === '30d' || preset === '90d') {
       const days = Number(preset.slice(0, -1));
       start = addLocalDays(today, -(days - 1));
       end = tomorrow;

@@ -13,9 +13,11 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Cargo diffing** — paste pre/post cargo, app diffs to separate loot gained from items consumed
 - **Filament inference** — recognizes the filament in pre-run cargo and selects its tier and weather
 - **Remembered inventory baseline** — carries a survived run's post-run cargo and drones into the next run
+- **Loadout presets** - save, edit, and apply reusable cargo and drone inventories using item names and quantities only
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
-- **Run history** — filterable, sortable table with net ISK and total loss columns
+- **Run history** — filterable, sortable table with editable runs and re-appraisal previews that can be saved or discarded
 - **Statistics** — survival rate, death-adjusted profit/hour, average profit, losses, and breakdowns by tier and weather
+- **Statistics ranges** - view all time, rolling last hour, today, recent-day, current-month, or custom-date results
 - **Multi-character** — add multiple characters, switch between them
 - **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
 
@@ -62,6 +64,8 @@ Janice API keys are available by filing a ticket in the [Janice Discord](https:/
 4. **Died** — ESI detects pod, then checks for an Abyssal killmail and appraises the recorded loss. Killmails can take several minutes to appear, so **Check Killmail** is available for a retry. Without that permission or a matching killmail, the app falls back to the pre-run cargo, fitting, and implant estimate.
 
 After saving a survived run, your post-run cargo and drone bay are automatically promoted to the next run's pre-run baseline. Clear or replace that baseline after docking to unload loot, restock, or change drones.
+
+Use **Manage** under Pre-Run Contents to create a preset from pasted cargo and drone lists. Applying a preset replaces both pre-run fields, ignores price/category columns, and still performs filament inference.
 
 ESI character assets can be cached for up to an hour, so they are not used to detect real-time cargo changes during a run.
 

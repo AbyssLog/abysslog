@@ -3,6 +3,7 @@ const runTracking = window.AbyssRunTracking;
 const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
 const statistics = window.AbyssStatistics;
+const loadoutHelpers = window.AbyssLoadouts;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -56,6 +57,7 @@ const S = {
   dataStatus: null,
   diagnosticsStatus: null,
   settings: {},
+  loadoutPresets: [],
   runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraising | appraisal | died | loss
   activeRun: null,
   timerInterval: null,
@@ -78,6 +80,7 @@ async function init() {
     S.hasJaniceKey,
     S.dataStatus,
     S.diagnosticsStatus,
+    S.loadoutPresets,
   ] = await Promise.all([
     window.api.settings.getAll(),
     window.api.auth.getCharacters(),
@@ -85,10 +88,12 @@ async function init() {
     window.api.secrets.hasJaniceKey(),
     window.api.data.getStatus(),
     window.api.diagnostics.getStatus(),
+    window.api.loadouts.get(),
   ]);
   await refreshCharacterCapabilities();
 
   loadSettingsPage();
+  renderLoadoutPresetSelect();
   await initAboutPage();
   await populateCharSelect();
 
@@ -470,6 +475,7 @@ function clearTrackerInputs() {
     document.getElementById(id).value = '';
   }
   hideInventoryBaselineStatus();
+  document.getElementById('loadoutApplyStatus').hidden = true;
   clearFilamentInference();
 }
 
@@ -522,6 +528,145 @@ async function clearInventoryBaseline() {
   updatePasteHint('droneBeforeText', 'preDroneHint');
   hideInventoryBaselineStatus();
   clearFilamentInference();
+  document.getElementById('loadoutApplyStatus').hidden = true;
+}
+
+let loadoutEditId = null;
+
+function findLoadoutPreset(id) {
+  return S.loadoutPresets.find(preset => preset.id === id) || null;
+}
+
+function populateLoadoutSelect(select, emptyLabel, selectedId = '') {
+  select.replaceChildren();
+  const emptyOption = document.createElement('option');
+  emptyOption.value = '';
+  emptyOption.textContent = emptyLabel;
+  select.append(emptyOption);
+  for (const preset of S.loadoutPresets) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = preset.name;
+    select.append(option);
+  }
+  select.value = findLoadoutPreset(selectedId) ? selectedId : '';
+}
+
+function renderLoadoutPresetSelect(preferredId = null) {
+  const select = document.getElementById('loadoutPresetSelect');
+  const selectedId = preferredId ?? select.value;
+  populateLoadoutSelect(select, '-- No presets saved --', selectedId);
+  updateLoadoutControls();
+}
+
+function updateLoadoutControls() {
+  const select = document.getElementById('loadoutPresetSelect');
+  const apply = document.getElementById('applyLoadoutBtn');
+  if (!select || !apply) return;
+  apply.disabled = S.runState !== 'awaiting' || !findLoadoutPreset(select.value);
+}
+
+function setLoadoutEditorStatus(message = '', type = '') {
+  const status = document.getElementById('loadoutEditorStatus');
+  status.textContent = message;
+  status.className = type ? `alert ${type}` : '';
+  status.hidden = !message;
+}
+
+function renderLoadoutManagerSelect(preferredId = '') {
+  const select = document.getElementById('loadoutManagerSelect');
+  populateLoadoutSelect(select, '-- New preset --', preferredId);
+}
+
+function showLoadoutEditorPreset(preset) {
+  loadoutEditId = preset?.id || null;
+  document.getElementById('loadoutManagerSelect').value = loadoutEditId || '';
+  document.getElementById('loadoutNameInput').value = preset?.name || '';
+  document.getElementById('loadoutCargoText').value = preset
+    ? loadoutHelpers.formatInventoryItems(preset.cargo)
+    : document.getElementById('cargoBeforeText').value;
+  document.getElementById('loadoutDroneText').value = preset
+    ? loadoutHelpers.formatInventoryItems(preset.drone)
+    : document.getElementById('droneBeforeText').value;
+  document.getElementById('deleteLoadoutBtn').hidden = !preset;
+  setLoadoutEditorStatus();
+}
+
+function startNewLoadoutPreset() {
+  renderLoadoutManagerSelect('');
+  showLoadoutEditorPreset(null);
+  document.getElementById('loadoutNameInput').focus();
+}
+
+function openLoadoutManager() {
+  const selectedId = document.getElementById('loadoutPresetSelect').value;
+  renderLoadoutManagerSelect(selectedId);
+  showLoadoutEditorPreset(findLoadoutPreset(selectedId));
+  openModal('loadoutModal');
+}
+
+function handleLoadoutEditorSelection() {
+  const selectedId = document.getElementById('loadoutManagerSelect').value;
+  showLoadoutEditorPreset(findLoadoutPreset(selectedId));
+}
+
+async function saveLoadoutPreset() {
+  try {
+    const id = loadoutEditId || `preset-${globalThis.crypto.randomUUID()}`;
+    const preset = loadoutHelpers.createPresetFromInventoryText({
+      id,
+      name: document.getElementById('loadoutNameInput').value,
+      cargoText: document.getElementById('loadoutCargoText').value,
+      droneText: document.getElementById('loadoutDroneText').value,
+    });
+    const nextPresets = S.loadoutPresets.filter(existing => existing.id !== id);
+    nextPresets.push(preset);
+    S.loadoutPresets = await window.api.loadouts.save(nextPresets);
+    renderLoadoutPresetSelect(id);
+    renderLoadoutManagerSelect(id);
+    showLoadoutEditorPreset(findLoadoutPreset(id));
+    setLoadoutEditorStatus(`Saved ${preset.name}.`, 'success');
+  } catch (error) {
+    setLoadoutEditorStatus(error?.message || 'The loadout preset could not be saved.', 'err');
+  }
+}
+
+async function deleteLoadoutPreset() {
+  const preset = findLoadoutPreset(loadoutEditId);
+  if (!preset || !confirm(`Delete the ${preset.name} loadout preset?`)) return;
+  try {
+    S.loadoutPresets = await window.api.loadouts.save(
+      S.loadoutPresets.filter(existing => existing.id !== preset.id)
+    );
+    renderLoadoutPresetSelect();
+    startNewLoadoutPreset();
+    setLoadoutEditorStatus(`Deleted ${preset.name}.`, 'success');
+  } catch (error) {
+    setLoadoutEditorStatus(error?.message || 'The loadout preset could not be deleted.', 'err');
+  }
+}
+
+function applyLoadoutPreset() {
+  if (S.runState !== 'awaiting' || S.activeRun) {
+    throw new Error('A loadout preset can only be applied before a run starts');
+  }
+  const preset = findLoadoutPreset(document.getElementById('loadoutPresetSelect').value);
+  if (!preset) throw new Error('Choose a loadout preset first');
+
+  const cargoText = loadoutHelpers.formatInventoryItems(preset.cargo);
+  const droneText = loadoutHelpers.formatInventoryItems(preset.drone);
+  document.getElementById('cargoBeforeText').value = cargoText;
+  document.getElementById('droneBeforeText').value = droneText;
+  inventoryBaselineRunId = null;
+  hideInventoryBaselineStatus();
+  updatePasteHint('cargoBeforeText', 'preCargoHint');
+  updatePasteHint('droneBeforeText', 'preDroneHint');
+  if (droneText) setCollapsibleState('preDroneBody', 'preDroneArrow', true);
+  updateFilamentInference();
+
+  const status = document.getElementById('loadoutApplyStatus');
+  status.textContent = `Applied ${preset.name} to the pre-run cargo hold and drone bay.`;
+  status.hidden = false;
 }
 
 function syncActiveRunInputs() {
@@ -1241,13 +1386,40 @@ async function saveCurrentRunSafely() {
 
 let manualEditRunId = null; // null = new entry, number = editing existing
 let manualEditOriginal = null;
+let manualEditPendingAppraisal = null;
+const MANUAL_EDIT_PREVIEW_FIELDS = new Set([
+  'manualTier',
+  'manualWeather',
+  'manualOutcome',
+  'manualDuration',
+  'manualDate',
+  'manualShipClass',
+  'manualCargoBefore',
+  'manualCargoAfter',
+  'manualDroneBefore',
+  'manualDroneAfter',
+]);
+
+function invalidateManualEditAppraisalPreview(element) {
+  if (!manualEditRunId || !manualEditPendingAppraisal
+    || !MANUAL_EDIT_PREVIEW_FIELDS.has(element.id)) return;
+  manualEditPendingAppraisal = null;
+  const status = document.getElementById('manualEntryStatus');
+  if (!status) return;
+  const alert = document.createElement('div');
+  alert.className = 'alert warn';
+  alert.textContent = 'The form changed after re-appraisal. Re-Appraise again to update the totals, or Save to retain the stored appraisal where compatible.';
+  status.replaceChildren(alert);
+}
+
 
 function openManualEntryModal(runToEdit = null) {
   manualEditRunId = null;
   manualEditOriginal = null;
+  manualEditPendingAppraisal = null;
   document.getElementById('manualEntryTitle').textContent = 'Enter Run Manually';
   document.getElementById('manualSubmitLabel').textContent = 'Appraise & Save';
-  document.getElementById('saveWithoutAppraiseBtn').style.display = 'none';
+  document.getElementById('manualSaveBtn').style.display = 'none';
   document.getElementById('manualTier').value = S.settings.default_tier || '';
   document.getElementById('manualWeather').value = S.settings.default_weather || '';
   document.getElementById('manualOutcome').value = 'Survived';
@@ -1269,13 +1441,14 @@ async function openEditRunModal(runId) {
   const run = await window.api.runs.getById(runId);
   if (!run) return;
   manualEditRunId = runId;
+  manualEditPendingAppraisal = null;
   manualEditOriginal = {
     outcome: run.outcome,
     total_loss: run.total_loss || 0,
   };
   document.getElementById('manualEntryTitle').textContent = 'Edit Run';
-  document.getElementById('manualSubmitLabel').textContent = 'Re-Appraise & Save';
-  document.getElementById('saveWithoutAppraiseBtn').style.display = 'inline-flex';
+  document.getElementById('manualSubmitLabel').textContent = 'Re-Appraise';
+  document.getElementById('manualSaveBtn').style.display = 'inline-flex';
   document.getElementById('manualTier').value = run.tier || '';
   document.getElementById('manualWeather').value = run.weather || '';
   document.getElementById('manualOutcome').value = run.outcome || 'Survived';
@@ -1313,6 +1486,7 @@ function closeManualEntryModal() {
   closeModal('manualEntryModal');
   manualEditRunId = null;
   manualEditOriginal = null;
+  manualEditPendingAppraisal = null;
 }
 
 async function initAboutPage() {
@@ -1398,6 +1572,19 @@ function parseDuration(str) {
   if (parts.length === 3) return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
   return parseInt(str) || 0;
 }
+async function refreshSavedRunViews() {
+  const tasks = [renderHistory(), updateRecentRuns(), updateIskPerHour()];
+  if (document.getElementById('page-stats').classList.contains('active')) {
+    tasks.push(renderStats());
+  }
+  const refreshes = await Promise.allSettled(tasks);
+  for (const refresh of refreshes) {
+    if (refresh.status === 'rejected') {
+      console.error('Post-save view refresh failed:', refresh.reason);
+    }
+  }
+}
+
 
 async function submitManualEntry(doAppraise = true) {
   const tier = document.getElementById('manualTier').value;
@@ -1411,6 +1598,21 @@ async function submitManualEntry(doAppraise = true) {
   const droneBefore = document.getElementById('manualDroneBefore')?.value || '';
   const droneAfter = document.getElementById('manualDroneAfter')?.value || '';
   const statusEl = document.getElementById('manualEntryStatus');
+  const formSignature = JSON.stringify({
+    tier,
+    weather,
+    outcome,
+    duration,
+    shipClass,
+    dateVal,
+    cargoBefore,
+    cargoAfter,
+    droneBefore,
+    droneAfter,
+  });
+  const pendingAppraisal = manualEditPendingAppraisal?.signature === formSignature
+    ? manualEditPendingAppraisal : null;
+  if (doAppraise && manualEditRunId) manualEditPendingAppraisal = null;
 
   if (!tier || !weather) {
     statusEl.innerHTML = '<div class="alert err">Please select a tier and weather type.</div>';
@@ -1424,6 +1626,7 @@ async function submitManualEntry(doAppraise = true) {
     !doAppraise
     && manualEditRunId
     && outcome !== manualEditOriginal?.outcome
+    && !pendingAppraisal
   ) {
     statusEl.innerHTML =
       '<div class="alert warn">Changing the outcome requires re-appraisal so the saved totals and item records remain consistent.</div>';
@@ -1441,32 +1644,34 @@ async function submitManualEntry(doAppraise = true) {
     let items = [];
 
     if (!doAppraise && manualEditRunId) {
-      // Preserve the appraisal while committing metadata and corrected pastes atomically.
-      await window.api.runs.update(manualEditRunId, {
-        meta: {
-          tier,
-          weather,
-          outcome,
-          duration,
-          started_at,
-          total_loss: manualEditOriginal?.total_loss || 0,
-          ship_class: shipClass,
-        },
-        cargo: {
-          cargo_before: cargoBefore,
-          cargo_after: savedCargoAfter,
-          drone_before: droneBefore,
-          drone_after: savedDroneAfter,
-        },
-      });
+      const meta = {
+        tier,
+        weather,
+        outcome,
+        duration,
+        started_at,
+        total_loss: pendingAppraisal
+          ? pendingAppraisal.total_loss
+          : (manualEditOriginal?.total_loss || 0),
+        ship_class: shipClass,
+      };
+      const update = pendingAppraisal
+        ? { meta, appraisal: pendingAppraisal.appraisal }
+        : {
+            meta,
+            cargo: {
+              cargo_before: cargoBefore,
+              cargo_after: savedCargoAfter,
+              drone_before: droneBefore,
+              drone_after: savedDroneAfter,
+            },
+          };
+      await window.api.runs.update(manualEditRunId, update);
       closeManualEntryModal();
-      renderHistory();
-      updateRecentRuns();
-      if (document.getElementById('page-stats').classList.contains('active')) renderStats();
+      await refreshSavedRunViews();
       document.getElementById('manualSpinner').style.display = 'none';
       return;
     }
-
     if (outcome === 'Survived') {
       const _cd = diffCargo(cargoBefore, savedCargoAfter);
       const _dd = diffOptionalDroneBay(droneBefore, savedDroneAfter);
@@ -1536,38 +1741,33 @@ async function submitManualEntry(doAppraise = true) {
       implants: []
     };
 
+    const appraisal = {
+      loot_value,
+      consumed_cost,
+      net_isk,
+      cargo_before: cargoBefore,
+      cargo_after: savedCargoAfter,
+      drone_before: droneBefore,
+      drone_after: savedDroneAfter,
+      items,
+    };
+
     if (manualEditRunId) {
-      await window.api.runs.update(manualEditRunId, {
-        meta: {
-          tier,
-          weather,
-          outcome,
-          duration,
-          started_at,
-          total_loss,
-          ship_class: shipClass,
-        },
-        appraisal: {
-          loot_value,
-          consumed_cost,
-          net_isk,
-          cargo_before: cargoBefore,
-          cargo_after: savedCargoAfter,
-          drone_before: droneBefore,
-          drone_after: savedDroneAfter,
-          items,
-        },
-      });
+      manualEditPendingAppraisal = {
+        signature: formSignature,
+        total_loss,
+        appraisal,
+      };
+      const previewMessage = outcome === 'Survived'
+        ? `Re-appraisal preview: ${fmtIsk(loot_value)} loot, ${fmtIsk(consumed_cost)} consumed, ${fmtIsk(net_isk)} net. Click Save to commit it.`
+        : `Re-appraisal preview: ${fmtIsk(total_loss)} total loss. Click Save to commit it.`;
+      statusEl.innerHTML = `<div class="alert success">${esc(previewMessage)}</div>`;
     } else {
       await window.api.runs.save(runData);
+      closeManualEntryModal();
+      await refreshSavedRunViews();
+      statusEl.innerHTML = '';
     }
-
-    closeManualEntryModal();
-    renderHistory();
-    updateRecentRuns();
-    if (document.getElementById('page-stats').classList.contains('active')) renderStats();
-
-    statusEl.innerHTML = '';
   } catch (e) {
     statusEl.innerHTML = `<div class="alert err">Failed: ${esc(e.message)}</div>`;
   }
@@ -1616,6 +1816,7 @@ function resetRunUI() {
   document.getElementById('recoveryStatus').style.display = 'none';
   document.getElementById('killmailStatus').style.display = 'none';
   document.getElementById('retryKillmailBtn').style.display = 'none';
+  document.getElementById('loadoutApplyStatus').hidden = true;
   setRunState('awaiting');
 }
 
@@ -1632,6 +1833,7 @@ function setRunState(state) {
     document.getElementById('loss-results').style.display = 'none';
     document.getElementById('loss-actions').style.display = 'none';
   }
+  updateLoadoutControls();
 }
 
 function updateRunInfo() {
@@ -1783,7 +1985,10 @@ function sortHistory(col) {
   renderHistory();
 }
 
+let pendingHistoricalReappraisal = null;
+
 async function showRunDetail(runId) {
+  pendingHistoricalReappraisal = null;
   const run = await window.api.runs.getById(runId);
   if (!run) return;
 
@@ -1858,6 +2063,8 @@ async function showRunDetail(runId) {
     <div id="reappraise-status-${run.id}" role="status" aria-live="polite" style="margin-bottom:8px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
       <button class="btn gold sm" data-action="reappraise-run" data-run-id="${esc(run.id)}"><span id="reappraise-spinner-${esc(run.id)}" style="display:none" class="spinner"></span> Re-Appraise Loot</button>
+      <button class="btn green sm" id="reappraise-save-${esc(run.id)}" data-action="save-reappraisal" data-run-id="${esc(run.id)}" hidden>Save Changes</button>
+      <button class="btn sm ghost" id="reappraise-discard-${esc(run.id)}" data-action="discard-reappraisal" data-run-id="${esc(run.id)}" hidden>Discard</button>
       <button class="btn sm ghost" data-action="edit-run" data-run-id="${esc(run.id)}">✎ Edit Run</button>
       <button class="btn sm red" data-action="delete-run" data-run-id="${esc(run.id)}">Delete Run</button>
     </div>`;
@@ -1883,36 +2090,87 @@ async function showRunDetail(runId) {
   openModal('runDetailModal');
 }
 
+function setReappraisalStatus(runId, message = '', type = '') {
+  const status = document.getElementById(`reappraise-status-${runId}`);
+  if (!status) return null;
+  status.replaceChildren();
+  if (message) {
+    const alert = document.createElement('div');
+    alert.className = `alert ${type}`;
+    alert.textContent = message;
+    status.append(alert);
+  }
+  return status;
+}
+
+
+function setReappraisalActionsVisible(runId, visible) {
+  const saveButton = document.getElementById(`reappraise-save-${runId}`);
+  const discardButton = document.getElementById(`reappraise-discard-${runId}`);
+  if (saveButton) saveButton.hidden = !visible;
+  if (discardButton) discardButton.hidden = !visible;
+}
+
+const HISTORICAL_REAPPRAISAL_FIELDS = new Set([
+  'detailCargoBefore',
+  'detailCargoAfter',
+  'detailDroneBefore',
+  'detailDroneAfter',
+]);
+
+function invalidateHistoricalReappraisalPreview(element) {
+  const pending = pendingHistoricalReappraisal;
+  if (!pending || !HISTORICAL_REAPPRAISAL_FIELDS.has(element.id)) return;
+  pendingHistoricalReappraisal = null;
+  setReappraisalActionsVisible(pending.runId, false);
+  setReappraisalStatus(
+    pending.runId,
+    'Inventory changed after the preview. Re-appraise again before saving.',
+    'warn'
+  );
+}
+
 async function reappraiseRun(runId) {
+  const statusId = `reappraise-status-${runId}`;
+  const spinnerId = `reappraise-spinner-${runId}`;
+  const statusEl = document.getElementById(statusId);
+  const spinner = document.getElementById(spinnerId);
+  const actionButton = spinner?.closest('button');
+  const cargoBeforeEl = document.getElementById('detailCargoBefore');
+  const cargoAfterEl = document.getElementById('detailCargoAfter');
+  if (!statusEl || !spinner || !cargoBeforeEl || !cargoAfterEl) return;
+
   if (!S.hasJaniceKey) {
-    document.getElementById(`reappraise-status-${runId}`).innerHTML = '<div class="alert err">Janice API key not set. Go to Settings.</div>';
+    setReappraisalStatus(runId, 'Janice API key not set. Go to Settings.', 'err');
     return;
   }
 
-  const cargoBefore = document.getElementById('detailCargoBefore').value;
-  const cargoAfter = document.getElementById('detailCargoAfter').value;
+  const cargoBefore = cargoBeforeEl.value;
+  const cargoAfter = cargoAfterEl.value;
   const droneBefore = document.getElementById('detailDroneBefore')?.value || '';
   const droneAfter = document.getElementById('detailDroneAfter')?.value || '';
 
   if (!cargoAfter.trim()) {
-    document.getElementById(`reappraise-status-${runId}`).innerHTML = '<div class="alert warn">Post-run cargo is empty — paste it first.</div>';
+    setReappraisalStatus(runId, 'Post-run cargo is empty - paste it first.', 'warn');
     return;
   }
 
-  const spinner = document.getElementById(`reappraise-spinner-${runId}`);
-  const statusEl = document.getElementById(`reappraise-status-${runId}`);
+  pendingHistoricalReappraisal = null;
+  setReappraisalActionsVisible(runId, false);
   spinner.style.display = 'inline-block';
-  statusEl.innerHTML = '';
-
-  const cargoDiff = diffCargo(cargoBefore, cargoAfter);
-  const droneDiff = diffOptionalDroneBay(droneBefore, droneAfter);
-  const diff = {
-    gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
-    consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed),
-  };
+  if (actionButton) actionButton.disabled = true;
+  statusEl.replaceChildren();
 
   try {
-    let lootResult = null, consumedResult = null;
+    const cargoDiff = diffCargo(cargoBefore, cargoAfter);
+    const droneDiff = diffOptionalDroneBay(droneBefore, droneAfter);
+    const diff = {
+      gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
+      consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed),
+    };
+
+    let lootResult = null;
+    let consumedResult = null;
     if (diff.gained.length > 0) {
       lootResult = await window.api.janice.appraise(diff.gained, 'buy');
     }
@@ -1924,23 +2182,33 @@ async function reappraiseRun(runId) {
     const consumedCost = consumedResult ? consumedResult.totalSellPrice : 0;
     const netIsk = lootValue - consumedCost;
 
-    // Build updated items list
     const items = [];
     if (lootResult) {
       for (const item of lootResult.items) {
-        const p = item.effectivePrices;
-        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'gained', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+        const prices = item.effectivePrices;
+        items.push({
+          item_name: item.itemType.name,
+          qty: item.amount,
+          type: 'gained',
+          unit_price_buy: prices.buyPrice,
+          unit_price_sell: prices.sellPrice,
+        });
       }
     }
     if (consumedResult) {
       for (const item of consumedResult.items) {
-        const p = item.effectivePrices;
-        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'consumed', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
+        const prices = item.effectivePrices;
+        items.push({
+          item_name: item.itemType.name,
+          qty: item.amount,
+          type: 'consumed',
+          unit_price_buy: prices.buyPrice,
+          unit_price_sell: prices.sellPrice,
+        });
       }
     }
 
-    // Save updated run
-    await window.api.runs.updateAppraisal(runId, {
+    const appraisal = {
       loot_value: lootValue,
       consumed_cost: consumedCost,
       net_isk: netIsk,
@@ -1948,20 +2216,85 @@ async function reappraiseRun(runId) {
       cargo_after: cargoAfter,
       drone_before: droneBefore,
       drone_after: droneAfter,
-      items
-    });
-
-    renderHistory();
-    updateRecentRuns();
-    updateIskPerHour();
-    // Re-render the modal in place so updated items are immediately visible
-    await showRunDetail(runId);
-    // Re-show success status after modal re-renders
-    document.getElementById(`reappraise-status-${runId}`).innerHTML = `<div class="alert success">Re-appraised — Net ISK updated to ${fmtIsk(netIsk)}</div>`;
-  } catch (e) {
-    statusEl.innerHTML = `<div class="alert err">Re-appraisal failed: ${esc(e.message)}</div>`;
+      items,
+    };
+    pendingHistoricalReappraisal = { runId, appraisal };
+    setReappraisalActionsVisible(runId, true);
+    setReappraisalStatus(
+      runId,
+      `Preview: ${fmtIsk(lootValue)} loot, ${fmtIsk(consumedCost)} consumed, ${fmtIsk(netIsk)} net. Save or discard these changes.`,
+      'success'
+    );
+  } catch (error) {
+    setReappraisalStatus(
+      runId,
+      `Re-appraisal failed: ${error?.message || 'Unknown error'}`,
+      'err'
+    );
+  } finally {
+    const currentSpinner = document.getElementById(spinnerId);
+    if (currentSpinner) currentSpinner.style.display = 'none';
+    const currentButton = currentSpinner?.closest('button');
+    if (currentButton) currentButton.disabled = false;
   }
-  spinner.style.display = 'none';
+}
+
+
+async function saveHistoricalReappraisal(runId) {
+  const pending = pendingHistoricalReappraisal;
+  if (!pending || pending.runId !== runId) {
+    setReappraisalStatus(runId, 'Re-appraise the run before saving changes.', 'warn');
+    return;
+  }
+
+  const saveButton = document.getElementById(`reappraise-save-${runId}`);
+  const discardButton = document.getElementById(`reappraise-discard-${runId}`);
+  if (saveButton) saveButton.disabled = true;
+  if (discardButton) discardButton.disabled = true;
+  setReappraisalStatus(runId, 'Saving re-appraisal changes...', '');
+
+  try {
+    await window.api.runs.updateAppraisal(runId, pending.appraisal);
+    pendingHistoricalReappraisal = null;
+    await refreshSavedRunViews();
+
+    const detailIsOpen = document.getElementById('runDetailModal')?.classList.contains('open')
+      && document.getElementById(`reappraise-status-${runId}`);
+    if (detailIsOpen) {
+      await showRunDetail(runId);
+      setReappraisalStatus(
+        runId,
+        `Re-appraisal saved - Net ISK updated to ${fmtIsk(pending.appraisal.net_isk)}`,
+        'success'
+      );
+    }
+  } catch (error) {
+    setReappraisalStatus(
+      runId,
+      `Could not save re-appraisal: ${error?.message || 'Unknown error'}`,
+      'err'
+    );
+  } finally {
+    const currentSaveButton = document.getElementById(`reappraise-save-${runId}`);
+    const currentDiscardButton = document.getElementById(`reappraise-discard-${runId}`);
+    if (currentSaveButton) currentSaveButton.disabled = false;
+    if (currentDiscardButton) currentDiscardButton.disabled = false;
+  }
+}
+
+async function discardHistoricalReappraisal(runId) {
+  if (!pendingHistoricalReappraisal || pendingHistoricalReappraisal.runId !== runId) {
+    setReappraisalStatus(runId, 'There are no re-appraisal changes to discard.', 'warn');
+    return;
+  }
+
+  pendingHistoricalReappraisal = null;
+  const detailIsOpen = document.getElementById('runDetailModal')?.classList.contains('open')
+    && document.getElementById(`reappraise-status-${runId}`);
+  if (detailIsOpen) {
+    await showRunDetail(runId);
+    setReappraisalStatus(runId, 'Re-appraisal changes discarded.', 'success');
+  }
 }
 
 function itemTableHtml(title, items, priceClass, priceField) {
@@ -2721,6 +3054,7 @@ function closeModal(id) {
   overlay.classList.remove('open');
   overlay.setAttribute('aria-hidden', 'true');
   const anotherModalIsOpen = document.querySelector('.modal-overlay.open');
+  if (id === 'runDetailModal') pendingHistoricalReappraisal = null;
   document.querySelector('.app').inert = Boolean(anotherModalIsOpen);
   const returnFocus = modalReturnFocus.get(id);
   modalReturnFocus.delete(id);
@@ -2837,6 +3171,11 @@ const clickActions = {
   'open-diagnostics-folder': () => openDiagnosticsFolder(),
   'copy-diagnostics': () => copyDiagnostics(),
   'clear-inventory-baseline': () => clearInventoryBaseline(),
+  'manage-loadouts': () => openLoadoutManager(),
+  'apply-loadout': () => applyLoadoutPreset(),
+  'new-loadout': () => startNewLoadoutPreset(),
+  'save-loadout': () => saveLoadoutPreset(),
+  'delete-loadout': () => deleteLoadoutPreset(),
   'close-modal': element => closeModal(element.dataset.modal),
   'start-sso': () => startSSO(),
   'close-manual-entry': () => closeManualEntryModal(),
@@ -2850,6 +3189,8 @@ const clickActions = {
   'edit-run': element => openEditRunModal(Number(element.dataset.runId)),
   'delete-run': element => deleteRun(Number(element.dataset.runId)),
   'reauth-character': element => reauthCharacter(Number(element.dataset.characterId)),
+  'save-reappraisal': element => saveHistoricalReappraisal(Number(element.dataset.runId)),
+  'discard-reappraisal': element => discardHistoricalReappraisal(Number(element.dataset.runId)),
   'remove-character': element => removeCharacter(Number(element.dataset.characterId)),
 };
 
@@ -2879,6 +3220,11 @@ const actionFailureContexts = Object.freeze({
   'open-diagnostics-folder': 'Could not open the diagnostics folder',
   'copy-diagnostics': 'Could not copy diagnostics',
   'clear-inventory-baseline': 'Could not clear the inventory baseline',
+  'manage-loadouts': 'Could not open loadout presets',
+  'apply-loadout': 'Could not apply the loadout preset',
+  'new-loadout': 'Could not start a new loadout preset',
+  'save-loadout': 'Could not save the loadout preset',
+  'delete-loadout': 'Could not delete the loadout preset',
   'start-sso': 'Could not start EVE sign-in',
   'submit-manual-entry': 'Could not save the manual run',
   'sort-history': 'Could not sort run history',
@@ -2889,6 +3235,8 @@ const actionFailureContexts = Object.freeze({
   'edit-run': 'Could not edit the run',
   'delete-run': 'Could not delete the run',
   'reauth-character': 'Could not change character permissions',
+  'save-reappraisal': 'Could not save the re-appraisal',
+  'discard-reappraisal': 'Could not discard the re-appraisal',
   'remove-character': 'Could not remove the character',
 });
 
@@ -2905,6 +3253,8 @@ document.addEventListener('click', event => {
 
 document.addEventListener('change', event => {
   const element = event.target;
+  invalidateManualEditAppraisalPreview(element);
+  invalidateHistoricalReappraisalPreview(element);
   if ([
     'permissionTracking',
     'permissionFitting',
@@ -2920,6 +3270,11 @@ document.addEventListener('change', event => {
     );
   } else if (element.dataset.changeAction === 'render-history') {
     void runUiTask('Could not refresh run history', () => renderHistory());
+  } else if (element.dataset.changeAction === 'loadout-selection') {
+    updateLoadoutControls();
+    document.getElementById('loadoutApplyStatus').hidden = true;
+  } else if (element.dataset.changeAction === 'loadout-editor-selection') {
+    handleLoadoutEditorSelection();
   } else if (element.dataset.changeAction === 'stats-range') {
     void runUiTask('Could not change the Statistics date range', () => handleStatsRangeChange());
   } else if (element.dataset.changeAction === 'render-stats') {
@@ -2931,6 +3286,8 @@ document.addEventListener('change', event => {
 
 document.addEventListener('input', event => {
   const element = event.target;
+  invalidateManualEditAppraisalPreview(element);
+  invalidateHistoricalReappraisalPreview(element);
   if (element.dataset.inputAction === 'paste-hint') {
     updatePasteHint(element.id, element.dataset.hint);
   }
@@ -2941,6 +3298,9 @@ document.addEventListener('input', event => {
     'droneAfterText',
   ].includes(element.id)) {
     scheduleActiveRunCheckpoint();
+  }
+  if (['cargoBeforeText', 'droneBeforeText'].includes(element.id)) {
+    document.getElementById('loadoutApplyStatus').hidden = true;
   }
   if (element.id === 'cargoBeforeText') {
     hideInventoryBaselineStatus();

@@ -457,8 +457,11 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /restoreInventoryBaseline/);
   assert.match(appJs, /window\.api\.runs\.getInventoryBaseline/);
   assert.match(appJs, /window\.api\.runs\.clearInventoryBaseline/);
+  assert.match(appJs, /window\.api\.loadouts\.save/);
+  assert.match(appJs, /createPresetFromInventoryText/);
+  assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
-  assert.match(appJs, /total_loss:\s*manualEditOriginal\?\.total_loss/);
+  assert.match(appJs, /manualEditOriginal\?\.total_loss\s*\|\|\s*0/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
   assert.match(appJs, /const droneDiff = diffOptionalDroneBay/);
   assert.match(appJs, /const _dd = diffOptionalDroneBay/);
@@ -536,6 +539,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /security\.validateAppraisalUpdate/);
   assert.match(main, /security\.validateRunEdit/);
   assert.match(main, /security\.validateEsiCapabilitySelection/);
+  assert.match(main, /loadouts\.serializePresets\(data\.presets\)/);
   assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
   assert.match(main, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
