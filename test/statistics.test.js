@@ -79,3 +79,20 @@ test('chart series uses seven-day buckets for ranges longer than 90 days', () =>
   assert.equal(series.rows.reduce((sum, row) => sum + row.total_runs, 0), 3);
   assert.equal(series.rows.reduce((sum, row) => sum + row.net_isk, 0), 30);
 });
+
+test('chart series bounds very wide ranges while preserving totals', () => {
+  const series = statistics.createChartSeries([
+    { day: '1900-01-01', total_runs: 1, survived: 1, net_isk: 10, total_loss: 0 },
+    { day: '9999-12-30', total_runs: 2, survived: 1, net_isk: -20, total_loss: 30 },
+  ], {
+    start: new Date(1900, 0, 1),
+    end: new Date(9999, 11, 31),
+  });
+
+  assert.equal(series.bucket, 'period');
+  assert.ok(series.bucketDays > 7);
+  assert.ok(series.rows.length <= 260);
+  assert.equal(series.rows.reduce((sum, row) => sum + row.total_runs, 0), 3);
+  assert.equal(series.rows.reduce((sum, row) => sum + row.net_isk, 0), -10);
+  assert.equal(series.rows.reduce((sum, row) => sum + row.total_loss, 0), 30);
+});

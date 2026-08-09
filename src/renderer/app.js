@@ -133,8 +133,9 @@ function showPage(name) {
     if (isActive) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  if (name === 'history') renderHistory();
-  if (name === 'stats') renderStats();
+  if (name === 'history') return renderHistory();
+  if (name === 'stats') return renderStats();
+  return undefined;
 }
 
 // ── Character Management ──────────────────────────────────────────────────
@@ -1394,7 +1395,7 @@ async function saveCurrentRun() {
   } else {
     hideInventoryBaselineStatus();
   }
-  updateRecentRuns();
+  await runUiTask('Run saved, but recent runs could not be refreshed', () => updateRecentRuns());
 }
 
 async function saveCurrentRunSafely() {
@@ -1447,7 +1448,7 @@ function invalidateManualEditAppraisalPreview(element) {
 }
 
 
-function openManualEntryModal(runToEdit = null) {
+function openManualEntryModal() {
   manualEditRunId = null;
   manualEditOriginal = null;
   manualEditPendingAppraisal = null;
@@ -1615,16 +1616,14 @@ function parseDuration(str) {
   return parseInt(str) || 0;
 }
 async function refreshSavedRunViews() {
-  const tasks = [renderHistory(), updateRecentRuns()];
+  const tasks = [
+    runUiTask('Could not refresh run history', () => renderHistory()),
+    runUiTask('Could not refresh recent runs', () => updateRecentRuns()),
+  ];
   if (document.getElementById('page-stats').classList.contains('active')) {
-    tasks.push(renderStats());
+    tasks.push(runUiTask('Could not refresh Statistics', () => renderStats()));
   }
-  const refreshes = await Promise.allSettled(tasks);
-  for (const refresh of refreshes) {
-    if (refresh.status === 'rejected') {
-      console.error('Post-save view refresh failed:', refresh.reason);
-    }
-  }
+  await Promise.all(tasks);
 }
 
 
@@ -1965,16 +1964,21 @@ function diffOptionalDroneBay(beforeRaw, afterRaw) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────
+let historyRenderGeneration = 0;
+
 async function renderHistory() {
+  const generation = ++historyRenderGeneration;
+  const characterId = S.activeCharId;
   const el = document.getElementById('historyContent');
   const filters = {
-    character_id: S.activeCharId || undefined,
+    character_id: characterId || undefined,
     tier: document.getElementById('filterTier').value || undefined,
     weather: document.getElementById('filterWeather').value || undefined,
     outcome: document.getElementById('filterOutcome').value || undefined,
   };
 
   const runs = await window.api.runs.getAll(filters);
+  if (generation !== historyRenderGeneration || S.activeCharId !== characterId) return;
   if (!runs.length) {
     el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
     return;
@@ -1985,6 +1989,7 @@ async function renderHistory() {
     let av = a[S.sortCol], bv = b[S.sortCol];
     if (typeof av === 'string') av = av.toLowerCase();
     if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av === bv) return 0;
     return S.sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 
@@ -2032,7 +2037,7 @@ async function renderHistory() {
 function sortHistory(col) {
   if (S.sortCol === col) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
   else { S.sortCol = col; S.sortDir = 'desc'; }
-  renderHistory();
+  return renderHistory();
 }
 
 let pendingHistoricalReappraisal = null;
@@ -2460,8 +2465,7 @@ async function deleteRun(runId) {
   if (!confirm('Delete this run? This cannot be undone.')) return;
   await window.api.runs.delete(runId);
   closeModal('runDetailModal');
-  renderHistory();
-  updateRecentRuns();
+  await refreshSavedRunViews();
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────
@@ -2490,9 +2494,9 @@ function getSelectedStatsRange() {
   });
 }
 
-function createStatsFilters(range) {
+function createStatsFilters(range, characterId) {
   const filters = {};
-  if (S.activeCharId) filters.character_id = S.activeCharId;
+  if (characterId) filters.character_id = characterId;
   if (range.range_start !== undefined) filters.range_start = range.range_start;
   if (range.range_end !== undefined) filters.range_end = range.range_end;
   return filters;
@@ -2500,6 +2504,7 @@ function createStatsFilters(range) {
 
 async function renderStats() {
   const generation = ++statsRenderGeneration;
+  const characterId = S.activeCharId;
   const el = document.getElementById('statsContent');
   const filterError = document.getElementById('statsFilterError');
   let range;
@@ -2513,12 +2518,12 @@ async function renderStats() {
   }
   filterError.hidden = true;
   document.getElementById('statsRangeSummary').textContent = range.label;
-  const filters = createStatsFilters(range);
+  const filters = createStatsFilters(range, characterId);
   const [stats, daily] = await Promise.all([
     window.api.runs.getStats(filters),
     window.api.runs.getDailyStats(filters)
   ]);
-  if (generation !== statsRenderGeneration) return;
+  if (generation !== statsRenderGeneration || S.activeCharId !== characterId) return;
   const o = stats.overall;
 
   if (!o || o.total_runs === 0) {
@@ -2534,9 +2539,12 @@ async function renderStats() {
     firstRun: o.first_run,
     lastRun: o.last_run,
   });
-  const chartTitle = chart.bucket === 'week' ? 'Weekly Activity' : 'Daily Activity';
-  const chartNote = chart.bucket === 'week'
-    ? 'Seven-day totals; inactive days are included' : 'Daily totals; inactive days are shown as zero';
+  const chartTitle = chart.bucket === 'day'
+    ? 'Daily Activity'
+    : chart.bucket === 'week' ? 'Weekly Activity' : `${chart.bucketDays}-Day Activity`;
+  const chartNote = chart.bucket === 'day'
+    ? 'Daily totals; inactive days are shown as zero'
+    : `${chart.bucketDays}-day totals; inactive days are included`;
 
   let html = `<div class="stat-grid">
     <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
@@ -2596,10 +2604,10 @@ async function renderStats() {
   el.innerHTML = html;
 
   // Render chart after DOM is set
-  renderDailyChart(chart.rows, chart.bucket);
+  renderDailyChart(chart.rows, chart.bucket, chart.bucketDays);
 }
 
-function renderDailyChart(daily, bucket = 'day') {
+function renderDailyChart(daily, bucket = 'day', bucketDays = 1) {
   const container = document.getElementById('dailyChart');
   if (!container) return;
   if (!daily || daily.length === 0) {
@@ -2694,8 +2702,9 @@ function renderDailyChart(daily, bucket = 'day') {
     svg += `<path d="${lossPath}" fill="none" stroke="#ef5350" stroke-width="1.5"/>`;
   }
 
-  // X axis labels — show every N days to avoid crowding
-  const labelEvery = daily.length <= 14 ? 1 : daily.length <= 30 ? 3 : 7;
+  // Fit date labels to the available width regardless of the selected range.
+  const maxLabels = Math.max(2, Math.floor(cw / 48));
+  const labelEvery = Math.max(1, Math.ceil(daily.length / maxLabels));
   daily.forEach((d, i) => {
     if (i % labelEvery !== 0 && i !== daily.length - 1) return;
     const x = Math.round((i + 0.5) * cw / n);
@@ -2708,7 +2717,9 @@ function renderDailyChart(daily, bucket = 'day') {
     const x = Math.round(i * cw / n);
     const w = Math.round(cw / n);
     const iskStr = d.net_isk >= 0 ? '+' + fmtIsk(d.net_isk) : '-' + fmtIsk(Math.abs(d.net_isk));
-    const period = bucket === 'week' ? `Week of ${d.day}` : d.day;
+    const period = bucket === 'day'
+      ? d.day
+      : bucket === 'week' ? `Week of ${d.day}` : `${bucketDays}-day period from ${d.day}`;
     const title = `${period}  |  ${d.total_runs} runs  |  Net: ${iskStr}`;
     svg += `<rect x="${x}" y="0" width="${w}" height="${ch}" fill="transparent"><title>${title}</title></rect>`;
   });
@@ -2936,12 +2947,11 @@ async function importCSV() {
   }
   el.innerHTML = msg;
   el.style.display = 'block';
-  renderHistory();
-  updateRecentRuns();
-  if (document.getElementById('page-stats').classList.contains('active')) renderStats();
+  await refreshSavedRunViews();
 }
 
 async function saveSettings() {
+  const previousPollInterval = S.settings.esi_poll_interval;
   const apiKey = document.getElementById('janiceKeyInput').value.trim();
   const updates = {
     esi_poll_interval: document.getElementById('pollIntervalInput').value,
@@ -2956,6 +2966,13 @@ async function saveSettings() {
     await window.api.settings.set(key, value);
   }
   S.settings = { ...S.settings, ...updates };
+  if (
+    String(previousPollInterval || '') !== String(updates.esi_poll_interval || '')
+    && S.activeCharId
+    && S.capabilities.tracking
+  ) {
+    startESIPoll();
+  }
   loadSettingsPage();
   const msg = document.getElementById('settingsSaved');
   msg.style.display = 'block';
@@ -3016,18 +3033,18 @@ async function reauthCharacter(charId) {
 
 async function removeCharacter(charId) {
   if (!confirm('Remove this character? Their run history will be deleted.')) return;
-  if (String(S.activeCharId) === String(charId)) {
+  const removingActiveCharacter = String(S.activeCharId) === String(charId);
+  await window.api.auth.deleteCharacter(charId);
+  if (removingActiveCharacter) {
     stopESIPoll();
     S.activeRun = null;
-    await clearPersistedActiveRun(charId);
     resetRunUI();
   }
-  await window.api.auth.deleteCharacter(charId);
   S.characters = await window.api.auth.getCharacters();
   await refreshCharacterCapabilities();
   await populateCharSelect();
   renderCharList();
-  if (String(S.activeCharId) === String(charId)) {
+  if (removingActiveCharacter) {
     S.activeCharId = null;
     if (S.characters.length) await switchCharacter(S.characters[0].id);
     else showNoCharPrompt();
@@ -3035,10 +3052,18 @@ async function removeCharacter(charId) {
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────
+let recentRunsRenderGeneration = 0;
+
 async function updateRecentRuns() {
-  if (!S.activeCharId) return;
-  const runs = await window.api.runs.getAll({ character_id: S.activeCharId, limit: 5 });
+  const generation = ++recentRunsRenderGeneration;
+  const characterId = S.activeCharId;
   const el = document.getElementById('recentRunsList');
+  if (!characterId) {
+    el.textContent = 'No runs yet';
+    return;
+  }
+  const runs = await window.api.runs.getAll({ character_id: characterId, limit: 5 });
+  if (generation !== recentRunsRenderGeneration || S.activeCharId !== characterId) return;
   if (!runs.length) { el.textContent = 'No runs yet'; return; }
   el.innerHTML = runs.map(r => {
     const col = r.outcome === 'Survived' ? 'var(--green)' : 'var(--red)';
@@ -3072,7 +3097,7 @@ function esc(str) {
 }
 
 function openExternal(url) {
-  window.api.shell.openExternal(url);
+  return window.api.shell.openExternal(url);
 }
 
 const modalReturnFocus = new Map();
@@ -3205,7 +3230,7 @@ const clickActions = {
   'dismiss-global-error': () => dismissGlobalError(),
   'show-page': element => showPage(element.dataset.page),
   'toggle-collapsible': element =>
-    toggleCollapsible(element.dataset.body, element.dataset.arrow, element.dataset.hint),
+    toggleCollapsible(element.dataset.body, element.dataset.arrow),
   'manual-start': () => manualStart(),
   'open-manual-entry': () => openManualEntryModal(),
   'manual-end-survived': () => manualEndSurvived(),

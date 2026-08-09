@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 
 const projectRoot = path.join(__dirname, '..');
@@ -69,6 +70,20 @@ function createAppraisalResult(items) {
   };
 }
 
+function createHistoryRun(id, shipClass) {
+  return {
+    id,
+    started_at: Math.floor(Date.UTC(2026, 7, id) / 1000),
+    tier: 'T1',
+    weather: 'Electrical',
+    ship_class: shipClass,
+    duration: 600,
+    outcome: 'Survived',
+    net_isk: 1_000,
+    total_loss: 0,
+  };
+}
+
 async function createRendererHarness() {
   const html = fs.readFileSync(
     path.join(projectRoot, 'src', 'renderer', 'index.html'),
@@ -88,12 +103,19 @@ async function createRendererHarness() {
   const lastRun = Math.floor(Date.UTC(2026, 7, 2) / 1000);
   const state = {
     activeRunRequests: [],
+    clearActiveCalls: [],
+    deleteCharacterCalls: [],
+    deleteCharacterGate: null,
+    esiPollCalls: 0,
     janiceCalls: [],
     janiceGate: null,
     manualSaveGate: null,
     manualSaves: [],
+    runDetails: new Map(),
+    runQueryHandler: null,
     runQueries: [],
     settingsWrites: [],
+    trackingCharacters: new Set(),
     stats: {
       overall: {
         total_runs: 2,
@@ -126,8 +148,15 @@ async function createRendererHarness() {
     }),
     auth: apiGroup({
       getCharacters: async () => characters,
-      getCapabilities: async () => ({}),
-      hasTokens: async () => false,
+      getCapabilities: async characterId => state.trackingCharacters.has(characterId)
+        ? { tracking: true }
+        : {},
+      hasTokens: async characterId => state.trackingCharacters.has(characterId),
+      deleteCharacter: async characterId => {
+        state.deleteCharacterCalls.push(characterId);
+        if (state.deleteCharacterGate) return state.deleteCharacterGate.promise;
+        return true;
+      },
       onComplete: () => {},
       onError: () => {},
     }),
@@ -150,7 +179,9 @@ async function createRendererHarness() {
     }),
     runs: apiGroup({
       getAll: async (filters = {}) => {
-        state.runQueries.push({ ...filters });
+        const query = { ...filters };
+        state.runQueries.push(query);
+        if (state.runQueryHandler) return state.runQueryHandler(query);
         return [];
       },
       getActive: async characterId => {
@@ -159,7 +190,11 @@ async function createRendererHarness() {
       },
       getInventoryBaseline: async () => null,
       saveActive: async () => true,
-      clearActive: async () => true,
+      clearActive: async characterId => {
+        state.clearActiveCalls.push(characterId);
+        return true;
+      },
+      getById: async runId => state.runDetails.get(runId) || null,
       save: async data => {
         state.manualSaves.push(data);
         if (state.manualSaveGate) return state.manualSaveGate.promise;
@@ -167,6 +202,7 @@ async function createRendererHarness() {
       },
       getStats: async () => state.stats,
       getDailyStats: async () => state.daily,
+      importCSV: async () => ({ success: true, imported: 1, skipped: 0, errors: [] }),
     }),
     janice: apiGroup({
       appraise: async (items, pricing) => {
@@ -175,7 +211,14 @@ async function createRendererHarness() {
         return createAppraisalResult(items);
       },
     }),
-    esi: apiGroup({}),
+    esi: apiGroup({
+      getLocation: async () => {
+        state.esiPollCalls++;
+        return { solar_system_id: 30_000_142 };
+      },
+      getShip: async () => ({ ship_type_id: 17_918, ship_name: 'Gila' }),
+      getSystemName: async () => 'Jita',
+    }),
     shell: apiGroup({}),
   };
 
@@ -183,10 +226,13 @@ async function createRendererHarness() {
     configurable: true,
     get: () => 600,
   });
+  window.confirm = () => true;
 
   for (const relativePath of rendererScripts) {
     const source = fs.readFileSync(path.join(projectRoot, relativePath), 'utf8');
-    window.eval(source + '\n//# sourceURL=' + relativePath);
+    new vm.Script(source, {
+      filename: path.join(projectRoot, relativePath),
+    }).runInContext(dom.getInternalVMContext());
   }
 
   await waitFor(
@@ -243,6 +289,79 @@ test('renderer async workflows execute against the real DOM', async t => {
         state.settingsWrites.at(-1),
         ['active_character', characters[1].id]
       );
+    });
+
+    await t.test('late history responses cannot replace the selected character history', async () => {
+      const staleHistory = createDeferred();
+      state.runQueryHandler = query => {
+        if (query.limit !== undefined) return [];
+        if (query.character_id === characters[1].id) return staleHistory.promise;
+        if (query.character_id === characters[0].id) {
+          return [createHistoryRun(1, 'Current First Pilot Ship')];
+        }
+        return [];
+      };
+      state.runQueries.length = 0;
+
+      document.querySelector('[data-page="history"]').click();
+      await waitFor(
+        () => state.runQueries.some(query =>
+          query.character_id === characters[1].id && query.limit === undefined),
+        'pending history for the previous character'
+      );
+
+      changeValue(window, document.getElementById('charSelect'), characters[0].id);
+      await waitFor(
+        () => document.getElementById('historyContent').textContent.includes('Current First Pilot Ship'),
+        'history for the newly selected character'
+      );
+
+      staleHistory.resolve([createHistoryRun(2, 'Stale Second Pilot Ship')]);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.match(document.getElementById('historyContent').textContent, /Current First Pilot Ship/);
+      assert.doesNotMatch(document.getElementById('historyContent').textContent, /Stale Second Pilot Ship/);
+      state.runQueryHandler = null;
+    });
+
+    await t.test('late recent-run responses cannot replace the selected character summary', async () => {
+      const staleRecentRuns = createDeferred();
+      state.runQueryHandler = query => {
+        if (query.limit === 5 && query.character_id === characters[0].id) {
+          return staleRecentRuns.promise;
+        }
+        if (query.limit === 5 && query.character_id === characters[1].id) {
+          return [{
+            ...createHistoryRun(2, 'Current Second Pilot Ship'),
+            tier: 'T2',
+            weather: 'Dark',
+          }];
+        }
+        return [];
+      };
+      state.runQueries.length = 0;
+
+      document.querySelector('[data-action="import-csv"]').click();
+      await waitFor(
+        () => state.runQueries.some(query =>
+          query.character_id === characters[0].id && query.limit === 5),
+        'pending recent runs for the previous character'
+      );
+
+      changeValue(window, document.getElementById('charSelect'), characters[1].id);
+      await waitFor(
+        () => document.getElementById('recentRunsList').textContent.includes('T2 Dark'),
+        'recent runs for the newly selected character'
+      );
+
+      staleRecentRuns.resolve([{
+        ...createHistoryRun(1, 'Stale First Pilot Ship'),
+        tier: 'T4',
+        weather: 'Firestorm',
+      }]);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.match(document.getElementById('recentRunsList').textContent, /T2 Dark/);
+      assert.doesNotMatch(document.getElementById('recentRunsList').textContent, /T4 Firestorm/);
+      state.runQueryHandler = null;
     });
 
     await t.test('manual submission is single-flight and unlocks after saving', async () => {
@@ -349,6 +468,111 @@ test('renderer async workflows execute against the real DOM', async t => {
       assert.ok(barIndex >= 0, 'run-count bar should be rendered');
       assert.ok(iskLineIndex > barIndex, 'ISK line should be painted over the bars');
       assert.match(document.getElementById('statsContent').textContent, /Net \/ Hour/);
+    });
+
+    await t.test('historical run details initialize structured inventory editors', async () => {
+      const detailRun = {
+        ...createHistoryRun(7, 'Gila'),
+        cargo_before: 'Caldari Navy Scourge Heavy Missile\t100',
+        cargo_after: 'Caldari Navy Scourge Heavy Missile\t90\nTriglavian Survey Database\t2',
+        drone_before: 'Vespa II\t5',
+        drone_after: '',
+        fitting: [],
+        implants: [],
+        items: [],
+      };
+      state.runDetails.set(detailRun.id, detailRun);
+      state.runQueryHandler = query => query.limit === undefined ? [detailRun] : [];
+
+      document.querySelector('[data-page="history"]').click();
+      await waitFor(
+        () => document.querySelector(
+          `[data-action="show-run-detail"][data-run-id="${detailRun.id}"]`
+        ),
+        'history detail action'
+      );
+      document.querySelector(
+        `[data-action="show-run-detail"][data-run-id="${detailRun.id}"]`
+      ).click();
+      await waitFor(
+        () => document.getElementById('runDetailModal').classList.contains('open'),
+        'historical run detail modal'
+      );
+
+      assert.equal(document.querySelectorAll('#runDetailContent .inventory-editor').length, 4);
+      assert.match(document.getElementById('runDetailContent').textContent, /Unchanged/);
+      assert.equal(document.getElementById('detailDroneAfter').value, 'Vespa II\t5');
+      document.querySelector('[data-action="close-modal"][data-modal="runDetailModal"]').click();
+      state.runQueryHandler = null;
+    });
+
+    await t.test('failed character deletion preserves the active run checkpoint', async () => {
+      document.querySelector('[data-page="tracker"]').click();
+      document.getElementById('tierSelect').value = 'T3';
+      document.getElementById('weatherSelect').value = 'Gamma';
+      document.querySelector('[data-action="manual-start"]').click();
+      await waitFor(
+        () => document.getElementById('state-in-abyss').style.display === 'block',
+        'active run before character deletion'
+      );
+
+      const clearCallsBeforeDelete = state.clearActiveCalls.length;
+      state.deleteCharacterGate = createDeferred();
+      document.querySelector(
+        `[data-action="remove-character"][data-character-id="${characters[1].id}"]`
+      ).click();
+      await waitFor(
+        () => state.deleteCharacterCalls.at(-1) === characters[1].id,
+        'character deletion request'
+      );
+
+      assert.equal(document.getElementById('state-in-abyss').style.display, 'block');
+      assert.equal(state.clearActiveCalls.length, clearCallsBeforeDelete);
+      const originalConsoleError = window.console.error;
+      window.console.error = () => {};
+      try {
+        state.deleteCharacterGate.reject(new Error('Simulated database failure'));
+        await waitFor(
+          () => document.getElementById('globalErrorNotice').hidden === false,
+          'character deletion error notice'
+        );
+      } finally {
+        window.console.error = originalConsoleError;
+      }
+      assert.equal(document.getElementById('state-in-abyss').style.display, 'block');
+      assert.equal(state.clearActiveCalls.length, clearCallsBeforeDelete);
+      state.deleteCharacterGate = null;
+
+      document.querySelector('[data-action="cancel-run"]').click();
+      await waitFor(
+        () => document.getElementById('state-awaiting').style.display === 'block',
+        'active run cleanup'
+      );
+      document.querySelector('[data-action="dismiss-global-error"]').click();
+    });
+
+    await t.test('saving a changed poll interval restarts polling immediately', async () => {
+      state.trackingCharacters.add(characters[0].id);
+      const pollCallsBeforeSwitch = state.esiPollCalls;
+      changeValue(window, document.getElementById('charSelect'), characters[0].id);
+      await waitFor(
+        () => state.esiPollCalls > pollCallsBeforeSwitch,
+        'initial ESI poll for the tracking character'
+      );
+
+      document.querySelector('[data-page="settings"]').click();
+      document.getElementById('pollIntervalInput').value = '7';
+      const pollCallsBeforeSave = state.esiPollCalls;
+      document.querySelector('[data-action="save-settings"]').click();
+      await waitFor(
+        () => state.settingsWrites.some(([key, value]) =>
+          key === 'esi_poll_interval' && value === '7'),
+        'saved poll interval'
+      );
+      await waitFor(
+        () => state.esiPollCalls > pollCallsBeforeSave,
+        'restarted ESI poll'
+      );
     });
   } finally {
     harness.close();
