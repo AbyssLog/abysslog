@@ -1,13 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
-const { parseCsv } = require('../shared/csv');
-const security = require('../shared/security');
+const { createRunCsvRepository } = require('./database/run-csv-repository');
+const { createStatisticsRepository } = require('./database/statistics-repository');
 
 let db;
 let Database;
 let databasePath;
 let backupDirectory;
+const runCsvRepository = createRunCsvRepository(() => db);
+const statisticsRepository = createStatisticsRepository(() => db);
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
 const INVENTORY_BASELINE_CLEAR_PREFIX = 'inventory_baseline_cleared_run_';
 const CHARACTER_TOKEN_PREFIX = 'tokens_';
@@ -733,74 +735,20 @@ function deleteRun(runId) {
   return true;
 }
 
-function buildStatsWhere(filters = {}) {
-  const clauses = [];
-  const params = [];
-  if (filters.character_id != null) {
-    clauses.push('character_id = ?');
-    params.push(filters.character_id);
-  }
-  if (filters.range_start != null) {
-    clauses.push('started_at >= ?');
-    params.push(filters.range_start);
-  }
-  if (filters.range_end != null) {
-    clauses.push('started_at < ?');
-    params.push(filters.range_end);
-  }
-  return {
-    where: clauses.length > 0 ? 'WHERE ' + clauses.join(' AND ') : '',
-    params,
-  };
+function getStats(filters = {}) {
+  return statisticsRepository.getStats(filters);
 }
 
-function getStats(filters = {}) {
-  const { where, params } = buildStatsWhere(filters);
+function getDailyStats(filters = {}) {
+  return statisticsRepository.getDailyStats(filters);
+}
 
-  const overall = db.prepare(`
-    SELECT
-      COUNT(*) as total_runs,
-      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-      SUM(CASE WHEN outcome = 'Died' THEN 1 ELSE 0 END) as died,
-      AVG(CASE WHEN outcome = 'Survived' THEN duration END) as avg_duration_survived,
-      AVG(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as avg_net_isk,
-      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as total_net_isk,
-      AVG(CASE WHEN outcome = 'Died' THEN total_loss END) as avg_loss,
-      SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss,
-      MIN(started_at) as first_run,
-      MAX(started_at) as last_run
-    FROM runs ${where}
-  `).get(...params);
+function exportRunsCSV(characterId) {
+  return runCsvRepository.exportRunsCSV(characterId);
+}
 
-  const byTier = db.prepare(`
-    SELECT tier,
-      COUNT(*) as total_runs,
-      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-      AVG(CASE WHEN outcome = 'Survived' THEN duration END) as avg_duration,
-      AVG(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as avg_net_isk
-    FROM runs ${where}
-    GROUP BY tier ORDER BY tier
-  `).all(...params);
-
-  const byWeather = db.prepare(`
-    SELECT weather,
-      COUNT(*) as total_runs,
-      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-      AVG(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as avg_net_isk
-    FROM runs ${where}
-    GROUP BY weather ORDER BY weather
-  `).all(...params);
-
-  const hourly = db.prepare(`
-    SELECT
-      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as profit,
-      SUM(duration) as duration
-    FROM runs
-    ${where ? where + ' AND' : 'WHERE'} duration > 0
-  `).get(...params);
-  const iskPerHour = hourly?.duration > 0 ? hourly.profit / (hourly.duration / 3600) : 0;
-
-  return { overall, byTier, byWeather, iskPerHour };
+function importRunsCSV(csvText, characterId) {
+  return runCsvRepository.importRunsCSV(csvText, characterId);
 }
 
 function deleteSetting(key) {
@@ -885,126 +833,6 @@ function updateRun(runId, { meta, cargo, appraisal }) {
     else applyCargoUpdate(runId, cargo);
   })();
   return true;
-}
-
-function getDailyStats(filters = {}) {
-  const { where, params } = buildStatsWhere(filters);
-  return db.prepare(`
-    SELECT
-      date(started_at, 'unixepoch', 'localtime') as day,
-      COUNT(*) as total_runs,
-      SUM(CASE WHEN outcome = 'Survived' THEN 1 ELSE 0 END) as survived,
-      SUM(CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END) as net_isk,
-      SUM(CASE WHEN outcome = 'Died' THEN total_loss ELSE 0 END) as total_loss
-    FROM runs ${where}
-    GROUP BY day
-    ORDER BY day ASC
-  `).all(...params);
-}
-
-function exportRunsCSV(characterId) {
-  const filters = characterId ? 'WHERE r.character_id = ?' : '';
-  const params = characterId ? [characterId] : [];
-  const runs = db.prepare(`
-    SELECT r.*, c.name as character_name
-    FROM runs r JOIN characters c ON r.character_id = c.id
-    ${filters}
-    ORDER BY r.started_at ASC
-  `).all(...params);
-
-  const headers = [
-    'id','character_id','character_name','started_at','duration','tier','weather','outcome',
-    'ship_name','ship_class','loot_value','consumed_cost','net_isk','total_loss',
-    'cargo_before','cargo_after','drone_before','drone_after','notes'
-  ];
-
-  const rows = runs.map(r => headers.map(h => security.escapeCsvCell(r[h])).join(','));
-  return [headers.join(','), ...rows].join('\n');
-}
-
-function importRunsCSV(csvText, characterId) {
-  const rows = parseCsv(csvText).filter(row => row.some(cell => cell.trim()));
-  if (rows.length < 2) return { imported: 0, skipped: 0, errors: [] };
-
-  const headers = rows[0].map((header, index) =>
-    index === 0 ? header.replace(/^\uFEFF/, '') : header);
-  const idx = (name) => headers.indexOf(name);
-  for (const required of ['started_at', 'tier', 'weather', 'outcome']) {
-    if (idx(required) === -1) throw new TypeError(`CSV is missing required column: ${required}`);
-  }
-
-  const insertRun = db.prepare(`
-    INSERT INTO runs
-      (character_id, started_at, duration, tier, weather, outcome,
-       ship_name, ship_class, loot_value, consumed_cost, net_isk, total_loss,
-       cargo_before, cargo_after, drone_before, drone_after, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `);
-  const runExists = db.prepare(
-    'SELECT 1 FROM runs WHERE character_id = ? AND started_at = ? LIMIT 1'
-  );
-
-  let imported = 0, skipped = 0;
-  const errors = [];
-
-  const transaction = db.transaction(() => {
-    for (let i = 1; i < rows.length; i++) {
-      try {
-        const cols = rows[i];
-        const get = (name) => {
-          const index = idx(name);
-          return index === -1 ? null : security.unescapeCsvCell(cols[index] ?? '');
-        };
-        const charId = characterId || get('character_id');
-        if (!charId) { skipped++; continue; }
-        const number = (name) => {
-          const raw = get(name);
-          return raw == null || raw === '' ? 0 : Number(raw);
-        };
-        const run = security.validateRunData({
-          character_id: charId,
-          started_at: get('started_at') || String(Math.floor(Date.now() / 1000)),
-          duration: get('duration') || '0',
-          tier: get('tier') || 'Unknown',
-          weather: get('weather') || 'Unknown',
-          outcome: get('outcome') || 'Survived',
-          ship_name: get('ship_name') || '',
-          ship_class: get('ship_class') || 'Unknown',
-          loot_value: number('loot_value'),
-          consumed_cost: number('consumed_cost'),
-          net_isk: number('net_isk'),
-          total_loss: number('total_loss'),
-          cargo_before: get('cargo_before') || '',
-          cargo_after: get('cargo_after') || '',
-          drone_before: get('drone_before') || '',
-          drone_after: get('drone_after') || '',
-          notes: get('notes') || '',
-          items: [],
-          fitting: [],
-          implants: [],
-        });
-        if (runExists.get(run.character_id, run.started_at)) {
-          skipped++;
-          continue;
-        }
-
-        insertRun.run(
-          run.character_id, run.started_at, run.duration,
-          run.tier, run.weather, run.outcome,
-          run.ship_name || null, run.ship_class,
-          run.loot_value, run.consumed_cost, run.net_isk, run.total_loss,
-          run.cargo_before || null, run.cargo_after || null,
-          run.drone_before || null, run.drone_after || null, run.notes || null
-        );
-        imported++;
-      } catch(e) {
-        if (errors.length < 100) errors.push(`Row ${i + 1}: ${e.message}`);
-        skipped++;
-      }
-    }
-  });
-  transaction();
-  return { imported, skipped, errors };
 }
 
 module.exports = {

@@ -438,6 +438,7 @@ test('CSV cells neutralize spreadsheet formulas without changing numeric values'
 test('renderer policy blocks inline script and inline event handlers', () => {
   const html = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
+  const appraisalJs = fs.readFileSync(path.join(projectRoot, 'src/shared/appraisal.js'), 'utf8');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const esi = fs.readFileSync(path.join(projectRoot, 'src/main/esi.js'), 'utf8');
 
@@ -459,14 +460,14 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /window\.api\.runs\.clearInventoryBaseline/);
   assert.match(appJs, /window\.api\.loadouts\.save/);
   assert.match(appJs, /createPresetFromInventoryText/);
+  assert.match(html, /src="\.\.\/shared\/appraisal\.js"/);
   assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
   assert.match(appJs, /editOriginal\?\.total_loss\s*\|\|\s*0/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
-  assert.match(appJs, /const droneDiff = diffOptionalDroneBay/);
-  assert.match(appJs, /const _dd = diffOptionalDroneBay/);
-  assert.doesNotMatch(appJs, /const droneDiff = diffCargo\(droneBefore,\s*droneAfter\)/);
-  assert.match(appJs, /mergeDiffItems\(cargoDiff\.gained,\s*droneDiff\.gained\)/);
+  assert.match(appJs, /appraisalHelpers\.appraiseSurvivedInventory/);
+  assert.match(appraisalJs, /diffOptionalInventoryPastes/);
+  assert.match(appraisalJs, /mergeInventoryItems\(cargo\.gained,\s*drones\.gained\)/);
   assert.match(appJs, /MODAL_FOCUSABLE_SELECTOR/);
   assert.match(appJs, /event\.key === 'Escape'/);
   assert.match(appJs, /aria-current/);
@@ -511,17 +512,21 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
 
 test('IPC bridge matches guarded main-process handlers', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'src/main/main.js'), 'utf8');
-  const characterHandlers = fs.readFileSync(
-    path.join(projectRoot, 'src/main/character-handlers.js'),
-    'utf8'
-  );
+  const handlerSources = [
+    fs.readFileSync(path.join(projectRoot, 'src/main/character-handlers.js'), 'utf8'),
+    ...fs.readdirSync(path.join(projectRoot, 'src/main/ipc'))
+      .filter(name => name.endsWith('.js'))
+      .map(name => fs.readFileSync(path.join(projectRoot, 'src/main/ipc', name), 'utf8')),
+  ];
+  const handlerSource = handlerSources.join('\n');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
   const handlerChannels = new Set(
-    [...`${main}\n${characterHandlers}`.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
+    [...([main, ...handlerSources].join('\n')).matchAll(/secureHandle\('([^']+)'/g)]
+      .map(match => match[1])
   );
   const invokedChannels = new Set(
     [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map(match => match[1])
@@ -543,16 +548,16 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /createDiagnostics\(\{/);
   assert.match(main, /uncaughtExceptionMonitor/);
   assert.match(main, /render-process-gone/);
-  assert.match(main, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
+  assert.match(handlerSource, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
   assert.doesNotMatch(preload, /clipboard|node:fs|require\('fs'\)/);
   assert.match(inventoryEditor, /await navigator\.clipboard\.readText\(\)/);
-  assert.match(main, /security\.validateRunData/);
-  assert.match(main, /security\.validateAppraisalUpdate/);
-  assert.match(main, /security\.validateRunEdit/);
+  assert.match(handlerSource, /security\.validateRunData/);
+  assert.match(handlerSource, /security\.validateAppraisalUpdate/);
+  assert.match(handlerSource, /security\.validateRunEdit/);
   assert.match(main, /security\.validateEsiCapabilitySelection/);
-  assert.match(main, /loadouts\.serializePresets\(data\.presets\)/);
-  assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
-  assert.match(main, /withCharacterCapability\(characterId, 'killmails'/);
+  assert.match(handlerSource, /loadouts\.serializePresets\(data\.presets\)/);
+  assert.match(handlerSource, /withCharacterCapability\(characterId, 'fitting'/);
+  assert.match(handlerSource, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
   assert.match(main, /clearTokens: characterId => db\.deleteSetting\(tokenKey\(characterId\)\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);

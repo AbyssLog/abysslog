@@ -2,7 +2,7 @@
 
 EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, and Janice price appraisals.
 
-[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
+[Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
 
 ## Features
 
@@ -85,6 +85,11 @@ npm run build:win  # build Windows .exe
 npm run build:mac  # build macOS .dmg
 npm run build:linux # build Linux .AppImage
 ```
+
+Run `npm run check` before submitting a change. It enforces the architectural
+boundaries around the main composition root, database facade, renderer
+coordinator, and stylesheet, then runs the full test suite. Use
+`npm run test:coverage` when reviewing coverage.
 
 Dependency lifecycle scripts are disabled by default in `.npmrc`. `npm run setup` is the explicit, reviewable step that downloads the Electron runtime.
 

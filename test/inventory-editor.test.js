@@ -86,14 +86,15 @@ test('structured inventory surfaces initialize and update in the DOM', () => {
 test('tracker and historical details use responsive, purpose-built layouts', () => {
   const projectRoot = path.join(__dirname, '..');
   const html = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'index.html'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'styles', 'app.css'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
 
   assert.match(html, /class="tracker-workspace"/);
   assert.match(html, /class="tracker-sidebar" aria-label="Run overview"/);
-  assert.match(html, /#runDetailModal .modal {[^}]*max-width: 1180px/s);
-  assert.match(html, /.run-detail-actions {[^}]*position: sticky/s);
-  assert.match(html, /@media \(max-width: 1080px\)/);
-  assert.match(html, /\.tracker-grid \{ grid-template-columns: 1fr; \}/);
+  assert.match(styles, /#runDetailModal .modal {[^}]*max-width: 1180px/s);
+  assert.match(styles, /.run-detail-actions {[^}]*position: sticky/s);
+  assert.match(styles, /@media \(max-width: 1080px\)/);
+  assert.match(styles, /\.tracker-grid \{ grid-template-columns: 1fr; \}/);
   assert.match(appJs, /class="run-detail-summary"/);
   assert.match(appJs, /class="run-detail-appraisals"/);
   assert.match(appJs, /class="run-detail-inventory-grid"/);

@@ -11,12 +11,15 @@ const rendererScripts = [
   'src/shared/fitting.js',
   'src/shared/security.js',
   'src/shared/run-tracking.js',
+  'src/shared/appraisal.js',
   'src/shared/loadouts.js',
   'src/shared/ui-errors.js',
   'src/shared/updates.js',
   'src/shared/statistics.js',
+  'src/renderer/stats-view.js',
   'src/shared/ship-groups.js',
   'src/renderer/inventory-editor.js',
+  'src/renderer/run-session-controller.js',
   'src/renderer/app.js',
 ];
 
@@ -104,8 +107,10 @@ async function createRendererHarness() {
   const lastRun = Math.floor(Date.UTC(2026, 7, 2) / 1000);
   const state = {
     activeRunRequests: [],
+    activeRunSaves: [],
     characterCapabilities: new Map(),
     completedRuns: [],
+    completeActiveGate: null,
     clearActiveCalls: [],
     deleteCharacterCalls: [],
     deleteCharacterGate: null,
@@ -122,6 +127,8 @@ async function createRendererHarness() {
     runQueries: [],
     settingsWrites: [],
     trackingCharacters: new Set(),
+    typeNameRequests: [],
+    typeNamesGate: null,
     stats: {
       overall: {
         total_runs: 2,
@@ -198,7 +205,10 @@ async function createRendererHarness() {
         return null;
       },
       getInventoryBaseline: async () => null,
-      saveActive: async () => true,
+      saveActive: async snapshot => {
+        state.activeRunSaves.push(snapshot);
+        return true;
+      },
       clearActive: async characterId => {
         state.clearActiveCalls.push(characterId);
         return true;
@@ -211,6 +221,7 @@ async function createRendererHarness() {
       },
       completeActive: async data => {
         state.completedRuns.push(data);
+        if (state.completeActiveGate) return state.completeActiveGate.promise;
         return state.completedRuns.length;
       },
       getStats: async () => state.stats,
@@ -236,9 +247,11 @@ async function createRendererHarness() {
         if (state.killmailGate) return state.killmailGate.promise;
         return null;
       },
-      getTypeNames: async typeIds => Object.fromEntries(
-        typeIds.map(typeId => [typeId, `Type ${typeId}`])
-      ),
+      getTypeNames: async typeIds => {
+        state.typeNameRequests.push([...typeIds]);
+        if (state.typeNamesGate) return state.typeNamesGate.promise;
+        return Object.fromEntries(typeIds.map(typeId => [typeId, `Type ${typeId}`]));
+      },
     }),
     shell: apiGroup({}),
   };
@@ -634,6 +647,86 @@ test('renderer async workflows execute against the real DOM', async t => {
       await waitFor(
         () => document.getElementById('state-awaiting').style.display === 'block',
         'automatic run reset'
+      );
+    });
+
+    await t.test('killmail enrichment stops when the run starts finalizing', async () => {
+      state.trackingCharacters.delete(characters[0].id);
+      state.characterCapabilities.set(characters[0].id, { killmails: true });
+
+      const switchRequests = state.activeRunRequests.length;
+      changeValue(window, document.getElementById('charSelect'), characters[0].id);
+      await waitFor(
+        () => state.activeRunRequests.length > switchRequests
+          && state.activeRunRequests.at(-1) === characters[0].id,
+        'loss-tracked character selection'
+      );
+
+      document.querySelector('[data-page="tracker"]').click();
+      document.getElementById('tierSelect').value = 'T4';
+      document.getElementById('weatherSelect').value = 'Dark';
+      document.querySelector('[data-action="manual-start"]').click();
+      await waitFor(
+        () => document.getElementById('state-in-abyss').style.display === 'block',
+        'manual loss run start'
+      );
+
+      document.querySelector('[data-action="manual-end-died"]').click();
+      await waitFor(
+        () => document.getElementById('loss-actions').style.display === 'flex',
+        'initial estimated loss'
+      );
+
+      const killmailRequestCount = state.killmailRequests.length;
+      const typeNameRequestCount = state.typeNameRequests.length;
+      const completedRunCount = state.completedRuns.length;
+      const killmailGate = createDeferred();
+      const typeNamesGate = createDeferred();
+      const completeActiveGate = createDeferred();
+      state.killmailGate = killmailGate;
+      state.typeNamesGate = typeNamesGate;
+      state.completeActiveGate = completeActiveGate;
+
+      try {
+        document.querySelector('[data-action="retry-killmail"]').click();
+        await waitFor(
+          () => state.killmailRequests.length === killmailRequestCount + 1,
+          'killmail refresh request'
+        );
+        killmailGate.resolve({
+          items: [{ type_id: 34, quantity: 2 }],
+          killmail_ids: [9001],
+        });
+        await waitFor(
+          () => state.typeNameRequests.length === typeNameRequestCount + 1,
+          'pending killmail type-name lookup'
+        );
+
+        document.querySelector('#state-died [data-action="save-current-run"]').click();
+        await waitFor(
+          () => state.completedRuns.length === completedRunCount + 1,
+          'run finalization while killmail enrichment is pending'
+        );
+        assert.equal(await evaluate('S.activeRun.finalizing'), true);
+        const checkpointCount = state.activeRunSaves.length;
+
+        typeNamesGate.resolve({ 34: 'Tritanium' });
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        assert.equal(await evaluate('S.activeRun.killmailItems.length'), 0);
+        assert.equal(state.activeRunSaves.length, checkpointCount);
+      } finally {
+        killmailGate.resolve(null);
+        typeNamesGate.resolve({});
+        completeActiveGate.resolve(state.completedRuns.length);
+        state.killmailGate = null;
+        state.typeNamesGate = null;
+        state.completeActiveGate = null;
+      }
+
+      await waitFor(
+        () => document.getElementById('state-awaiting').style.display === 'block',
+        'finalized loss run reset'
       );
     });
 

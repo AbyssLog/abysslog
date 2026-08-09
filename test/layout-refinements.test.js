@@ -7,6 +7,7 @@ const { resolveDroneAfterSnapshot } = require('../src/renderer/inventory-editor'
 
 const projectRoot = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'index.html'), 'utf8');
+const styles = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'styles', 'app.css'), 'utf8');
 const appJs = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
 const editorJs = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'inventory-editor.js'), 'utf8');
 
@@ -29,8 +30,8 @@ test('tracker places Run Setup after Recent Runs and history uses balanced inven
   assert.match(appJs, /function initializeTrackerLayout\(\)/);
   assert.match(appJs, /recentRunsPanel\.after\(runSetup\)/);
   assert.equal((appJs.match(/class="run-detail-inventory-card"/g) || []).length, 6);
-  assert.match(html, /\.run-detail-inventory-card \{[^}]*display: flex/s);
-  assert.match(html, /\.inventory-unchanged-badge/);
+  assert.match(styles, /\.run-detail-inventory-card \{[^}]*display: flex/s);
+  assert.match(styles, /\.inventory-unchanged-badge/);
 });
 
 test('unchanged drone fallback remains visual until edited and clipboard wording is explicit', () => {

@@ -11,7 +11,6 @@ const {
   shell,
 } = require('electron');
 const crypto = require('crypto');
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -21,14 +20,15 @@ const {
   APP_RENDERER_URL,
   resolveAppAssetPath,
 } = require('./app-protocol');
-const { registerCharacterDeletionHandler } = require('./character-handlers');
+const { registerAuthSettingsHandlers } = require('./ipc/auth-settings-handlers');
+const { registerExternalServiceHandlers } = require('./ipc/external-service-handlers');
+const { registerRunHandlers } = require('./ipc/run-handlers');
+const { registerSupportHandlers } = require('./ipc/support-handlers');
 const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
 const janice = require('./janice');
 const { createUpdateService } = require('./update-service');
-const fitting = require('../shared/fitting');
-const loadouts = require('../shared/loadouts');
 const runTracking = require('../shared/run-tracking');
 const security = require('../shared/security');
 
@@ -43,17 +43,7 @@ const LEGACY_OAUTH_SCOPES = [
 ];
 const SECRET_PREFIX = 'safe:v1:';
 const JANICE_SECRET_KEY = 'secret_janice_api_key';
-const LOADOUT_PRESETS_KEY = 'loadout_presets_v1';
 const MAX_IPC_JSON_BYTES = 2 * 1024 * 1024;
-const MAX_CSV_BYTES = 10 * 1024 * 1024;
-const RENDERER_DIAGNOSTIC_CATEGORIES = new Set([
-  'capture-error',
-  'checkpoint-error',
-  'recovery-error',
-  'ui-error',
-  'unhandled-rejection',
-  'window-error',
-]);
 
 let mainWindow;
 let pendingAuth = null;
@@ -620,301 +610,65 @@ app.on('activate', () => {
   }
 });
 
-secureHandle('auth:get-characters', () => db.getCharacters());
-secureHandle('auth:has-tokens', characterId => Boolean(loadTokens(characterId)));
-secureHandle('auth:get-capabilities', characterId =>
-  getCharacterCapabilities(security.requireInteger(characterId, 'Character ID')));
-secureHandle('auth:start-sso', selectedCapabilities => startSso(selectedCapabilities));
-registerCharacterDeletionHandler({
-  secureHandle,
-  database: db,
-  requireInteger: security.requireInteger,
-});
-
-secureHandle('settings:get', key => {
-  security.requireString(key, 'Setting key', 64);
-  if (!security.PUBLIC_SETTING_KEYS.has(key)) throw new TypeError('Setting is not readable');
-  return db.getSetting(key);
-});
-secureHandle('settings:set', (key, value) => db.setSetting(key, security.validatePublicSetting(key, value)));
-secureHandle('settings:get-all', () => getPublicSettings());
-
-secureHandle('loadouts:get', () =>
-  loadouts.parseStoredPresets(db.getSetting(LOADOUT_PRESETS_KEY)));
-secureHandle('loadouts:save', payload => {
-  const data = validateObjectPayload(
-    payload,
-    'Loadout presets',
-    loadouts.MAX_STORED_BYTES + 1024
-  );
-  if (Object.keys(data).length !== 1 || !Object.hasOwn(data, 'presets')) {
-    throw new TypeError('Loadout presets payload is invalid');
-  }
-  const serialized = loadouts.serializePresets(data.presets);
-  db.setSetting(LOADOUT_PRESETS_KEY, serialized);
-  recordDiagnostic('loadouts.saved', { presetCount: data.presets.length });
-  return loadouts.parseStoredPresets(serialized);
-});
-
-secureHandle('secrets:status', () => getSecureStorageStatus());
-secureHandle('secrets:has-janice-key', () => Boolean(getJaniceApiKey()));
-secureHandle('secrets:set-janice-key', apiKey => {
-  const key = security.requireTrimmedText(apiKey, 'Janice API key', 4096);
-  db.setSetting(JANICE_SECRET_KEY, encryptSecret(key));
-  db.deleteSetting('janice_api_key');
-  return true;
-});
-secureHandle('secrets:delete-janice-key', () => {
-  db.deleteSetting(JANICE_SECRET_KEY);
-  db.deleteSetting('janice_api_key');
-  return true;
-});
-
-secureHandle('esi:get-location', characterId =>
-  withCharacterCapability(characterId, 'tracking', (id, token) => esi.getLocation(id, token)));
-secureHandle('esi:get-ship', characterId =>
-  withCharacterCapability(characterId, 'tracking', (id, token) => esi.getShip(id, token)));
-secureHandle('esi:get-fitting', characterId =>
-  withCharacterCapability(characterId, 'fitting', (id, token) => esi.getFitting(id, token)));
-secureHandle('esi:get-implants', characterId =>
-  withCharacterCapability(characterId, 'implants', (id, token) => esi.getImplants(id, token)));
-secureHandle('esi:get-recent-abyss-loss', (characterId, startedAt, endedAt) =>
-  withCharacterCapability(characterId, 'killmails', (id, token) =>
-    esi.getRecentAbyssLoss(
-      id,
-      token,
-      security.requireInteger(startedAt, 'Run start time'),
-      security.requireInteger(endedAt, 'Run end time')
-    )));
-secureHandle('esi:get-type-names', typeIds => {
-  if (!Array.isArray(typeIds) || typeIds.length > 1000) throw new TypeError('Type ID list is invalid');
-  return esi.getTypeNames(typeIds.map(id => security.requireInteger(id, 'Type ID')));
-});
-secureHandle('esi:get-system-name', systemId =>
-  esi.getSystemName(security.requireInteger(systemId, 'System ID')));
-secureHandle('esi:get-type-info', typeId =>
-  esi.getTypeInfo(security.requireInteger(typeId, 'Type ID')));
-
-secureHandle('janice:appraise', (items, pricing) => {
-  if (pricing !== 'buy' && pricing !== 'sell') throw new TypeError('Pricing mode is invalid');
-  const apiKey = getJaniceApiKey();
-  if (!apiKey) throw new Error('Janice API key is unavailable');
-  return janice.appraise(security.validateAppraisalItems(items), pricing, apiKey);
-});
-secureHandle('janice:test-key', apiKey =>
-  janice.appraise(
-    [{ name: 'Tritanium', qty: 1 }],
-    'buy',
-    security.requireTrimmedText(apiKey, 'Janice API key', 4096)
-  ));
-
-secureHandle('runs:save', runData =>
-  db.saveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
-secureHandle('runs:complete-active', runData =>
-  db.completeActiveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
-secureHandle('runs:get-active', characterId => {
-  const id = security.requireInteger(characterId, 'Character ID');
-  const snapshot = db.getActiveRun(id);
-  if (!snapshot) return null;
-  try {
-    const validated = security.validateActiveRunSnapshot(snapshot);
-    if (validated.run.character_id !== id) throw new TypeError('Active run character mismatch');
-    return validated;
-  } catch {
-    db.clearActiveRun(id);
-    return null;
-  }
-});
-secureHandle('runs:save-active', snapshot => {
-  const validated = security.validateActiveRunSnapshot(
-    validateObjectPayload(snapshot, 'Active run')
-  );
-  return db.saveActiveRun(validated);
-});
-secureHandle('runs:clear-active', characterId =>
-  db.clearActiveRun(security.requireInteger(characterId, 'Character ID')));
-secureHandle('runs:get-all', filters =>
-  db.getRuns(security.validateRunFilters(
-    filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)
-  )));
-secureHandle('runs:get-by-id', runId => db.getRunById(security.requireInteger(runId, 'Run ID')));
-secureHandle('runs:copy-fitting', runId => {
-  const id = security.requireInteger(runId, 'Run ID');
-  const run = db.getRunById(id);
-  if (!run) throw new Error('Run not found');
-  const exported = fitting.createEftExport(run);
-  clipboard.writeText(exported.text);
-  recordDiagnostic('run.fitting_copied', { source: 'run_detail' });
-  return {
-    copied: true,
-    fittedItemCount: exported.fittedItemCount,
-    droneCount: exported.droneCount,
-    implantCount: exported.implantCount,
-    omittedItemCount: exported.omittedItemCount,
-  };
-});
-secureHandle('runs:delete', runId => db.deleteRun(security.requireInteger(runId, 'Run ID')));
-secureHandle('runs:get-inventory-baseline', characterId =>
-  db.getInventoryBaseline(security.requireInteger(characterId, 'Character ID')));
-secureHandle('runs:clear-inventory-baseline', (characterId, runId) =>
-  db.clearInventoryBaseline(
-    security.requireInteger(characterId, 'Character ID'),
-    security.requireInteger(runId, 'Run ID')
-  ));
-secureHandle('runs:get-stats', filters =>
-  db.getStats(security.validateStatsFilters(
-    filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
-  )));
-secureHandle('runs:update-appraisal', (runId, data) =>
-  db.updateAppraisal(
-    security.requireInteger(runId, 'Run ID'),
-    security.validateAppraisalUpdate(validateObjectPayload(data, 'Appraisal update'))
-  ));
-secureHandle('runs:update', (runId, data) =>
-  db.updateRun(
-    security.requireInteger(runId, 'Run ID'),
-    security.validateRunEdit(validateObjectPayload(data, 'Run edit'))
-  ));
-secureHandle('runs:get-daily-stats', filters =>
-  db.getDailyStats(security.validateStatsFilters(
-    filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
-  )));
-
-secureHandle('data:get-status', () => ({
-  ...db.getDataStatus(),
-  automaticBackupsEnabled: !db.getSetting('janice_api_key'),
-}));
-secureHandle('data:create-backup', () => {
-  if (db.getSetting('janice_api_key')) {
-    throw new Error('Backup is unavailable until the legacy API key can be migrated securely');
-  }
-  const result = db.createManualBackup();
-  recordDiagnostic('backup.created', { source: 'manual' });
-  return result;
-});
-secureHandle('data:restore-backup', async () => {
-  const { backupDirectory } = db.getDataStatus();
-  const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
-    title: 'Restore Full Backup',
-    defaultPath: backupDirectory,
-    buttonLabel: 'Select Backup',
-    filters: [{ name: 'AbyssLog Database Backups', extensions: ['db'] }],
-    properties: ['openFile', 'dontAddToRecent'],
-  });
-  if (canceled || !filePaths.length) return { success: false, canceled: true };
-
-  const inspection = db.inspectBackup(filePaths[0]);
-  const characterLabel = inspection.characterCount === 1 ? 'character' : 'characters';
-  const runLabel = inspection.runCount === 1 ? 'run' : 'runs';
-  const confirmation = await dialog.showMessageBox(mainWindow, {
-    type: 'warning',
-    title: 'Restore Full Backup',
-    message: 'Replace the current AbyssLog data with this backup?',
-    detail:
-      `The backup contains ${inspection.characterCount} ${characterLabel} and `
-      + `${inspection.runCount} ${runLabel}. AbyssLog will first preserve the current `
-      + 'database as a before-restore backup, then restart.\n\n'
-      + 'Credentials encrypted on another operating-system installation may not be '
-      + 'recoverable; affected characters and the Janice API key will need to be reconnected.',
-    buttons: ['Cancel', 'Restore and Restart'],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  });
-  if (confirmation.response !== 1) return { success: false, canceled: true };
-
-  const result = db.restoreBackup(filePaths[0]);
-  recordDiagnostic('backup.restored', {
-    source: 'manual',
-    schemaVersion: result.schemaVersion,
-    characterCount: result.characterCount,
-    runCount: result.runCount,
-  });
+function scheduleRestoreRestart() {
   restoreRestartScheduled = true;
   setTimeout(() => {
     app.relaunch();
     app.quit();
   }, 500);
-  return { success: true, restarting: true };
-});
-secureHandle('data:open-backup-folder', async () => {
-  const { backupDirectory } = db.getDataStatus();
-  const error = await shell.openPath(backupDirectory);
-  if (error) throw new Error(`Could not open backup folder: ${error}`);
-  return true;
+}
+
+registerAuthSettingsHandlers({
+  secureHandle,
+  database: db,
+  security,
+  loadTokens,
+  getCharacterCapabilities,
+  startSso,
+  getPublicSettings,
+  validateObjectPayload,
+  getSecureStorageStatus,
+  getJaniceApiKey,
+  janiceSecretKey: JANICE_SECRET_KEY,
+  encryptSecret,
+  recordDiagnostic,
 });
 
-secureHandle('diagnostics:get-status', () => {
-  if (!diagnostics) return { available: false };
-  return { available: true, ...diagnostics.getStatus() };
-});
-secureHandle('diagnostics:open-folder', async () => {
-  if (!diagnostics) throw new Error('Diagnostics are unavailable');
-  const error = await shell.openPath(diagnostics.getStatus().directory);
-  if (error) throw new Error(`Could not open diagnostics folder: ${error}`);
-  recordDiagnostic('diagnostics.folder_opened', { source: 'settings' });
-  return true;
-});
-secureHandle('diagnostics:copy-summary', () => {
-  clipboard.writeText(createDiagnosticsSummary());
-  recordDiagnostic('diagnostics.summary_copied', { source: 'settings' });
-  return true;
-});
-secureHandle('diagnostics:record-renderer-error', category => {
-  const safeCategory = security.requireString(category, 'Diagnostic category', 64);
-  if (!RENDERER_DIAGNOSTIC_CATEGORIES.has(safeCategory)) {
-    throw new TypeError('Diagnostic category is invalid');
-  }
-  recordDiagnosticWarning('renderer.reported_error', {
-    category: safeCategory,
-    source: 'renderer',
-  });
-  return true;
+registerExternalServiceHandlers({
+  secureHandle,
+  security,
+  withCharacterCapability,
+  esi,
+  janice,
+  getJaniceApiKey,
 });
 
-secureHandle('shell:open-external', async url => {
-  if (!security.isAllowedExternalUrl(url)) throw new Error('External URL is not allowed');
-  await shell.openExternal(url);
-  return true;
+registerRunHandlers({
+  secureHandle,
+  database: db,
+  security,
+  validateObjectPayload,
+  validateOptionalCharacterId,
+  clipboard,
+  dialog,
+  getMainWindow: () => mainWindow,
+  recordDiagnostic,
 });
 
-secureHandle('app:get-version', () => app.getVersion());
-secureHandle('app:check-update', async () => {
-  try {
-    const result = await updateService.checkForUpdate(app.getVersion());
-    recordDiagnostic('update.check_complete', {
-      source: 'github',
-      releaseAvailable: !result.noRelease,
-    });
-    return result;
-  } catch (error) {
-    recordDiagnosticFailure('update.check_failure', { source: 'github' }, error);
-    return { success: false };
-  }
-});
-
-secureHandle('runs:export-csv', async characterId => {
-  const csv = db.exportRunsCSV(validateOptionalCharacterId(characterId));
-  const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
-    title: 'Export Runs',
-    defaultPath: `abysslog-runs-${new Date().toISOString().split('T')[0]}.csv`,
-    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
-  });
-  if (canceled || !filePath) return { success: false };
-  fs.writeFileSync(filePath, csv, { encoding: 'utf8', mode: 0o600 });
-  return { success: true, filePath };
-});
-
-secureHandle('runs:import-csv', async characterId => {
-  const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
-    title: 'Import Runs',
-    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
-    properties: ['openFile'],
-  });
-  if (canceled || !filePaths.length) return { success: false };
-  const stat = fs.statSync(filePaths[0]);
-  if (!stat.isFile() || stat.size > MAX_CSV_BYTES) throw new Error('CSV file is too large');
-  const csv = fs.readFileSync(filePaths[0], 'utf8');
-  const result = db.importRunsCSV(csv, validateOptionalCharacterId(characterId));
-  return { success: true, ...result };
+registerSupportHandlers({
+  secureHandle,
+  database: db,
+  security,
+  dialog,
+  shell,
+  clipboard,
+  app,
+  updateService,
+  getMainWindow: () => mainWindow,
+  getDiagnostics: () => diagnostics,
+  createDiagnosticsSummary,
+  recordDiagnostic,
+  recordDiagnosticWarning,
+  recordDiagnosticFailure,
+  scheduleRestoreRestart,
 });

@@ -104,7 +104,7 @@ test('run details delegate captured setup and clipboard export to a dedicated di
     path.join(projectRoot, 'src', 'renderer', 'app.js'),
     'utf8'
   );
-  const main = fs.readFileSync(path.join(projectRoot, 'src', 'main', 'main.js'), 'utf8');
+  const runHandlers = fs.readFileSync(path.join(projectRoot, 'src', 'main', 'ipc', 'run-handlers.js'), 'utf8');
 
   assert.match(html, /id="shipSetupModal"[^>]+role="dialog"/);
   assert.match(html, /src="\.\.\/shared\/fitting\.js"/);
@@ -112,6 +112,6 @@ test('run details delegate captured setup and clipboard export to a dedicated di
   assert.match(appJs, /data-action="copy-run-fitting"/);
   assert.match(appJs, /window\.AbyssFitting\.groupSnapshot/);
   assert.doesNotMatch(appJs, /function fittingTableHtml|function implantTableHtml/);
-  assert.match(main, /secureHandle\('runs:copy-fitting'/);
-  assert.match(main, /clipboard\.writeText\(exported\.text\)/);
+  assert.match(runHandlers, /secureHandle\('runs:copy-fitting'/);
+  assert.match(runHandlers, /clipboard\.writeText\(exported\.text\)/);
 });
