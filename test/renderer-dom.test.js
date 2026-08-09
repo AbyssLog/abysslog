@@ -4,6 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
+const { version: packageVersion } = require('../package.json');
 
 const projectRoot = path.join(__dirname, '..');
 const rendererScripts = [
@@ -183,7 +184,7 @@ async function createRendererHarness() {
       get: async () => [],
     }),
     app: apiGroup({
-      getVersion: async () => '1.1.2',
+      getVersion: async () => packageVersion,
     }),
     runs: apiGroup({
       getAll: async (filters = {}) => {
@@ -256,7 +257,8 @@ async function createRendererHarness() {
   }
 
   await waitFor(
-    () => window.document.getElementById('aboutVersion').textContent === 'Version 1.1.2',
+    () => window.document.getElementById('aboutVersion').textContent
+      === `Version ${packageVersion}`,
     'renderer initialization'
   );
   await waitFor(

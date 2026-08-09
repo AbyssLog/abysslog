@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   isRendererInitialized,
   parsePort,
+  requestCleanRendererClose,
 } = require('../scripts/verify-packaged-renderer');
 
 function healthyRenderer(readyState) {
@@ -49,7 +50,46 @@ test('packaged renderer verifier accepts only a valid local debugging port', () 
   assert.throws(() => parsePort('not-a-port'), /valid DevTools port/);
 });
 
-test('Windows package smoke test requires local diagnostics readiness', () => {
+test('packaged renderer verifier requests a clean window close', async () => {
+  const nativeWebSocket = globalThis.WebSocket;
+  let request = null;
+
+  class FakeWebSocket {
+    constructor() {
+      this.listeners = new Map();
+      queueMicrotask(() => this.listeners.get('open')?.());
+    }
+
+    addEventListener(name, listener) {
+      this.listeners.set(name, listener);
+    }
+
+    send(serialized) {
+      request = JSON.parse(serialized);
+      queueMicrotask(() => this.listeners.get('message')?.({
+        data: JSON.stringify({
+          id: request.id,
+          result: { result: { value: true } },
+        }),
+      }));
+    }
+
+    close() {}
+  }
+
+  globalThis.WebSocket = FakeWebSocket;
+  try {
+    await requestCleanRendererClose({ webSocketDebuggerUrl: 'ws://renderer.test' });
+  } finally {
+    globalThis.WebSocket = nativeWebSocket;
+  }
+
+  assert.equal(request.method, 'Runtime.evaluate');
+  assert.equal(request.params.returnByValue, true);
+  assert.match(request.params.expression, /window\.close\(\)/);
+});
+
+test('Windows package smoke test verifies startup before backup-on-exit', () => {
   const script = fs.readFileSync(
     path.resolve(__dirname, '..', 'scripts', 'smoke-test-windows-package.ps1'),
     'utf8'
@@ -58,4 +98,15 @@ test('Windows package smoke test requires local diagnostics readiness', () => {
   assert.match(script, /logs\\abysslog\.log/);
   assert.match(script, /\$diagnosticsReady/);
   assert.match(script, /-and \$diagnosticsReady/);
+  const startupCheck = script.match(
+    /\$startupReady = \$databaseReady[\s\S]*?-and \$processCount -ge 2/
+  );
+  assert.ok(startupCheck, 'startup readiness assignment was not found');
+  assert.doesNotMatch(startupCheck[0], /\$backupReady/);
+
+  const rendererClose = script.indexOf("'--close-after-verify'");
+  const backupCheck = script.indexOf('$backupReady =', rendererClose);
+  assert.ok(rendererClose > 0, 'renderer close request was not found');
+  assert.ok(backupCheck > rendererClose, 'backup must be checked after the renderer closes');
+  assert.match(script, /did not create an automatic backup on clean exit/);
 });

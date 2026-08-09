@@ -88,7 +88,6 @@ try {
 
   $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
   $databaseReady = $false
-  $backupReady = $false
   $diagnosticsReady = $false
   $rendererDebugReady = $false
   $processCount = 0
@@ -103,20 +102,11 @@ try {
 
     $databaseReady = (Test-Path -LiteralPath $databasePath -PathType Leaf) `
       -and (Get-Item -LiteralPath $databasePath).Length -gt 0
-    $backupReady = (Test-Path -LiteralPath $backupDirectory -PathType Container) `
-      -and @(
-        Get-ChildItem `
-          -LiteralPath $backupDirectory `
-          -Filter 'abysslog-auto-*.db' `
-          -File `
-          -ErrorAction SilentlyContinue
-      ).Count -gt 0
     $diagnosticsReady = (Test-Path -LiteralPath $diagnosticsPath -PathType Leaf) `
       -and (Get-Item -LiteralPath $diagnosticsPath).Length -gt 0
     $rendererDebugReady = Test-Path -LiteralPath $devToolsPortPath -PathType Leaf
     $processCount = @(Get-SmokeProcesses).Count
     $startupReady = $databaseReady `
-      -and $backupReady `
       -and $diagnosticsReady `
       -and $rendererDebugReady `
       -and $processCount -ge 2
@@ -125,7 +115,7 @@ try {
   if (-not $startupReady) {
     throw (
       'Packaged application did not finish a clean startup within ' +
-      "$TimeoutSeconds seconds (database=$databaseReady, backup=$backupReady, " +
+      "$TimeoutSeconds seconds (database=$databaseReady, " +
       "diagnostics=$diagnosticsReady, rendererDebug=$rendererDebugReady, " +
       "processes=$processCount)"
     )
@@ -133,14 +123,35 @@ try {
 
   $devToolsPort = Get-Content -LiteralPath $devToolsPortPath | Select-Object -First 1
   $rendererVerifier = Join-Path $PSScriptRoot 'verify-packaged-renderer.js'
-  & $NodePath $rendererVerifier $devToolsPort
+  & $NodePath $rendererVerifier $devToolsPort '--close-after-verify'
   if ($LASTEXITCODE -ne 0) {
     throw "Packaged renderer verification failed with exit code $LASTEXITCODE"
   }
 
+  $shutdownDeadline = [DateTime]::UtcNow.AddSeconds(15)
+  do {
+    Start-Sleep -Milliseconds 200
+    $remainingProcesses = @(Get-SmokeProcesses)
+  } while ($remainingProcesses.Count -gt 0 -and [DateTime]::UtcNow -lt $shutdownDeadline)
+  if ($remainingProcesses.Count -gt 0) {
+    throw 'Packaged application did not exit cleanly after renderer verification'
+  }
+
+  $backupReady = (Test-Path -LiteralPath $backupDirectory -PathType Container) `
+    -and @(
+      Get-ChildItem `
+        -LiteralPath $backupDirectory `
+        -Filter 'abysslog-auto-*.db' `
+        -File `
+        -ErrorAction SilentlyContinue
+    ).Count -gt 0
+  if (-not $backupReady) {
+    throw 'Packaged application did not create an automatic backup on clean exit'
+  }
+
   Write-Host (
-    "Packaged application smoke test passed: renderer, database, backup, and " +
-    "diagnostics ready; $processCount Electron processes running"
+    "Packaged application smoke test passed: renderer, database, and diagnostics " +
+    "ready; clean exit created an automatic backup"
   )
 } finally {
   if ($null -ne $smokeProcess) {
