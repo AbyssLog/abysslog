@@ -74,19 +74,55 @@ function localDateStamp(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function copyDatabaseToBackup(fileName) {
+function copyDatabaseToBackup(fileName, { replaceExisting = false } = {}) {
   fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
   db.pragma('wal_checkpoint(FULL)');
   const destination = path.join(backupDirectory, fileName);
-  const temporary = path.join(backupDirectory, `.${fileName}.${process.pid}.tmp`);
+  if (!replaceExisting && fs.existsSync(destination)) {
+    throw new Error('A backup with this name already exists');
+  }
+
+  const operationId = `${process.pid}-${Date.now()}`;
+  const temporary = path.join(backupDirectory, `.${fileName}.${operationId}.tmp`);
+  const previous = path.join(backupDirectory, `.${fileName}.${operationId}.previous`);
+  let previousMoved = false;
+  let newInstalled = false;
+
   try {
     fs.copyFileSync(databasePath, temporary, fs.constants.COPYFILE_EXCL);
     if (fs.statSync(temporary).size === 0) throw new Error('Database backup was empty');
     verifyBackup(temporary);
+
+    if (replaceExisting && fs.existsSync(destination)) {
+      removeDatabaseSidecars(destination);
+      fs.renameSync(destination, previous);
+      previousMoved = true;
+    }
     fs.renameSync(temporary, destination);
+    newInstalled = true;
   } catch (error) {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    let rollbackError = null;
+    if (previousMoved && !newInstalled && fs.existsSync(previous)) {
+      try {
+        fs.renameSync(previous, destination);
+        previousMoved = false;
+      } catch (failure) {
+        rollbackError = failure;
+      }
+    }
+    if (rollbackError) {
+      const message = error instanceof Error ? error.message : 'Unknown backup error';
+      const rollbackMessage = rollbackError instanceof Error
+        ? rollbackError.message
+        : 'Unknown rollback error';
+      throw new Error(
+        `Backup failed: ${message}. The previous backup could not be restored: ${rollbackMessage}`
+      );
+    }
     throw error;
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    if (newInstalled && fs.existsSync(previous)) fs.unlinkSync(previous);
   }
   return destination;
 }
@@ -300,20 +336,12 @@ function pruneAutomaticBackups() {
   }
 }
 
-function finishStartup() {
+function createExitBackup() {
   const date = localDateStamp();
   const fileName = `abysslog-auto-${date}.db`;
-  const destination = path.join(backupDirectory, fileName);
-  if (fs.existsSync(destination)) {
-    try {
-      verifyBackup(destination);
-    } catch {
-      fs.unlinkSync(destination);
-    }
-  }
-  if (!fs.existsSync(destination)) copyDatabaseToBackup(fileName);
+  const filePath = copyDatabaseToBackup(fileName, { replaceExisting: true });
   pruneAutomaticBackups();
-  return getDataStatus();
+  return { filePath, ...getDataStatus() };
 }
 
 function createManualBackup() {
@@ -514,12 +542,6 @@ function setSetting(key, value) {
   return true;
 }
 
-function getAllSettings() {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
-  const result = {};
-  for (const row of rows) result[row.key] = row.value;
-  return result;
-}
 
 function inventoryBaselineClearKey(characterId) {
   return `${INVENTORY_BASELINE_CLEAR_PREFIX}${characterId}`;
@@ -779,21 +801,6 @@ function getStats(filters = {}) {
   return { overall, byTier, byWeather, iskPerHour };
 }
 
-function getRecentIskPerHour(characterId, limit = 20) {
-  const recentRuns = db.prepare(`
-    SELECT
-      CASE WHEN outcome = 'Survived' THEN net_isk ELSE -total_loss END as profit,
-      duration
-    FROM runs
-    WHERE character_id = ? AND duration > 0
-    ORDER BY started_at DESC LIMIT ?
-  `).all(characterId, limit);
-  const totalDuration = recentRuns.reduce((sum, run) => sum + run.duration, 0);
-  if (totalDuration <= 0) return null;
-  const totalProfit = recentRuns.reduce((sum, run) => sum + run.profit, 0);
-  return totalProfit / (totalDuration / 3600);
-}
-
 function deleteSetting(key) {
   db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   return true;
@@ -1001,7 +1008,7 @@ function importRunsCSV(csvText, characterId) {
 module.exports = {
   init,
   close,
-  finishStartup,
+  createExitBackup,
   createManualBackup,
   inspectBackup,
   restoreBackup,
@@ -1013,7 +1020,6 @@ module.exports = {
   getSetting,
   setSetting,
   deleteSetting,
-  getAllSettings,
   getInventoryBaseline,
   clearInventoryBaseline,
   saveRun,
@@ -1027,7 +1033,6 @@ module.exports = {
   getRunById,
   deleteRun,
   getStats,
-  getRecentIskPerHour,
   getDailyStats,
   exportRunsCSV,
   importRunsCSV,

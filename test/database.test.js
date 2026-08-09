@@ -71,24 +71,36 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   database.init();
   database.hardenSensitiveStorage();
 
-  const startupStatus = database.finishStartup();
-  assert.equal(startupStatus.schemaVersion, 2);
+  const exitStatus = database.createExitBackup();
+  assert.equal(exitStatus.schemaVersion, 2);
   const migratedRun = database.getRuns({ character_id: 8999 })[0];
   assert.equal(migratedRun.notes, 'Created by the original schema');
   assert.equal(migratedRun.cargo_before, null);
   assert.equal(migratedRun.drone_after, null);
   assert.equal(migratedRun.ship_class, null);
-  assert.equal(startupStatus.automaticBackupRetention, 7);
-  assert.ok(startupStatus.latestBackup);
-  assert.equal(fs.existsSync(startupStatus.latestBackup.filePath), true);
+  assert.equal(exitStatus.automaticBackupRetention, 7);
+  assert.ok(exitStatus.latestBackup);
+  assert.equal(fs.existsSync(exitStatus.latestBackup.filePath), true);
 
-  const backupDirectoryEntries = () => fs.readdirSync(startupStatus.backupDirectory);
-  assert.equal(backupDirectoryEntries().filter(name => name.includes('-auto-')).length, 1);
-  database.finishStartup();
+  const backupDirectoryEntries = () => fs.readdirSync(exitStatus.backupDirectory);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-auto-')).length, 1);
 
-  fs.writeFileSync(startupStatus.latestBackup.filePath, 'corrupt backup');
-  const repairedStatus = database.finishStartup();
+  database.setSetting('exit_backup_marker', 'replacement state');
+  const replacedStatus = database.createExitBackup();
+  assert.equal(replacedStatus.latestBackup.filePath, exitStatus.latestBackup.filePath);
+  assert.equal(backupDirectoryEntries().filter(name => name.includes('-auto-')).length, 1);
+  const replacedBackup = new Database(replacedStatus.latestBackup.filePath, {
+    readonly: true,
+    fileMustExist: true,
+  });
+  assert.equal(
+    replacedBackup.prepare('SELECT value FROM settings WHERE key = ?').get('exit_backup_marker').value,
+    'replacement state'
+  );
+  replacedBackup.close();
+
+  fs.writeFileSync(exitStatus.latestBackup.filePath, 'corrupt backup');
+  const repairedStatus = database.createExitBackup();
   assert.ok(repairedStatus.latestBackup.size > 'corrupt backup'.length);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-auto-')).length, 1);
 
@@ -462,7 +474,6 @@ test('statistics include death losses and apply consistent date ranges', () => {
   assert.equal(stats.byTier[0].avg_net_isk, 25);
   assert.equal(stats.byWeather[0].avg_net_isk, 25);
   assert.equal(stats.iskPerHour, 900);
-  assert.equal(database.getRecentIskPerHour(9010), 900);
   assert.deepEqual(database.getDailyStats({ character_id: 9010 }), [{
     day: '2025-01-01',
     total_runs: 2,
@@ -492,7 +503,6 @@ test('statistics include death losses and apply consistent date ranges', () => {
   assert.equal(daily[0].day, '2025-01-01');
   assert.equal(daily.at(-1).day, '2025-03-11');
   assert.equal(database.getStats({ character_id: 9011 }).iskPerHour, 1242);
-  assert.equal(database.getRecentIskPerHour(9011), 2142);
 
   const range = {
     character_id: 9011,

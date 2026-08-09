@@ -51,5 +51,5 @@ test('run editing exposes Re-Appraise, Save, and Cancel with staged appraisal va
   assert.match(editFlow, /const pendingAppraisal = manualEditPendingAppraisal\?\.signature === formSignature/);
   assert.match(editFlow, /manualEditPendingAppraisal = \{/);
   assert.match(editFlow, /\? \{ meta, appraisal: pendingAppraisal\.appraisal \}/);
-  assert.match(editFlow, /: \(manualEditOriginal\?\.total_loss \|\| 0\)/);
+  assert.match(editFlow, /: \(editOriginal\?\.total_loss \|\| 0\)/);
 });

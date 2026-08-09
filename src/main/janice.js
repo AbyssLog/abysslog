@@ -1,8 +1,9 @@
+const { version: appVersion } = require('../../package.json');
 const { createHttpClient } = require('./http-client');
 const security = require('../shared/security');
 
 const JANICE_BASE = 'https://janice.e-351.com';
-const USER_AGENT = 'AbyssLog/1.0';
+const USER_AGENT = `AbyssLog/${appVersion}`;
 const http = createHttpClient();
 
 /**

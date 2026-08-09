@@ -22,7 +22,7 @@ OAuth tokens and the Janice API key are encrypted with Electron `safeStorage`
 before they are stored. AbyssLog disables sign-in and secret storage if a secure
 operating-system-backed encryption provider is unavailable.
 
-The app creates one full local database backup per day while it is open and
+On each clean exit, the app writes a verified full local database backup and
 retains the latest seven automatic backups. Manual and before-restore safety
 backups are retained until you delete them. Backups contain the same personal
 data and encrypted credentials as the live database. A restore replaces the

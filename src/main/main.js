@@ -59,6 +59,8 @@ let pendingAuth = null;
 let diagnostics = null;
 let rendererRecoveryOpen = false;
 let appIsQuitting = false;
+let startupComplete = false;
+let exitBackupAttempted = false;
 let restoreRestartScheduled = false;
 const updateService = createUpdateService();
 
@@ -567,14 +569,11 @@ if (!gotTheLock) {
     migrateLegacyJaniceKey();
     if (!db.getSetting('janice_api_key')) {
       db.hardenSensitiveStorage();
-      const startupDataStatus = db.finishStartup();
-      if (startupDataStatus.latestBackup) {
-        recordDiagnostic('backup.verified', { source: 'automatic' });
-      }
     }
     recordDiagnostic('startup.phase', { phase: 'window' });
     await createWindow();
     recordDiagnostic('startup.complete', { source: 'main' });
+    startupComplete = true;
   }).catch(error => {
     recordDiagnosticFailure('startup.failure', { source: 'main' }, error);
     const message = error instanceof Error ? error.message : 'Unknown startup error';
@@ -595,6 +594,17 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   appIsQuitting = true;
   recordDiagnostic('app.quit', { source: 'main' });
+  if (startupComplete && !exitBackupAttempted) {
+    exitBackupAttempted = true;
+    try {
+      if (!db.getSetting('janice_api_key')) {
+        db.createExitBackup();
+        recordDiagnostic('backup.verified', { source: 'clean-exit' });
+      }
+    } catch (error) {
+      recordDiagnosticFailure('backup.failure', { source: 'clean-exit' }, error);
+    }
+  }
   db.close();
 });
 
@@ -754,8 +764,6 @@ secureHandle('runs:get-stats', filters =>
   db.getStats(security.validateStatsFilters(
     filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
   )));
-secureHandle('runs:get-recent-isk-per-hour', characterId =>
-  db.getRecentIskPerHour(security.requireInteger(characterId, 'Character ID')));
 secureHandle('runs:update-appraisal', (runId, data) =>
   db.updateAppraisal(
     security.requireInteger(runId, 'Run ID'),

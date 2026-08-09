@@ -461,7 +461,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /createPresetFromInventoryText/);
   assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
-  assert.match(appJs, /manualEditOriginal\?\.total_loss\s*\|\|\s*0/);
+  assert.match(appJs, /editOriginal\?\.total_loss\s*\|\|\s*0/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
   assert.match(appJs, /const droneDiff = diffOptionalDroneBay/);
   assert.match(appJs, /const _dd = diffOptionalDroneBay/);
@@ -480,7 +480,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
   assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
   assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
-  assert.match(appJs, /window\.api\.runs\.update\(manualEditRunId/);
+  assert.match(appJs, /window\.api\.runs\.update\(editRunId/);
   assert.doesNotMatch(appJs, /window\.api\.runs\.(?:updateMeta|updateCargoOnly)/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
@@ -552,7 +552,13 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
   assert.match(main, /clearTokens: characterId => db\.deleteSetting\(tokenKey\(characterId\)\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);
-  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);[\s\S]*db\.finishStartup\(\);/);
+  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);/);
+  assert.match(main, /app\.on\('before-quit'[\s\S]*db\.createExitBackup\(\);[\s\S]*db\.close\(\);/);
+  assert.match(database, /function createExitBackup\(\)[\s\S]*replaceExisting: true/);
+  assert.doesNotMatch(main, /finishStartup|runs:get-recent-isk-per-hour/);
+  assert.doesNotMatch(database, /finishStartup|getRecentIskPerHour/);
+  assert.doesNotMatch(preload, /getRecentIskPerHour|runs:get-recent-isk-per-hour/);
+  assert.doesNotMatch(appJs, /updateIskPerHour|iskPerHourDisplay/);
   assert.match(database, /secure_delete = ON/);
   assert.match(database, /quick_check/);
   assert.match(database, /user_version/);

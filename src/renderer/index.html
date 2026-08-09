@@ -838,7 +838,7 @@ input, select, textarea { font-family: var(--font); }
       <div class="settings-section" style="margin-top:24px">
         <div class="section-title">Data &amp; Recovery</div>
         <p style="color:var(--text-dim);font-size:12px;margin-bottom:12px;line-height:1.7">
-          AbyssLog creates one full database backup per day and retains the latest seven. Full backups preserve characters, run details, settings, and encrypted credentials. Restoring creates a safety copy of the current database and restarts AbyssLog. After reinstalling the operating system, you may need to reconnect EVE characters and re-enter the Janice API key.
+          AbyssLog writes a verified full database backup on each clean exit and retains the latest seven automatic backups. Full backups preserve characters, run details, settings, and encrypted credentials. Restoring creates a safety copy of the current database and restarts AbyssLog. After reinstalling the operating system, you may need to reconnect EVE characters and re-enter the Janice API key.
         </p>
         <div id="backupSummary" class="field-note"></div>
         <div id="backupLocation" class="field-note" style="overflow-wrap:anywhere"></div>
@@ -1097,6 +1097,7 @@ input, select, textarea { font-family: var(--font); }
 <script src="../shared/ui-errors.js"></script>
 <script src="../shared/updates.js"></script>
 <script src="../shared/statistics.js"></script>
+<script src="../shared/ship-groups.js"></script>
 <script src="./inventory-editor.js"></script>
 <script src="./app.js"></script>
 </body>
