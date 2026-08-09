@@ -21,6 +21,7 @@ const {
   APP_RENDERER_URL,
   resolveAppAssetPath,
 } = require('./app-protocol');
+const { registerCharacterDeletionHandler } = require('./character-handlers');
 const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
@@ -59,6 +60,8 @@ let pendingAuth = null;
 let diagnostics = null;
 let rendererRecoveryOpen = false;
 let appIsQuitting = false;
+let startupComplete = false;
+let exitBackupAttempted = false;
 let restoreRestartScheduled = false;
 const updateService = createUpdateService();
 
@@ -282,6 +285,16 @@ function secureHandle(channel, handler) {
   });
 }
 
+function isTrustedClipboardPermission(window, webContents, permission, requestingUrl, isMainFrame) {
+  return (
+    permission === 'clipboard-read'
+    && webContents === window.webContents
+    && window.webContents.getURL() === APP_RENDERER_URL
+    && requestingUrl === APP_RENDERER_URL
+    && isMainFrame === true
+  );
+}
+
 function validateObjectPayload(value, label, maxBytes = MAX_IPC_JSON_BYTES) {
   if (!security.isPlainObject(value)) throw new TypeError(`${label} must be an object`);
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > maxBytes) {
@@ -486,8 +499,23 @@ async function createWindow() {
     if (targetUrl !== window.webContents.getURL()) event.preventDefault();
   });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
-  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+  window.webContents.session.setPermissionCheckHandler((webContents, permission, _origin, details) => (
+    isTrustedClipboardPermission(
+      window,
+      webContents,
+      permission,
+      details.requestingUrl,
+      details.isMainFrame
+    )
+  ));
+  window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isTrustedClipboardPermission(
+      window,
+      webContents,
+      permission,
+      details.requestingUrl,
+      details.isMainFrame
+    ));
   });
   window.webContents.on('did-finish-load', () => {
     rendererHasLoaded = true;
@@ -542,14 +570,11 @@ if (!gotTheLock) {
     migrateLegacyJaniceKey();
     if (!db.getSetting('janice_api_key')) {
       db.hardenSensitiveStorage();
-      const startupDataStatus = db.finishStartup();
-      if (startupDataStatus.latestBackup) {
-        recordDiagnostic('backup.verified', { source: 'automatic' });
-      }
     }
     recordDiagnostic('startup.phase', { phase: 'window' });
     await createWindow();
     recordDiagnostic('startup.complete', { source: 'main' });
+    startupComplete = true;
   }).catch(error => {
     recordDiagnosticFailure('startup.failure', { source: 'main' }, error);
     const message = error instanceof Error ? error.message : 'Unknown startup error';
@@ -570,6 +595,17 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   appIsQuitting = true;
   recordDiagnostic('app.quit', { source: 'main' });
+  if (startupComplete && !exitBackupAttempted) {
+    exitBackupAttempted = true;
+    try {
+      if (!db.getSetting('janice_api_key')) {
+        db.createExitBackup();
+        recordDiagnostic('backup.verified', { source: 'clean-exit' });
+      }
+    } catch (error) {
+      recordDiagnosticFailure('backup.failure', { source: 'clean-exit' }, error);
+    }
+  }
   db.close();
 });
 
@@ -589,10 +625,10 @@ secureHandle('auth:has-tokens', characterId => Boolean(loadTokens(characterId)))
 secureHandle('auth:get-capabilities', characterId =>
   getCharacterCapabilities(security.requireInteger(characterId, 'Character ID')));
 secureHandle('auth:start-sso', selectedCapabilities => startSso(selectedCapabilities));
-secureHandle('auth:delete-character', characterId => {
-  const id = security.requireInteger(characterId, 'Character ID');
-  db.deleteSetting(tokenKey(id));
-  return db.deleteCharacter(id);
+registerCharacterDeletionHandler({
+  secureHandle,
+  database: db,
+  requireInteger: security.requireInteger,
 });
 
 secureHandle('settings:get', key => {
@@ -729,8 +765,6 @@ secureHandle('runs:get-stats', filters =>
   db.getStats(security.validateStatsFilters(
     filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
   )));
-secureHandle('runs:get-recent-isk-per-hour', characterId =>
-  db.getRecentIskPerHour(security.requireInteger(characterId, 'Character ID')));
 secureHandle('runs:update-appraisal', (runId, data) =>
   db.updateAppraisal(
     security.requireInteger(runId, 'Run ID'),

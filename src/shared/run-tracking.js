@@ -90,6 +90,13 @@
           }
           throw error;
         }
+        const latest = requireTokens(characterId);
+        if (
+          latest.access_token !== current.access_token
+          || latest.refresh_token !== current.refresh_token
+        ) {
+          return validateAccessToken(latest.access_token);
+        }
         const merged = {
           ...current,
           ...refreshed,

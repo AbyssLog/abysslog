@@ -83,8 +83,8 @@ are always created as drafts first.
 Create an annotated tag only after the release commit is on `main`:
 
 ```bash
-git tag -a v1.1.2 -m "AbyssLog v1.1.2"
-git push origin v1.1.2
+git tag -a v1.1.3 -m "AbyssLog v1.1.3"
+git push origin v1.1.3
 ```
 
 - [ ] Confirm the Release workflow succeeds.

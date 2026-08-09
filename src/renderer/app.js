@@ -4,6 +4,8 @@ const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
 const statistics = window.AbyssStatistics;
 const loadoutHelpers = window.AbyssLoadouts;
+const shipGroups = window.AbyssShipGroups;
+const inventoryEditors = window.AbyssInventoryEditor;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -58,7 +60,7 @@ const S = {
   diagnosticsStatus: null,
   settings: {},
   loadoutPresets: [],
-  runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraising | appraisal | died | loss
+  runState: 'awaiting', // awaiting | in-abyss | awaiting-cargo | appraisal | died
   activeRun: null,
   timerInterval: null,
   pollTimeout: null,
@@ -70,6 +72,8 @@ const S = {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
+  inventoryEditors.initialize(document);
+  initializeTrackerLayout();
   window.api.auth.onComplete(handleAuthComplete);
   window.api.auth.onError(handleAuthError);
 
@@ -108,6 +112,14 @@ async function init() {
 
 }
 
+function initializeTrackerLayout() {
+  const runSetup = document.getElementById('state-awaiting');
+  const recentRunsPanel = document.getElementById('recentRunsList')?.closest('.panel');
+  if (!runSetup || !recentRunsPanel) return;
+  recentRunsPanel.after(runSetup);
+}
+
+
 // ── Navigation ────────────────────────────────────────────────────────────
 function showPage(name) {
   document.querySelectorAll('.page').forEach(page => {
@@ -121,8 +133,9 @@ function showPage(name) {
     if (isActive) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  if (name === 'history') renderHistory();
-  if (name === 'stats') renderStats();
+  if (name === 'history') return renderHistory();
+  if (name === 'stats') return renderStats();
+  return undefined;
 }
 
 // ── Character Management ──────────────────────────────────────────────────
@@ -200,6 +213,7 @@ async function performCharacterSwitch(charId, save = true) {
     S.hasAuth = false;
     S.capabilities = normalizeCapabilities(null);
     showNoCharPrompt();
+    if (document.getElementById('page-history').classList.contains('active')) await renderHistory();
     if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
     return;
   }
@@ -216,7 +230,7 @@ async function performCharacterSwitch(charId, save = true) {
   document.getElementById('tracker-ui').style.display = 'block';
 
   loadDefaultSelects();
-  updateRecentRuns();
+  await updateRecentRuns();
   const restored = await restoreActiveRun(normalizedCharacterId);
   if (!restored) await restoreInventoryBaseline(normalizedCharacterId);
   resetTransitionTracker(restored?.state === 'in-abyss' ? 'inside' : 'outside');
@@ -233,6 +247,7 @@ async function performCharacterSwitch(charId, save = true) {
   }
 
   renderCharList();
+  if (document.getElementById('page-history').classList.contains('active')) await renderHistory();
   if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
 }
 
@@ -422,24 +437,20 @@ function stopESIPoll() {
 }
 
 // ── Run Lifecycle ─────────────────────────────────────────────────────────
-// EVE ship group IDs by class (not exhaustive but covers all abyssal-legal hulls)
-const FRIGATE_GROUPS  = new Set([25,324,831,1283,830,893,1527,237,834,893,543,1305,1534,1535]);
-const DESTROYER_GROUPS = new Set([420,541,1305,1534,1535]);
-const CRUISER_GROUPS  = new Set([26,906,833,358,963,894,832,540,209,27,900,1337]);
+let activeRunAppraisalGeneration = 0;
 
-function classifyShipByGroup(groupId) {
-  if (!groupId) return 'Unknown';
-  if (FRIGATE_GROUPS.has(groupId))   return 'Frigate';
-  if (DESTROYER_GROUPS.has(groupId)) return 'Destroyer';
-  if (CRUISER_GROUPS.has(groupId))   return 'Cruiser';
-  return 'Unknown';
+function isCurrentRunAppraisal(run, generation) {
+  return generation === activeRunAppraisalGeneration
+    && S.activeRun === run
+    && !run.finalizing
+    && !run.suspended;
 }
 
 async function classifyShip(typeId) {
   if (!typeId) return 'Unknown';
   try {
     const info = await window.api.esi.getTypeInfo(typeId);
-    return classifyShipByGroup(info.group_id);
+    return shipGroups.classifyShipByGroup(info.group_id);
   } catch (e) {
     return 'Unknown';
   }
@@ -472,7 +483,7 @@ function clearTrackerInputs() {
     'droneBeforeText',
     'droneAfterText',
   ]) {
-    document.getElementById(id).value = '';
+    setInventoryText(id, '');
   }
   hideInventoryBaselineStatus();
   document.getElementById('loadoutApplyStatus').hidden = true;
@@ -502,8 +513,8 @@ async function restoreInventoryBaseline(characterId) {
   if (!nextCargo.trim() && !nextDrones.trim()) return;
 
   inventoryBaselineRunId = latestRun.id;
-  document.getElementById('cargoBeforeText').value = nextCargo;
-  document.getElementById('droneBeforeText').value = nextDrones;
+  setInventoryText('cargoBeforeText', nextCargo);
+  setInventoryText('droneBeforeText', nextDrones);
   updatePasteHint('cargoBeforeText', 'preCargoHint');
   updatePasteHint('droneBeforeText', 'preDroneHint');
   if (nextDrones.trim()) {
@@ -522,8 +533,8 @@ async function clearInventoryBaseline() {
     }
   }
   inventoryBaselineRunId = null;
-  document.getElementById('cargoBeforeText').value = '';
-  document.getElementById('droneBeforeText').value = '';
+  setInventoryText('cargoBeforeText', '');
+  setInventoryText('droneBeforeText', '');
   updatePasteHint('cargoBeforeText', 'preCargoHint');
   updatePasteHint('droneBeforeText', 'preDroneHint');
   hideInventoryBaselineStatus();
@@ -582,12 +593,12 @@ function showLoadoutEditorPreset(preset) {
   loadoutEditId = preset?.id || null;
   document.getElementById('loadoutManagerSelect').value = loadoutEditId || '';
   document.getElementById('loadoutNameInput').value = preset?.name || '';
-  document.getElementById('loadoutCargoText').value = preset
+  setInventoryText('loadoutCargoText', preset
     ? loadoutHelpers.formatInventoryItems(preset.cargo)
-    : document.getElementById('cargoBeforeText').value;
-  document.getElementById('loadoutDroneText').value = preset
+    : document.getElementById('cargoBeforeText').value);
+  setInventoryText('loadoutDroneText', preset
     ? loadoutHelpers.formatInventoryItems(preset.drone)
-    : document.getElementById('droneBeforeText').value;
+    : document.getElementById('droneBeforeText').value);
   document.getElementById('deleteLoadoutBtn').hidden = !preset;
   setLoadoutEditorStatus();
 }
@@ -655,8 +666,8 @@ function applyLoadoutPreset() {
 
   const cargoText = loadoutHelpers.formatInventoryItems(preset.cargo);
   const droneText = loadoutHelpers.formatInventoryItems(preset.drone);
-  document.getElementById('cargoBeforeText').value = cargoText;
-  document.getElementById('droneBeforeText').value = droneText;
+  setInventoryText('cargoBeforeText', cargoText);
+  setInventoryText('droneBeforeText', droneText);
   inventoryBaselineRunId = null;
   hideInventoryBaselineStatus();
   updatePasteHint('cargoBeforeText', 'preCargoHint');
@@ -750,10 +761,10 @@ async function restoreActiveRun(characterId) {
   hideInventoryBaselineStatus();
   S.activeRun = snapshot.run;
   lastSystemId = snapshot.run.system_id;
-  document.getElementById('cargoBeforeText').value = snapshot.run.cargoBefore;
-  document.getElementById('cargoAfterText').value = snapshot.run.cargoAfter;
-  document.getElementById('droneBeforeText').value = snapshot.run.droneBefore;
-  document.getElementById('droneAfterText').value = snapshot.run.droneAfter;
+  setInventoryText('cargoBeforeText', snapshot.run.cargoBefore);
+  setInventoryText('cargoAfterText', snapshot.run.cargoAfter);
+  setInventoryText('droneBeforeText', snapshot.run.droneBefore);
+  setInventoryText('droneAfterText', snapshot.run.droneAfter);
   document.getElementById('fitCaptured').style.display =
     snapshot.run.fitCaptured ? 'block' : 'none';
   updateRunInfo();
@@ -981,6 +992,7 @@ async function reconcileKillmailLoss({ reappraise = false } = {}) {
       run.started_at,
       run.started_at + run.duration
     );
+    if (S.activeRun !== run || run.finalizing || run.suspended) return false;
     if (!loss) {
       status.textContent =
         'Killmail is not available yet. ESI may take up to five minutes; the current estimate is still shown.';
@@ -1010,6 +1022,7 @@ async function reconcileKillmailLoss({ reappraise = false } = {}) {
     if (reappraise) await appraiseLoss();
     return true;
   } catch (error) {
+    if (S.activeRun !== run || run.finalizing || run.suspended) return false;
     status.textContent = `Killmail check failed: ${error.message}`;
     status.className = 'alert warn';
     retryButton.textContent = 'Retry Killmail';
@@ -1025,25 +1038,29 @@ async function retryKillmailLoss() {
 }
 
 async function appraiseRun() {
+  const run = S.activeRun;
+  if (!run) return;
   if (!S.hasJaniceKey) {
     document.getElementById('appraise-error').innerHTML = '<div class="alert err">Janice API key not set. Go to Settings to add it.</div>';
     document.getElementById('appraise-error').style.display = 'block';
     return;
   }
+  const generation = ++activeRunAppraisalGeneration;
+  if (!isCurrentRunAppraisal(run, generation)) return;
   document.getElementById('appraise-error').style.display = 'none';
   document.getElementById('appraiseSpinner').style.display = 'inline-block';
 
   // Always re-read all paste boxes at appraise time so edits are picked up
-  S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
-  S.activeRun.droneBefore = document.getElementById('droneBeforeText').value;
+  run.cargoBefore = document.getElementById('cargoBeforeText').value;
+  run.droneBefore = document.getElementById('droneBeforeText').value;
   const cargoAfter = document.getElementById('cargoAfterText').value;
   const droneAfter = document.getElementById('droneAfterText').value;
-  S.activeRun.cargoAfter = cargoAfter;
-  S.activeRun.droneAfter = droneAfter;
+  run.cargoAfter = cargoAfter;
+  run.droneAfter = droneAfter;
 
   // Merge cargo and drone bay diffs
-  const cargoDiff = diffCargo(S.activeRun.cargoBefore, cargoAfter);
-  const droneDiff = diffOptionalDroneBay(S.activeRun.droneBefore || '', droneAfter);
+  const cargoDiff = diffCargo(run.cargoBefore, cargoAfter);
+  const droneDiff = diffOptionalDroneBay(run.droneBefore || '', droneAfter);
   const diff = {
     gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
     consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed)
@@ -1051,83 +1068,102 @@ async function appraiseRun() {
 
   try {
     await persistActiveRun();
+    if (!isCurrentRunAppraisal(run, generation)) return;
     let lootResult = null, consumedResult = null;
 
     if (diff.gained.length > 0) {
       lootResult = await window.api.janice.appraise(diff.gained, 'buy');
+      if (!isCurrentRunAppraisal(run, generation)) return;
     }
     if (diff.consumed.length > 0) {
       consumedResult = await window.api.janice.appraise(diff.consumed, 'sell');
+      if (!isCurrentRunAppraisal(run, generation)) return;
     }
 
-    S.activeRun.diff = diff;
-    S.activeRun.lootResult = lootResult;
-    S.activeRun.consumedResult = consumedResult;
+    run.diff = diff;
+    run.lootResult = lootResult;
+    run.consumedResult = consumedResult;
 
     const lootVal = lootResult ? lootResult.totalBuyPrice : 0;
     const consumedCost = consumedResult ? consumedResult.totalSellPrice : 0;
-    S.activeRun.loot_value = lootVal;
-    S.activeRun.consumed_cost = consumedCost;
-    S.activeRun.net_isk = lootVal - consumedCost;
+    run.loot_value = lootVal;
+    run.consumed_cost = consumedCost;
+    run.net_isk = lootVal - consumedCost;
 
     renderAppraisalResults(lootResult, consumedResult, diff);
     setRunState('appraisal');
     void persistActiveRun().catch(reportActiveRunCheckpointError);
   } catch (e) {
-    document.getElementById('appraise-error').innerHTML = `<div class="alert err">Appraisal failed: ${esc(e.message)} <button class="btn sm red" data-action="appraise-run">Retry</button></div>`;
-    document.getElementById('appraise-error').style.display = 'block';
+    if (isCurrentRunAppraisal(run, generation)) {
+      document.getElementById('appraise-error').innerHTML = `<div class="alert err">Appraisal failed: ${esc(e.message)} <button class="btn sm red" data-action="appraise-run">Retry</button></div>`;
+      document.getElementById('appraise-error').style.display = 'block';
+    }
+  } finally {
+    if (generation === activeRunAppraisalGeneration) {
+      document.getElementById('appraiseSpinner').style.display = 'none';
+    }
   }
-  document.getElementById('appraiseSpinner').style.display = 'none';
 }
 
 async function appraiseLoss() {
-  const cargoItems = parseCargo(S.activeRun.cargoBefore);
-  const droneItems = parseCargo(S.activeRun.droneBefore || '');
+  const run = S.activeRun;
+  if (!run) return;
+  const generation = ++activeRunAppraisalGeneration;
+  if (!isCurrentRunAppraisal(run, generation)) return;
+  const cargoItems = parseCargo(run.cargoBefore);
+  const droneItems = parseCargo(run.droneBefore || '');
   const manuallyTrackedInventory = mergeDiffItems(cargoItems, droneItems);
   const fittingItems = droneItems.length > 0
-    ? S.activeRun.fitting.filter(item => item.slot !== 'DroneBay')
-    : S.activeRun.fitting;
+    ? run.fitting.filter(item => item.slot !== 'DroneBay')
+    : run.fitting;
 
   try {
     const results = { killmail: null, cargo: null, fitting: null, implants: null };
 
-    if (S.activeRun.killmailItems?.length > 0) {
+    if (run.killmailItems?.length > 0) {
       if (S.hasJaniceKey) {
         results.killmail = await window.api.janice.appraise(
-          S.activeRun.killmailItems.map(item => ({
+          run.killmailItems.map(item => ({
             name: item.type_name,
             qty: item.qty,
           })),
           'sell'
         );
+        if (!isCurrentRunAppraisal(run, generation)) return;
       }
     } else {
       if (manuallyTrackedInventory.length > 0 && S.hasJaniceKey) {
         results.cargo = await window.api.janice.appraise(manuallyTrackedInventory, 'sell');
+        if (!isCurrentRunAppraisal(run, generation)) return;
       }
       if (fittingItems.length > 0 && S.hasJaniceKey) {
         results.fitting = await window.api.janice.appraise(
           fittingItems.map(f => ({ name: f.type_name, qty: f.qty })), 'sell'
         );
+        if (!isCurrentRunAppraisal(run, generation)) return;
       }
-      if (S.activeRun.implants.length > 0 && S.hasJaniceKey) {
+      if (run.implants.length > 0 && S.hasJaniceKey) {
         results.implants = await window.api.janice.appraise(
-          S.activeRun.implants.map(i => ({ name: i.type_name, qty: 1 })), 'sell'
+          run.implants.map(i => ({ name: i.type_name, qty: 1 })), 'sell'
         );
+        if (!isCurrentRunAppraisal(run, generation)) return;
       }
     }
 
+    if (!isCurrentRunAppraisal(run, generation)) return;
     const killmailLoss = results.killmail ? results.killmail.totalSellPrice : 0;
     const cargoLoss = results.cargo ? results.cargo.totalSellPrice : 0;
     const fittingLoss = results.fitting ? results.fitting.totalSellPrice : 0;
     const implantLoss = results.implants ? results.implants.totalSellPrice : 0;
-    S.activeRun.total_loss = killmailLoss + cargoLoss + fittingLoss + implantLoss;
-    S.activeRun.lossResults = results;
+    run.total_loss = killmailLoss + cargoLoss + fittingLoss + implantLoss;
+    run.lossResults = results;
 
     renderLossResults(results, cargoLoss, fittingLoss, implantLoss, killmailLoss);
   } catch (e) {
-    document.getElementById('loss-loading').textContent = 'Appraisal failed: ' + e.message;
-    document.getElementById('loss-actions').style.display = 'flex';
+    if (isCurrentRunAppraisal(run, generation)) {
+      document.getElementById('loss-loading').textContent = 'Appraisal failed: ' + e.message;
+      document.getElementById('loss-actions').style.display = 'flex';
+    }
   }
 }
 
@@ -1309,7 +1345,7 @@ async function saveCurrentRun() {
     consumed_cost: run.consumed_cost || 0,
     net_isk: run.net_isk || 0,
     total_loss: run.total_loss || 0,
-    system_id: lastSystemId,
+    system_id: run.system_id ?? lastSystemId,
     cargo_before: run.cargoBefore || '',
     cargo_after: run.cargoAfter || '',
     drone_before: run.droneBefore || '',
@@ -1332,20 +1368,20 @@ async function saveCurrentRun() {
   // Promote post-run cargo and drone bay to pre-run for next run
   if (run.outcome === 'Survived') {
     inventoryBaselineRunId = completedRunId;
-    document.getElementById('cargoBeforeText').value = run.cargoAfter;
+    setInventoryText('cargoBeforeText', run.cargoAfter);
     // If post-run drone bay was pasted use it, otherwise carry pre-run forward unchanged
     const nextDroneBefore = (run.droneAfter && run.droneAfter.trim())
       ? run.droneAfter
       : run.droneBefore || '';
-    document.getElementById('droneBeforeText').value = nextDroneBefore;
+    setInventoryText('droneBeforeText', nextDroneBefore);
     updatePasteHint('droneBeforeText', 'preDroneHint');
     if (nextDroneBefore.trim()) {
       setCollapsibleState('preDroneBody', 'preDroneArrow', true);
     }
   } else {
     inventoryBaselineRunId = null;
-    document.getElementById('cargoBeforeText').value = '';
-    document.getElementById('droneBeforeText').value = '';
+    setInventoryText('cargoBeforeText', '');
+    setInventoryText('droneBeforeText', '');
   }
 
   S.activeRun = null;
@@ -1361,7 +1397,7 @@ async function saveCurrentRun() {
   } else {
     hideInventoryBaselineStatus();
   }
-  updateRecentRuns();
+  await runUiTask('Run saved, but recent runs could not be refreshed', () => updateRecentRuns());
 }
 
 async function saveCurrentRunSafely() {
@@ -1387,6 +1423,7 @@ async function saveCurrentRunSafely() {
 let manualEditRunId = null; // null = new entry, number = editing existing
 let manualEditOriginal = null;
 let manualEditPendingAppraisal = null;
+let manualEntrySubmitting = false;
 const MANUAL_EDIT_PREVIEW_FIELDS = new Set([
   'manualTier',
   'manualWeather',
@@ -1413,7 +1450,7 @@ function invalidateManualEditAppraisalPreview(element) {
 }
 
 
-function openManualEntryModal(runToEdit = null) {
+function openManualEntryModal() {
   manualEditRunId = null;
   manualEditOriginal = null;
   manualEditPendingAppraisal = null;
@@ -1424,10 +1461,10 @@ function openManualEntryModal(runToEdit = null) {
   document.getElementById('manualWeather').value = S.settings.default_weather || '';
   document.getElementById('manualOutcome').value = 'Survived';
   document.getElementById('manualDuration').value = '';
-  document.getElementById('manualCargoBefore').value = '';
-  document.getElementById('manualDroneBefore').value = '';
-  document.getElementById('manualCargoAfter').value = '';
-  document.getElementById('manualDroneAfter').value = '';
+  setInventoryText('manualCargoBefore', '');
+  setInventoryText('manualDroneBefore', '');
+  setInventoryText('manualCargoAfter', '');
+  setInventoryText('manualDroneAfter', '');
   document.getElementById('manualEntryStatus').innerHTML = '';
   // Default date to now
   const now = new Date();
@@ -1462,10 +1499,10 @@ async function openEditRunModal(runId) {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
   document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
-  document.getElementById('manualCargoBefore').value = run.cargo_before || '';
-  document.getElementById('manualDroneBefore').value = run.drone_before || '';
-  document.getElementById('manualDroneAfter').value = run.drone_after || '';
-  document.getElementById('manualCargoAfter').value = run.cargo_after || '';
+  setInventoryText('manualCargoBefore', run.cargo_before || '');
+  setInventoryText('manualDroneBefore', run.drone_before || '');
+  setInventoryText('manualDroneAfter', run.drone_after || '');
+  setInventoryText('manualCargoAfter', run.cargo_after || '');
   document.getElementById('manualEntryStatus').innerHTML = '';
   updateManualOutcomeUI();
   closeModal('runDetailModal');
@@ -1482,7 +1519,15 @@ function updateManualOutcomeUI() {
   }
 }
 
-function closeManualEntryModal() {
+function setManualEntrySubmitting(submitting) {
+  manualEntrySubmitting = submitting;
+  document.querySelectorAll('#manualEntryModal button, #manualEntryModal input, #manualEntryModal select, #manualEntryModal textarea')
+    .forEach(control => { control.disabled = submitting; });
+  document.getElementById('manualSpinner').style.display = submitting ? 'inline-block' : 'none';
+}
+
+function closeManualEntryModal(force = false) {
+  if (manualEntrySubmitting && !force) return;
   closeModal('manualEntryModal');
   manualEditRunId = null;
   manualEditOriginal = null;
@@ -1573,20 +1618,22 @@ function parseDuration(str) {
   return parseInt(str) || 0;
 }
 async function refreshSavedRunViews() {
-  const tasks = [renderHistory(), updateRecentRuns(), updateIskPerHour()];
+  const tasks = [
+    runUiTask('Could not refresh run history', () => renderHistory()),
+    runUiTask('Could not refresh recent runs', () => updateRecentRuns()),
+  ];
   if (document.getElementById('page-stats').classList.contains('active')) {
-    tasks.push(renderStats());
+    tasks.push(runUiTask('Could not refresh Statistics', () => renderStats()));
   }
-  const refreshes = await Promise.allSettled(tasks);
-  for (const refresh of refreshes) {
-    if (refresh.status === 'rejected') {
-      console.error('Post-save view refresh failed:', refresh.reason);
-    }
-  }
+  await Promise.all(tasks);
 }
 
 
 async function submitManualEntry(doAppraise = true) {
+  if (manualEntrySubmitting) return;
+  const editRunId = manualEditRunId;
+  const editOriginal = manualEditOriginal;
+  const characterId = S.activeCharId;
   const tier = document.getElementById('manualTier').value;
   const weather = document.getElementById('manualWeather').value;
   const outcome = document.getElementById('manualOutcome').value;
@@ -1612,7 +1659,7 @@ async function submitManualEntry(doAppraise = true) {
   });
   const pendingAppraisal = manualEditPendingAppraisal?.signature === formSignature
     ? manualEditPendingAppraisal : null;
-  if (doAppraise && manualEditRunId) manualEditPendingAppraisal = null;
+  if (doAppraise && editRunId) manualEditPendingAppraisal = null;
 
   if (!tier || !weather) {
     statusEl.innerHTML = '<div class="alert err">Please select a tier and weather type.</div>';
@@ -1624,8 +1671,8 @@ async function submitManualEntry(doAppraise = true) {
   }
   if (
     !doAppraise
-    && manualEditRunId
-    && outcome !== manualEditOriginal?.outcome
+    && editRunId
+    && outcome !== editOriginal?.outcome
     && !pendingAppraisal
   ) {
     statusEl.innerHTML =
@@ -1636,14 +1683,14 @@ async function submitManualEntry(doAppraise = true) {
   const started_at = dateVal ? Math.floor(new Date(dateVal).getTime() / 1000) : Math.floor(Date.now() / 1000);
   const savedCargoAfter = outcome === 'Survived' ? cargoAfter : '';
   const savedDroneAfter = outcome === 'Survived' ? droneAfter : '';
-  document.getElementById('manualSpinner').style.display = 'inline-block';
+  setManualEntrySubmitting(true);
   statusEl.innerHTML = '';
 
   try {
     let loot_value = 0, consumed_cost = 0, net_isk = 0, total_loss = 0;
     let items = [];
 
-    if (!doAppraise && manualEditRunId) {
+    if (!doAppraise && editRunId) {
       const meta = {
         tier,
         weather,
@@ -1652,7 +1699,7 @@ async function submitManualEntry(doAppraise = true) {
         started_at,
         total_loss: pendingAppraisal
           ? pendingAppraisal.total_loss
-          : (manualEditOriginal?.total_loss || 0),
+          : (editOriginal?.total_loss || 0),
         ship_class: shipClass,
       };
       const update = pendingAppraisal
@@ -1666,10 +1713,9 @@ async function submitManualEntry(doAppraise = true) {
               drone_after: savedDroneAfter,
             },
           };
-      await window.api.runs.update(manualEditRunId, update);
-      closeManualEntryModal();
+      await window.api.runs.update(editRunId, update);
+      closeManualEntryModal(true);
       await refreshSavedRunViews();
-      document.getElementById('manualSpinner').style.display = 'none';
       return;
     }
     if (outcome === 'Survived') {
@@ -1720,7 +1766,7 @@ async function submitManualEntry(doAppraise = true) {
     }
 
     const runData = {
-      character_id: S.activeCharId,
+      character_id: characterId,
       started_at,
       duration,
       tier,
@@ -1752,7 +1798,7 @@ async function submitManualEntry(doAppraise = true) {
       items,
     };
 
-    if (manualEditRunId) {
+    if (editRunId) {
       manualEditPendingAppraisal = {
         signature: formSignature,
         total_loss,
@@ -1764,14 +1810,15 @@ async function submitManualEntry(doAppraise = true) {
       statusEl.innerHTML = `<div class="alert success">${esc(previewMessage)}</div>`;
     } else {
       await window.api.runs.save(runData);
-      closeManualEntryModal();
+      closeManualEntryModal(true);
       await refreshSavedRunViews();
       statusEl.innerHTML = '';
     }
   } catch (e) {
     statusEl.innerHTML = `<div class="alert err">Failed: ${esc(e.message)}</div>`;
+  } finally {
+    setManualEntrySubmitting(false);
   }
-  document.getElementById('manualSpinner').style.display = 'none';
 }
 
 async function cancelRun() {
@@ -1794,8 +1841,8 @@ function backToAppraise() {
     S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
     S.activeRun.droneBefore = document.getElementById('droneBeforeText').value;
   }
-  document.getElementById('cargoAfterText').value = S.activeRun ? S.activeRun.cargoAfter : '';
-  document.getElementById('droneAfterText').value = S.activeRun ? (S.activeRun.droneAfter || '') : '';
+  setInventoryText('cargoAfterText', S.activeRun ? S.activeRun.cargoAfter : '');
+  setInventoryText('droneAfterText', S.activeRun ? (S.activeRun.droneAfter || '') : '');
   setRunState('awaiting-cargo');
   void persistActiveRun().catch(reportActiveRunCheckpointError);
 }
@@ -1809,8 +1856,8 @@ function resetRunUI() {
   document.getElementById('infoWeather').textContent = '—';
   document.getElementById('infoStarted').textContent = '—';
   document.getElementById('infoOutcome').textContent = '—';
-  document.getElementById('cargoAfterText').value = '';
-  document.getElementById('droneAfterText').value = '';
+  setInventoryText('cargoAfterText', '');
+  setInventoryText('droneAfterText', '');
   document.getElementById('fitCaptured').style.display = 'none';
   document.getElementById('appraise-error').style.display = 'none';
   document.getElementById('recoveryStatus').style.display = 'none';
@@ -1898,6 +1945,10 @@ function updateFilamentInference() {
   status.style.display = 'block';
 }
 
+function setInventoryText(id, value, options = {}) {
+  return inventoryEditors.setValue(id, value, options);
+}
+
 function parseCargo(raw) {
   return runTracking.parseInventoryPaste(raw || '');
 }
@@ -1915,16 +1966,21 @@ function diffOptionalDroneBay(beforeRaw, afterRaw) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────
+let historyRenderGeneration = 0;
+
 async function renderHistory() {
+  const generation = ++historyRenderGeneration;
+  const characterId = S.activeCharId;
   const el = document.getElementById('historyContent');
   const filters = {
-    character_id: S.activeCharId || undefined,
+    character_id: characterId || undefined,
     tier: document.getElementById('filterTier').value || undefined,
     weather: document.getElementById('filterWeather').value || undefined,
     outcome: document.getElementById('filterOutcome').value || undefined,
   };
 
   const runs = await window.api.runs.getAll(filters);
+  if (generation !== historyRenderGeneration || S.activeCharId !== characterId) return;
   if (!runs.length) {
     el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
     return;
@@ -1935,6 +1991,7 @@ async function renderHistory() {
     let av = a[S.sortCol], bv = b[S.sortCol];
     if (typeof av === 'string') av = av.toLowerCase();
     if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av === bv) return 0;
     return S.sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 
@@ -1982,7 +2039,7 @@ async function renderHistory() {
 function sortHistory(col) {
   if (S.sortCol === col) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
   else { S.sortCol = col; S.sortDir = 'desc'; }
-  renderHistory();
+  return renderHistory();
 }
 
 let pendingHistoricalReappraisal = null;
@@ -1998,8 +2055,19 @@ async function showRunDetail(runId) {
   const gained = run.items.filter(i => i.type === 'gained');
   const consumed = run.items.filter(i => i.type === 'consumed');
   const lost = run.items.filter(i => i.type === 'lost');
+  const droneAfterSnapshot = inventoryEditors.resolveDroneAfterSnapshot(
+    run.drone_before, run.drone_after, run.outcome
+  );
+  const displayUnchangedDroneBay = droneAfterSnapshot.usesFallback;
+  const displayedDroneAfter = droneAfterSnapshot.text;
+  const unchangedDroneAttribute = displayUnchangedDroneBay
+    ? ' data-inventory-fallback="unchanged"'
+    : '';
+  const unchangedDroneBadge = displayUnchangedDroneBay
+    ? '<span class="inventory-unchanged-badge">Unchanged</span>'
+    : '';
 
-  let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+  let html = `<div class="run-detail-summary">
     <div><div class="field-label">Date</div><div class="mono" style="font-size:12px">${d.toLocaleString()}</div></div>
     <div><div class="field-label">Duration</div><div class="mono" style="font-size:12px">${fmtDuration(run.duration)}</div></div>
     <div><div class="field-label">Outcome</div><div><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${esc(run.outcome)}</span></div></div>
@@ -2031,6 +2099,7 @@ async function showRunDetail(runId) {
     </div>`;
   }
 
+  html += '<div class="run-detail-appraisals">';
   if (gained.length) {
     html += itemTableHtml('Loot Gained', gained, 'gained', 'unit_price_buy');
   }
@@ -2040,28 +2109,32 @@ async function showRunDetail(runId) {
   if (lost.length) {
     html += itemTableHtml('Items Lost', lost, 'consumed', 'unit_price_sell');
   }
+  html += '</div>';
 
   // Cargo paste section — always shown, editable for re-appraisal
-  const hasCargo = run.cargo_before || run.cargo_after;
-  html += `<div class="section-title" style="margin-top:18px">Cargo Pastes</div>`;
+  html += `<div class="section-title run-detail-inventory-title">Inventory Snapshots</div>`;
 
   if (run.outcome === 'Survived') {
-    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-      <div>
+    html += `<div class="run-detail-inventory-grid">
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailCargoBefore">Pre-Run Cargo</label>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px">${esc(run.cargo_before || '')}</textarea>
-        <label class="field-label" for="detailDroneBefore" style="margin-top:8px">Pre-Run Drone Bay</label>
-        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px">${esc(run.drone_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px" data-inventory-editor>${esc(run.cargo_before || '')}</textarea>
       </div>
-      <div>
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailCargoAfter">Post-Run Cargo</label>
-        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px">${esc(run.cargo_after || '')}</textarea>
-        <label class="field-label" for="detailDroneAfter" style="margin-top:8px">Post-Run Drone Bay</label>
-        <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px">${esc(run.drone_after || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px" data-inventory-editor data-inventory-compare="detailCargoBefore">${esc(run.cargo_after || '')}</textarea>
+      </div>
+      <div class="run-detail-inventory-card">
+        <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay</label>
+        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px" data-inventory-editor>${esc(run.drone_before || '')}</textarea>
+      </div>
+      <div class="run-detail-inventory-card">
+        <label class="field-label" for="detailDroneAfter">Post-Run Drone Bay ${unchangedDroneBadge}</label>
+        <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px" data-inventory-editor data-inventory-compare="detailDroneBefore"${unchangedDroneAttribute}>${esc(displayedDroneAfter)}</textarea>
       </div>
     </div>
-    <div id="reappraise-status-${run.id}" role="status" aria-live="polite" style="margin-bottom:8px"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+    <div class="run-detail-reappraisal-status" id="reappraise-status-${run.id}" role="status" aria-live="polite"></div>
+    <div class="run-detail-actions">
       <button class="btn gold sm" data-action="reappraise-run" data-run-id="${esc(run.id)}"><span id="reappraise-spinner-${esc(run.id)}" style="display:none" class="spinner"></span> Re-Appraise Loot</button>
       <button class="btn green sm" id="reappraise-save-${esc(run.id)}" data-action="save-reappraisal" data-run-id="${esc(run.id)}" hidden>Save Changes</button>
       <button class="btn sm ghost" id="reappraise-discard-${esc(run.id)}" data-action="discard-reappraisal" data-run-id="${esc(run.id)}" hidden>Discard</button>
@@ -2070,23 +2143,24 @@ async function showRunDetail(runId) {
     </div>`;
   } else {
     // Died — only pre-run cargo, no post-run
-    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-      <div>
+    html += `<div class="run-detail-inventory-grid">
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailCargoBefore">Pre-Run Cargo (at time of death)</label>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.cargo_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly data-inventory-editor>${esc(run.cargo_before || '')}</textarea>
       </div>
-      <div>
+      <div class="run-detail-inventory-card">
         <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay (at time of death)</label>
-        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly>${esc(run.drone_before || '')}</textarea>
+        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly data-inventory-editor>${esc(run.drone_before || '')}</textarea>
       </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+    <div class="run-detail-actions">
       <button class="btn sm ghost" data-action="edit-run" data-run-id="${esc(run.id)}">✎ Edit Run</button>
       <button class="btn sm red" data-action="delete-run" data-run-id="${esc(run.id)}">Delete Run</button>
     </div>`;
   }
 
   document.getElementById('runDetailContent').innerHTML = html;
+  inventoryEditors.initialize(document.getElementById('runDetailContent'));
   openModal('runDetailModal');
 }
 
@@ -2148,7 +2222,10 @@ async function reappraiseRun(runId) {
   const cargoBefore = cargoBeforeEl.value;
   const cargoAfter = cargoAfterEl.value;
   const droneBefore = document.getElementById('detailDroneBefore')?.value || '';
-  const droneAfter = document.getElementById('detailDroneAfter')?.value || '';
+  const droneAfterEl = document.getElementById('detailDroneAfter');
+  const droneAfter = droneAfterEl?.dataset.inventoryFallback === 'unchanged'
+    ? ''
+    : droneAfterEl?.value || '';
 
   if (!cargoAfter.trim()) {
     setReappraisalStatus(runId, 'Post-run cargo is empty - paste it first.', 'warn');
@@ -2390,8 +2467,7 @@ async function deleteRun(runId) {
   if (!confirm('Delete this run? This cannot be undone.')) return;
   await window.api.runs.delete(runId);
   closeModal('runDetailModal');
-  renderHistory();
-  updateRecentRuns();
+  await refreshSavedRunViews();
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────
@@ -2420,9 +2496,9 @@ function getSelectedStatsRange() {
   });
 }
 
-function createStatsFilters(range) {
+function createStatsFilters(range, characterId) {
   const filters = {};
-  if (S.activeCharId) filters.character_id = S.activeCharId;
+  if (characterId) filters.character_id = characterId;
   if (range.range_start !== undefined) filters.range_start = range.range_start;
   if (range.range_end !== undefined) filters.range_end = range.range_end;
   return filters;
@@ -2430,6 +2506,7 @@ function createStatsFilters(range) {
 
 async function renderStats() {
   const generation = ++statsRenderGeneration;
+  const characterId = S.activeCharId;
   const el = document.getElementById('statsContent');
   const filterError = document.getElementById('statsFilterError');
   let range;
@@ -2443,12 +2520,12 @@ async function renderStats() {
   }
   filterError.hidden = true;
   document.getElementById('statsRangeSummary').textContent = range.label;
-  const filters = createStatsFilters(range);
+  const filters = createStatsFilters(range, characterId);
   const [stats, daily] = await Promise.all([
     window.api.runs.getStats(filters),
     window.api.runs.getDailyStats(filters)
   ]);
-  if (generation !== statsRenderGeneration) return;
+  if (generation !== statsRenderGeneration || S.activeCharId !== characterId) return;
   const o = stats.overall;
 
   if (!o || o.total_runs === 0) {
@@ -2464,9 +2541,12 @@ async function renderStats() {
     firstRun: o.first_run,
     lastRun: o.last_run,
   });
-  const chartTitle = chart.bucket === 'week' ? 'Weekly Activity' : 'Daily Activity';
-  const chartNote = chart.bucket === 'week'
-    ? 'Seven-day totals; inactive days are included' : 'Daily totals; inactive days are shown as zero';
+  const chartTitle = chart.bucket === 'day'
+    ? 'Daily Activity'
+    : chart.bucket === 'week' ? 'Weekly Activity' : `${chart.bucketDays}-Day Activity`;
+  const chartNote = chart.bucket === 'day'
+    ? 'Daily totals; inactive days are shown as zero'
+    : `${chart.bucketDays}-day totals; inactive days are included`;
 
   let html = `<div class="stat-grid">
     <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
@@ -2526,10 +2606,10 @@ async function renderStats() {
   el.innerHTML = html;
 
   // Render chart after DOM is set
-  renderDailyChart(chart.rows, chart.bucket);
+  renderDailyChart(chart.rows, chart.bucket, chart.bucketDays);
 }
 
-function renderDailyChart(daily, bucket = 'day') {
+function renderDailyChart(daily, bucket = 'day', bucketDays = 1) {
   const container = document.getElementById('dailyChart');
   if (!container) return;
   if (!daily || daily.length === 0) {
@@ -2581,8 +2661,7 @@ function renderDailyChart(daily, bucket = 'day') {
   const zeroY = ch;
   svg += `<line x1="0" y1="${zeroY}" x2="${cw}" y2="${zeroY}" stroke="#2a4060" stroke-width="1"/>`;
 
-  // ISK area path + loss area path
-  let iskPoints = '', lossPoints = '';
+  // ISK and loss area paths
   let iskPath = '', lossPath = '';
 
   daily.forEach((d, i) => {
@@ -2603,17 +2682,16 @@ function renderDailyChart(daily, bucket = 'day') {
     }
   });
 
-  // Close paths for fill
+  // Close the area fills at the zero line.
   const lastX = Math.round((daily.length - 0.5) * cw / n);
   const firstX = Math.round(0.5 * cw / n);
+  const hasLoss = daily.some(d => d.net_isk < 0);
   svg += `<path d="${iskPath} L${lastX},${ch} L${firstX},${ch} Z" fill="url(#iskGrad)" opacity="0.7"/>`;
-  svg += `<path d="${iskPath}" fill="none" stroke="#66bb6a" stroke-width="1.5"/>`;
-  if (daily.some(d => d.net_isk < 0)) {
+  if (hasLoss) {
     svg += `<path d="${lossPath} L${lastX},${ch} L${firstX},${ch} Z" fill="url(#lossGrad)" opacity="0.7"/>`;
-    svg += `<path d="${lossPath}" fill="none" stroke="#ef5350" stroke-width="1.5"/>`;
   }
 
-  // Run count bars (subtle, behind ISK line)
+  // Run count bars are painted before the ISK lines so the lines remain visible.
   daily.forEach((d, i) => {
     const x = Math.round(i * cw / n + (cw / n - barW) / 2);
     const barH = Math.round((d.total_runs / maxRuns) * (ch * 0.25));
@@ -2621,8 +2699,14 @@ function renderDailyChart(daily, bucket = 'day') {
     svg += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="#4fc3f7" opacity="0.25" rx="1"/>`;
   });
 
-  // X axis labels — show every N days to avoid crowding
-  const labelEvery = daily.length <= 14 ? 1 : daily.length <= 30 ? 3 : 7;
+  svg += `<path d="${iskPath}" fill="none" stroke="#66bb6a" stroke-width="1.5"/>`;
+  if (hasLoss) {
+    svg += `<path d="${lossPath}" fill="none" stroke="#ef5350" stroke-width="1.5"/>`;
+  }
+
+  // Fit date labels to the available width regardless of the selected range.
+  const maxLabels = Math.max(2, Math.floor(cw / 48));
+  const labelEvery = Math.max(1, Math.ceil(daily.length / maxLabels));
   daily.forEach((d, i) => {
     if (i % labelEvery !== 0 && i !== daily.length - 1) return;
     const x = Math.round((i + 0.5) * cw / n);
@@ -2635,7 +2719,9 @@ function renderDailyChart(daily, bucket = 'day') {
     const x = Math.round(i * cw / n);
     const w = Math.round(cw / n);
     const iskStr = d.net_isk >= 0 ? '+' + fmtIsk(d.net_isk) : '-' + fmtIsk(Math.abs(d.net_isk));
-    const period = bucket === 'week' ? `Week of ${d.day}` : d.day;
+    const period = bucket === 'day'
+      ? d.day
+      : bucket === 'week' ? `Week of ${d.day}` : `${bucketDays}-day period from ${d.day}`;
     const title = `${period}  |  ${d.total_runs} runs  |  Net: ${iskStr}`;
     svg += `<rect x="${x}" y="0" width="${w}" height="${ch}" fill="transparent"><title>${title}</title></rect>`;
   });
@@ -2863,12 +2949,11 @@ async function importCSV() {
   }
   el.innerHTML = msg;
   el.style.display = 'block';
-  renderHistory();
-  updateRecentRuns();
-  if (document.getElementById('page-stats').classList.contains('active')) renderStats();
+  await refreshSavedRunViews();
 }
 
 async function saveSettings() {
+  const previousPollInterval = S.settings.esi_poll_interval;
   const apiKey = document.getElementById('janiceKeyInput').value.trim();
   const updates = {
     esi_poll_interval: document.getElementById('pollIntervalInput').value,
@@ -2883,6 +2968,13 @@ async function saveSettings() {
     await window.api.settings.set(key, value);
   }
   S.settings = { ...S.settings, ...updates };
+  if (
+    String(previousPollInterval || '') !== String(updates.esi_poll_interval || '')
+    && S.activeCharId
+    && S.capabilities.tracking
+  ) {
+    startESIPoll();
+  }
   loadSettingsPage();
   const msg = document.getElementById('settingsSaved');
   msg.style.display = 'block';
@@ -2943,18 +3035,18 @@ async function reauthCharacter(charId) {
 
 async function removeCharacter(charId) {
   if (!confirm('Remove this character? Their run history will be deleted.')) return;
-  if (String(S.activeCharId) === String(charId)) {
+  const removingActiveCharacter = String(S.activeCharId) === String(charId);
+  await window.api.auth.deleteCharacter(charId);
+  if (removingActiveCharacter) {
     stopESIPoll();
     S.activeRun = null;
-    await clearPersistedActiveRun(charId);
     resetRunUI();
   }
-  await window.api.auth.deleteCharacter(charId);
   S.characters = await window.api.auth.getCharacters();
   await refreshCharacterCapabilities();
   await populateCharSelect();
   renderCharList();
-  if (String(S.activeCharId) === String(charId)) {
+  if (removingActiveCharacter) {
     S.activeCharId = null;
     if (S.characters.length) await switchCharacter(S.characters[0].id);
     else showNoCharPrompt();
@@ -2962,13 +3054,20 @@ async function removeCharacter(charId) {
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────
+let recentRunsRenderGeneration = 0;
+
 async function updateRecentRuns() {
-  if (!S.activeCharId) return;
-  const runs = await window.api.runs.getAll({ character_id: S.activeCharId, limit: 5 });
+  const generation = ++recentRunsRenderGeneration;
+  const characterId = S.activeCharId;
   const el = document.getElementById('recentRunsList');
+  if (!characterId) {
+    el.textContent = 'No runs yet';
+    return;
+  }
+  const runs = await window.api.runs.getAll({ character_id: characterId, limit: 5 });
+  if (generation !== recentRunsRenderGeneration || S.activeCharId !== characterId) return;
   if (!runs.length) { el.textContent = 'No runs yet'; return; }
   el.innerHTML = runs.map(r => {
-    const d = new Date(r.started_at * 1000);
     const col = r.outcome === 'Survived' ? 'var(--green)' : 'var(--red)';
     const val = r.outcome === 'Survived' ? fmtIsk(r.net_isk) : '−' + fmtIsk(r.total_loss);
     return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
@@ -2976,18 +3075,6 @@ async function updateRecentRuns() {
       <span style="color:${col};font-family:var(--font-mono)">${val}</span>
     </div>`;
   }).join('');
-}
-
-async function updateIskPerHour() {
-  if (!S.activeCharId) return;
-  const iskPerHour = await window.api.runs.getRecentIskPerHour(S.activeCharId);
-  const el = document.getElementById('iskPerHourDisplay');
-  if (iskPerHour !== null) {
-    const color = iskPerHour >= 0 ? 'var(--gold)' : 'var(--red)';
-    el.innerHTML = `<span style="color:var(--text-muted)">Net / hr (recent 20):</span> <span style="color:${color};font-family:var(--font-mono)">${fmtIsk(iskPerHour)}</span>`;
-  } else {
-    el.textContent = '';
-  }
 }
 
 function fmtIsk(n) {
@@ -3012,7 +3099,7 @@ function esc(str) {
 }
 
 function openExternal(url) {
-  window.api.shell.openExternal(url);
+  return window.api.shell.openExternal(url);
 }
 
 const modalReturnFocus = new Map();
@@ -3145,7 +3232,7 @@ const clickActions = {
   'dismiss-global-error': () => dismissGlobalError(),
   'show-page': element => showPage(element.dataset.page),
   'toggle-collapsible': element =>
-    toggleCollapsible(element.dataset.body, element.dataset.arrow, element.dataset.hint),
+    toggleCollapsible(element.dataset.body, element.dataset.arrow),
   'manual-start': () => manualStart(),
   'open-manual-entry': () => openManualEntryModal(),
   'manual-end-survived': () => manualEndSurvived(),
@@ -3286,6 +3373,10 @@ document.addEventListener('change', event => {
 
 document.addEventListener('input', event => {
   const element = event.target;
+  if (element.dataset.inventoryFallback === 'unchanged') {
+    delete element.dataset.inventoryFallback;
+    element.labels?.[0]?.querySelector('.inventory-unchanged-badge')?.remove();
+  }
   invalidateManualEditAppraisalPreview(element);
   invalidateHistoricalReappraisalPreview(element);
   if (element.dataset.inputAction === 'paste-hint') {

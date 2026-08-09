@@ -272,6 +272,46 @@ test('failed stale refresh cannot erase a newer authorization', async () => {
   assert.equal(stored.refresh_token, 'new-refresh');
 });
 
+test('successful stale refresh cannot overwrite a newer authorization', async () => {
+  let stored = {
+    access_token: 'expired',
+    refresh_token: 'old-refresh',
+    expires_at: 900,
+  };
+  let saveCalls = 0;
+  const coordinator = createTokenCoordinator({
+    loadTokens: () => stored,
+    saveTokens: (_characterId, tokens) => {
+      saveCalls++;
+      stored = tokens;
+    },
+    clearTokens: () => {
+      stored = null;
+    },
+    refreshTokens: async () => {
+      stored = {
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        expires_at: 100_000,
+      };
+      return {
+        access_token: 'stale-refreshed-access',
+        refresh_token: 'stale-rotated-refresh',
+        expires_in: 3_600,
+      };
+    },
+    validateAccessToken: token => token,
+    validateLifetime: lifetime => lifetime,
+    now: () => 1_000,
+    refreshSkewMs: 60,
+  });
+
+  assert.equal(await coordinator.getAccessToken(42), 'new-access');
+  assert.equal(saveCalls, 0);
+  assert.equal(stored.access_token, 'new-access');
+  assert.equal(stored.refresh_token, 'new-refresh');
+});
+
 test('token coordinator preserves authorization during transient refresh failures', async () => {
   const stored = {
     access_token: 'expired',

@@ -48,7 +48,7 @@ async function findRendererTarget(port) {
   throw new Error('Packaged renderer target did not become available');
 }
 
-async function inspectRenderer(page) {
+async function evaluateRenderer(page, expression) {
   const socket = new WebSocket(page.webSocketDebuggerUrl);
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -65,29 +65,7 @@ async function inspectRenderer(page) {
         method: 'Runtime.evaluate',
         params: {
           returnByValue: true,
-          expression: `JSON.stringify({
-            readyState: document.readyState,
-            url: location.href,
-            title: document.title,
-            bodyText: document.body?.innerText?.slice(0, 1000) || '',
-            activePage: document.querySelector('.page.active')?.id || null,
-            hasApiBridge: Boolean(window.api?.auth && window.api?.runs),
-            hasUpdateHelpers: typeof window.AbyssUpdates?.compareSemver === 'function',
-            aboutVersion: document.getElementById('aboutVersion')?.textContent || '',
-            updateButtonText: document.getElementById('updateBtn')?.textContent || '',
-            updateStatus: document.getElementById('updateStatus')?.textContent || '',
-            topbarImageReady: (() => {
-              const image = document.querySelector('.topbar img');
-              return Boolean(
-                image
-                && image.complete
-                && image.naturalWidth > 0
-                && image.src === 'abysslog-app://bundle/assets/icon.png'
-              );
-            })(),
-            errorNoticeHidden: document.getElementById('globalErrorNotice')?.hidden,
-            errorMessage: document.getElementById('globalErrorMessage')?.textContent || '',
-          })`,
+          expression,
         },
       }));
     });
@@ -100,9 +78,40 @@ async function inspectRenderer(page) {
         reject(new Error(JSON.stringify(payload.error || payload.result.exceptionDetails)));
         return;
       }
-      resolve(JSON.parse(payload.result.result.value));
+      resolve(payload.result.result.value);
     });
   });
+}
+
+async function inspectRenderer(page) {
+  const serialized = await evaluateRenderer(page, `JSON.stringify({
+    readyState: document.readyState,
+    url: location.href,
+    title: document.title,
+    bodyText: document.body?.innerText?.slice(0, 1000) || '',
+    activePage: document.querySelector('.page.active')?.id || null,
+    hasApiBridge: Boolean(window.api?.auth && window.api?.runs),
+    hasUpdateHelpers: typeof window.AbyssUpdates?.compareSemver === 'function',
+    aboutVersion: document.getElementById('aboutVersion')?.textContent || '',
+    updateButtonText: document.getElementById('updateBtn')?.textContent || '',
+    updateStatus: document.getElementById('updateStatus')?.textContent || '',
+    topbarImageReady: (() => {
+      const image = document.querySelector('.topbar img');
+      return Boolean(
+        image
+        && image.complete
+        && image.naturalWidth > 0
+        && image.src === 'abysslog-app://bundle/assets/icon.png'
+      );
+    })(),
+    errorNoticeHidden: document.getElementById('globalErrorNotice')?.hidden,
+    errorMessage: document.getElementById('globalErrorMessage')?.textContent || '',
+  })`);
+  return JSON.parse(serialized);
+}
+
+async function requestCleanRendererClose(page) {
+  await evaluateRenderer(page, 'setTimeout(() => window.close(), 100); true');
 }
 
 function isRendererInitialized(renderer) {
@@ -143,6 +152,9 @@ async function main() {
   const page = await findRendererTarget(port);
   const renderer = await waitForInitializedRenderer(page);
   console.log(`Packaged renderer loaded successfully: ${renderer.url}`);
+  if (process.argv.includes('--close-after-verify')) {
+    await requestCleanRendererClose(page);
+  }
 }
 
 if (require.main === module) {
@@ -154,5 +166,6 @@ if (require.main === module) {
   module.exports = {
     isRendererInitialized,
     parsePort,
+    requestCleanRendererClose,
   };
 }

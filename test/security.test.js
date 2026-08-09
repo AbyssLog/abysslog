@@ -461,7 +461,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /createPresetFromInventoryText/);
   assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
-  assert.match(appJs, /manualEditOriginal\?\.total_loss\s*\|\|\s*0/);
+  assert.match(appJs, /editOriginal\?\.total_loss\s*\|\|\s*0/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
   assert.match(appJs, /const droneDiff = diffOptionalDroneBay/);
   assert.match(appJs, /const _dd = diffOptionalDroneBay/);
@@ -480,7 +480,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
   assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
   assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
-  assert.match(appJs, /window\.api\.runs\.update\(manualEditRunId/);
+  assert.match(appJs, /window\.api\.runs\.update\(editRunId/);
   assert.doesNotMatch(appJs, /window\.api\.runs\.(?:updateMeta|updateCargoOnly)/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
@@ -511,12 +511,17 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
 
 test('IPC bridge matches guarded main-process handlers', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'src/main/main.js'), 'utf8');
+  const characterHandlers = fs.readFileSync(
+    path.join(projectRoot, 'src/main/character-handlers.js'),
+    'utf8'
+  );
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
+  const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
   const handlerChannels = new Set(
-    [...main.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
+    [...`${main}\n${characterHandlers}`.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
   );
   const invokedChannels = new Set(
     [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map(match => match[1])
@@ -525,6 +530,11 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.deepEqual([...invokedChannels].sort(), [...handlerChannels].sort());
   assert.match(main, /sandbox:\s*true/);
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
+  assert.match(main, /setPermissionCheckHandler/);
+  assert.match(main, /permission === 'clipboard-read'/);
+  assert.match(main, /webContents === window\.webContents/);
+  assert.match(main, /requestingUrl === APP_RENDERER_URL/);
+  assert.match(main, /isMainFrame === true/);
   assert.match(main, /protocol\.registerSchemesAsPrivileged/);
   assert.match(main, /protocol\.handle\(APP_PROTOCOL_SCHEME/);
   assert.match(main, /await window\.loadURL\(APP_RENDERER_URL\)/);
@@ -535,6 +545,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /render-process-gone/);
   assert.match(main, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
   assert.doesNotMatch(preload, /clipboard|node:fs|require\('fs'\)/);
+  assert.match(inventoryEditor, /await navigator\.clipboard\.readText\(\)/);
   assert.match(main, /security\.validateRunData/);
   assert.match(main, /security\.validateAppraisalUpdate/);
   assert.match(main, /security\.validateRunEdit/);
@@ -545,7 +556,13 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
   assert.match(main, /clearTokens: characterId => db\.deleteSetting\(tokenKey\(characterId\)\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);
-  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);[\s\S]*db\.finishStartup\(\);/);
+  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);/);
+  assert.match(main, /app\.on\('before-quit'[\s\S]*db\.createExitBackup\(\);[\s\S]*db\.close\(\);/);
+  assert.match(database, /function createExitBackup\(\)[\s\S]*replaceExisting: true/);
+  assert.doesNotMatch(main, /finishStartup|runs:get-recent-isk-per-hour/);
+  assert.doesNotMatch(database, /finishStartup|getRecentIskPerHour/);
+  assert.doesNotMatch(preload, /getRecentIskPerHour|runs:get-recent-isk-per-hour/);
+  assert.doesNotMatch(appJs, /updateIskPerHour|iskPerHourDisplay/);
   assert.match(database, /secure_delete = ON/);
   assert.match(database, /quick_check/);
   assert.match(database, /user_version/);

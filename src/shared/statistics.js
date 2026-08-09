@@ -3,6 +3,9 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.AbyssStatistics = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
+  const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+  const MAX_CHART_POINTS = 260;
+
   function startOfLocalDay(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   }
@@ -92,9 +95,9 @@
   }
 
   function calendarDayCount(start, end) {
-    let count = 0;
-    for (let date = startOfLocalDay(start); date < end; date = addLocalDays(date, 1)) count++;
-    return count;
+    const startStamp = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+    const endStamp = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+    return Math.max(0, Math.round((endStamp - startStamp) / MILLISECONDS_PER_DAY));
   }
 
   function emptyPoint(day) {
@@ -111,17 +114,21 @@
     return result;
   }
 
-  function aggregateWeekly(rows) {
-    const result = [];
-    for (let index = 0; index < rows.length; index += 7) {
-      const bucket = rows.slice(index, index + 7);
-      result.push(bucket.reduce((summary, row) => ({
-        day: summary.day,
-        total_runs: summary.total_runs + row.total_runs,
-        survived: summary.survived + row.survived,
-        net_isk: summary.net_isk + row.net_isk,
-        total_loss: summary.total_loss + row.total_loss,
-      }), emptyPoint(bucket[0].day)));
+  function aggregatePeriods(rows, start, end, bucketDays) {
+    const dayCount = calendarDayCount(start, end);
+    const result = Array.from(
+      { length: Math.ceil(dayCount / bucketDays) },
+      (_unused, index) => emptyPoint(formatDateInput(addLocalDays(start, index * bucketDays)))
+    );
+    for (const row of rows) {
+      const date = parseDateInput(row.day, 'Statistics day');
+      const dayOffset = calendarDayCount(start, date);
+      if (date < start || date >= end || dayOffset >= dayCount) continue;
+      const summary = result[Math.floor(dayOffset / bucketDays)];
+      summary.total_runs += row.total_runs;
+      summary.survived += row.survived;
+      summary.net_isk += row.net_isk;
+      summary.total_loss += row.total_loss;
     }
     return result;
   }
@@ -133,9 +140,19 @@
       : addLocalDays(startOfLocalDay(new Date(lastRun * 1000)), 1));
     if (!first || !afterLast || first >= afterLast) return { rows: [], bucket: 'day' };
 
-    const daily = fillDailySeries(rows, first, afterLast);
-    if (calendarDayCount(first, afterLast) <= 90) return { rows: daily, bucket: 'day' };
-    return { rows: aggregateWeekly(daily), bucket: 'week' };
+    const dayCount = calendarDayCount(first, afterLast);
+    if (dayCount <= 90) {
+      return { rows: fillDailySeries(rows, first, afterLast), bucket: 'day', bucketDays: 1 };
+    }
+    const bucketDays = Math.max(
+      7,
+      Math.ceil(dayCount / (MAX_CHART_POINTS * 7)) * 7
+    );
+    return {
+      rows: aggregatePeriods(rows, first, afterLast, bucketDays),
+      bucket: bucketDays === 7 ? 'week' : 'period',
+      bucketDays,
+    };
   }
 
   return {
