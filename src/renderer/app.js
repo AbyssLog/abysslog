@@ -992,6 +992,7 @@ async function reconcileKillmailLoss({ reappraise = false } = {}) {
       run.started_at,
       run.started_at + run.duration
     );
+    if (S.activeRun !== run || run.finalizing || run.suspended) return false;
     if (!loss) {
       status.textContent =
         'Killmail is not available yet. ESI may take up to five minutes; the current estimate is still shown.';
@@ -1021,6 +1022,7 @@ async function reconcileKillmailLoss({ reappraise = false } = {}) {
     if (reappraise) await appraiseLoss();
     return true;
   } catch (error) {
+    if (S.activeRun !== run || run.finalizing || run.suspended) return false;
     status.textContent = `Killmail check failed: ${error.message}`;
     status.className = 'alert warn';
     retryButton.textContent = 'Retry Killmail';
@@ -1343,7 +1345,7 @@ async function saveCurrentRun() {
     consumed_cost: run.consumed_cost || 0,
     net_isk: run.net_isk || 0,
     total_loss: run.total_loss || 0,
-    system_id: lastSystemId,
+    system_id: run.system_id ?? lastSystemId,
     cargo_before: run.cargoBefore || '',
     cargo_after: run.cargoAfter || '',
     drone_before: run.droneBefore || '',

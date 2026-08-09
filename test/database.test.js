@@ -318,6 +318,55 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(database.getRuns({ character_id: 9003 }).length, 1);
 });
 
+test('character deletion rolls back credentials and settings when the database delete fails', () => {
+  const Database = require('better-sqlite3');
+  const characterId = 9099;
+  const triggerName = 'prevent_character_delete_test';
+  const databasePath = database.getDataStatus().databasePath;
+
+  database.saveCharacter({
+    id: characterId,
+    name: 'Rollback Pilot',
+    portrait_url: '',
+    client_id: 'rollback-client',
+  });
+  database.setSetting(`tokens_${characterId}`, 'encrypted-token');
+  database.setSetting(`inventory_baseline_cleared_run_${characterId}`, '42');
+
+  const installTrigger = new Database(databasePath);
+  installTrigger.exec(`
+    CREATE TRIGGER ${triggerName}
+    BEFORE DELETE ON characters
+    WHEN OLD.id = ${characterId}
+    BEGIN
+      SELECT RAISE(ABORT, 'simulated character deletion failure');
+    END;
+  `);
+  installTrigger.close();
+
+  try {
+    assert.throws(
+      () => database.deleteCharacter(characterId),
+      /simulated character deletion failure/
+    );
+    assert.ok(database.getCharacters().some(character => character.id === characterId));
+    assert.equal(database.getSetting(`tokens_${characterId}`), 'encrypted-token');
+    assert.equal(
+      database.getSetting(`inventory_baseline_cleared_run_${characterId}`),
+      '42'
+    );
+  } finally {
+    const removeTrigger = new Database(databasePath);
+    removeTrigger.exec(`DROP TRIGGER IF EXISTS ${triggerName}`);
+    removeTrigger.close();
+  }
+
+  assert.equal(database.deleteCharacter(characterId), true);
+  assert.equal(database.getCharacters().some(character => character.id === characterId), false);
+  assert.equal(database.getSetting(`tokens_${characterId}`), null);
+  assert.equal(database.getSetting(`inventory_baseline_cleared_run_${characterId}`), null);
+});
+
 test('manual run edits commit metadata and appraisal changes atomically', () => {
   database.saveCharacter({
     id: 9020,

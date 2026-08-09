@@ -511,13 +511,17 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
 
 test('IPC bridge matches guarded main-process handlers', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'src/main/main.js'), 'utf8');
+  const characterHandlers = fs.readFileSync(
+    path.join(projectRoot, 'src/main/character-handlers.js'),
+    'utf8'
+  );
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
   const handlerChannels = new Set(
-    [...main.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
+    [...`${main}\n${characterHandlers}`.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
   );
   const invokedChannels = new Set(
     [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map(match => match[1])

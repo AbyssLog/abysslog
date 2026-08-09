@@ -10,6 +10,7 @@ let databasePath;
 let backupDirectory;
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
 const INVENTORY_BASELINE_CLEAR_PREFIX = 'inventory_baseline_cleared_run_';
+const CHARACTER_TOKEN_PREFIX = 'tokens_';
 const SCHEMA_VERSION = 2;
 const AUTOMATIC_BACKUP_RETENTION = 7;
 
@@ -524,8 +525,9 @@ function saveCharacter(character) {
 
 function deleteCharacter(characterId) {
   db.transaction(() => {
-    db.prepare('DELETE FROM characters WHERE id = ?').run(characterId);
+    deleteSetting(`${CHARACTER_TOKEN_PREFIX}${characterId}`);
     deleteSetting(inventoryBaselineClearKey(characterId));
+    db.prepare('DELETE FROM characters WHERE id = ?').run(characterId);
   })();
   return true;
 }

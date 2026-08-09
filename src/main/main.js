@@ -21,6 +21,7 @@ const {
   APP_RENDERER_URL,
   resolveAppAssetPath,
 } = require('./app-protocol');
+const { registerCharacterDeletionHandler } = require('./character-handlers');
 const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
@@ -624,10 +625,10 @@ secureHandle('auth:has-tokens', characterId => Boolean(loadTokens(characterId)))
 secureHandle('auth:get-capabilities', characterId =>
   getCharacterCapabilities(security.requireInteger(characterId, 'Character ID')));
 secureHandle('auth:start-sso', selectedCapabilities => startSso(selectedCapabilities));
-secureHandle('auth:delete-character', characterId => {
-  const id = security.requireInteger(characterId, 'Character ID');
-  db.deleteSetting(tokenKey(id));
-  return db.deleteCharacter(id);
+registerCharacterDeletionHandler({
+  secureHandle,
+  database: db,
+  requireInteger: security.requireInteger,
 });
 
 secureHandle('settings:get', key => {

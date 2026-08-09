@@ -103,12 +103,17 @@ async function createRendererHarness() {
   const lastRun = Math.floor(Date.UTC(2026, 7, 2) / 1000);
   const state = {
     activeRunRequests: [],
+    characterCapabilities: new Map(),
+    completedRuns: [],
     clearActiveCalls: [],
     deleteCharacterCalls: [],
     deleteCharacterGate: null,
     esiPollCalls: 0,
+    esiSystemId: 30_000_142,
     janiceCalls: [],
     janiceGate: null,
+    killmailGate: null,
+    killmailRequests: [],
     manualSaveGate: null,
     manualSaves: [],
     runDetails: new Map(),
@@ -148,10 +153,13 @@ async function createRendererHarness() {
     }),
     auth: apiGroup({
       getCharacters: async () => characters,
-      getCapabilities: async characterId => state.trackingCharacters.has(characterId)
-        ? { tracking: true }
-        : {},
-      hasTokens: async characterId => state.trackingCharacters.has(characterId),
+      getCapabilities: async characterId => state.characterCapabilities.get(characterId)
+        || (state.trackingCharacters.has(characterId)
+          ? { tracking: true }
+          : {}),
+      hasTokens: async characterId =>
+        state.characterCapabilities.has(characterId)
+        || state.trackingCharacters.has(characterId),
       deleteCharacter: async characterId => {
         state.deleteCharacterCalls.push(characterId);
         if (state.deleteCharacterGate) return state.deleteCharacterGate.promise;
@@ -200,6 +208,10 @@ async function createRendererHarness() {
         if (state.manualSaveGate) return state.manualSaveGate.promise;
         return { id: state.manualSaves.length };
       },
+      completeActive: async data => {
+        state.completedRuns.push(data);
+        return state.completedRuns.length;
+      },
       getStats: async () => state.stats,
       getDailyStats: async () => state.daily,
       importCSV: async () => ({ success: true, imported: 1, skipped: 0, errors: [] }),
@@ -214,10 +226,18 @@ async function createRendererHarness() {
     esi: apiGroup({
       getLocation: async () => {
         state.esiPollCalls++;
-        return { solar_system_id: 30_000_142 };
+        return { solar_system_id: state.esiSystemId };
       },
       getShip: async () => ({ ship_type_id: 17_918, ship_name: 'Gila' }),
       getSystemName: async () => 'Jita',
+      getRecentAbyssLoss: async (...args) => {
+        state.killmailRequests.push(args);
+        if (state.killmailGate) return state.killmailGate.promise;
+        return null;
+      },
+      getTypeNames: async typeIds => Object.fromEntries(
+        typeIds.map(typeId => [typeId, `Type ${typeId}`])
+      ),
     }),
     shell: apiGroup({}),
   };
@@ -247,6 +267,7 @@ async function createRendererHarness() {
 
   return {
     characters,
+    evaluate: source => new vm.Script(source).runInContext(dom.getInternalVMContext()),
     close: () => window.close(),
     document: window.document,
     state,
@@ -264,6 +285,7 @@ test('renderer async workflows execute against the real DOM', async t => {
   const {
     characters,
     document,
+    evaluate,
     state,
     window,
   } = harness;
@@ -573,6 +595,127 @@ test('renderer async workflows execute against the real DOM', async t => {
         () => state.esiPollCalls > pollCallsBeforeSave,
         'restarted ESI poll'
       );
+    });
+
+    await t.test('automatic runs preserve the Abyssal system captured on entry', async () => {
+      document.querySelector('[data-page="tracker"]').click();
+      state.esiSystemId = 32_000_001;
+      await evaluate('pollESI(S.pollGeneration, S.activeCharId)');
+      await evaluate('pollESI(S.pollGeneration, S.activeCharId)');
+      await waitFor(
+        () => document.getElementById('state-in-abyss').style.display === 'block',
+        'automatic Abyssal entry'
+      );
+
+      state.esiSystemId = 30_000_142;
+      await evaluate('pollESI(S.pollGeneration, S.activeCharId)');
+      await evaluate('pollESI(S.pollGeneration, S.activeCharId)');
+      await waitFor(
+        () => document.getElementById('state-awaiting-cargo').style.display === 'block',
+        'automatic Abyssal exit'
+      );
+
+      document.querySelector('[data-action="appraise-run"]').click();
+      await waitFor(
+        () => document.getElementById('state-appraisal').style.display === 'block',
+        'automatic run appraisal'
+      );
+
+      const completedBeforeSave = state.completedRuns.length;
+      document.querySelector('#state-appraisal [data-action="save-current-run"]').click();
+      await waitFor(
+        () => state.completedRuns.length === completedBeforeSave + 1,
+        'automatic run persistence'
+      );
+
+      assert.equal(state.completedRuns.at(-1).system_id, 32_000_001);
+      await waitFor(
+        () => document.getElementById('state-awaiting').style.display === 'block',
+        'automatic run reset'
+      );
+    });
+
+    await t.test('late killmail outcomes cannot update a switched character UI', async () => {
+      state.trackingCharacters.delete(characters[0].id);
+      state.characterCapabilities.set(characters[0].id, { killmails: true });
+
+      let switchRequests = state.activeRunRequests.length;
+      changeValue(window, document.getElementById('charSelect'), characters[1].id);
+      await waitFor(
+        () => state.activeRunRequests.length > switchRequests
+          && state.activeRunRequests.at(-1) === characters[1].id,
+        'switch away before delayed killmail checks'
+      );
+
+      const settlements = [
+        {
+          label: 'missing killmail',
+          settle: gate => gate.resolve(null),
+        },
+        {
+          label: 'failed killmail request',
+          settle: gate => gate.reject(new Error('Simulated killmail failure')),
+        },
+      ];
+
+      for (const settlement of settlements) {
+        switchRequests = state.activeRunRequests.length;
+        changeValue(window, document.getElementById('charSelect'), characters[0].id);
+        await waitFor(
+          () => state.activeRunRequests.length > switchRequests
+            && state.activeRunRequests.at(-1) === characters[0].id,
+          `switch to loss-tracked character for ${settlement.label}`
+        );
+
+        document.querySelector('[data-page="tracker"]').click();
+        document.getElementById('tierSelect').value = 'T4';
+        document.getElementById('weatherSelect').value = 'Dark';
+        document.querySelector('[data-action="manual-start"]').click();
+        await waitFor(
+          () => document.getElementById('state-in-abyss').style.display === 'block',
+          `manual run start for ${settlement.label}`
+        );
+
+        const killmailRequestsBefore = state.killmailRequests.length;
+        state.killmailGate = createDeferred();
+        document.querySelector('[data-action="manual-end-died"]').click();
+        await waitFor(
+          () => state.killmailRequests.length === killmailRequestsBefore + 1,
+          `pending ${settlement.label}`
+        );
+
+        switchRequests = state.activeRunRequests.length;
+        changeValue(window, document.getElementById('charSelect'), characters[1].id);
+        await waitFor(
+          () => state.activeRunRequests.length > switchRequests
+            && state.activeRunRequests.at(-1) === characters[1].id,
+          `character switch during ${settlement.label}`
+        );
+
+        const status = document.getElementById('killmailStatus');
+        const retryButton = document.getElementById('retryKillmailBtn');
+        const switchedUi = {
+          statusText: status.textContent,
+          statusClass: status.className,
+          statusDisplay: status.style.display,
+          retryText: retryButton.textContent,
+          retryDisplay: retryButton.style.display,
+        };
+
+        settlement.settle(state.killmailGate);
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        assert.deepEqual({
+          statusText: status.textContent,
+          statusClass: status.className,
+          statusDisplay: status.style.display,
+          retryText: retryButton.textContent,
+          retryDisplay: retryButton.style.display,
+        }, switchedUi);
+        state.killmailGate = null;
+      }
+
+      state.characterCapabilities.delete(characters[0].id);
     });
   } finally {
     harness.close();
