@@ -359,13 +359,34 @@
     });
   }
 
+  function validateTags(value) {
+    const seen = new Set();
+    const tags = [];
+    for (const [index, tag] of requireArray(value, 'Run tags', 20).entries()) {
+      const normalized = requireTrimmedText(tag, 'Run tag ' + (index + 1), 48);
+      const key = normalized.toLocaleLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        tags.push(normalized);
+      }
+    }
+    return tags;
+  }
+
+  function validateKillmailIds(value) {
+    const ids = requireArray(value, 'Killmail IDs', 20).map(
+      (killmailId, index) => requireInteger(killmailId, 'Killmail ID ' + (index + 1))
+    );
+    return [...new Set(ids)];
+  }
   function validateRunData(value) {
     if (!isPlainObject(value)) throw new TypeError('Run must be an object');
     assertAllowedKeys(value, 'Run', new Set([
       'character_id', 'started_at', 'duration', 'tier', 'weather', 'outcome',
-      'loot_value', 'consumed_cost', 'net_isk', 'total_loss', 'system_id',
+      'loot_value', 'consumed_cost', 'net_isk', 'total_loss', 'system_id', 'system_name',
       'cargo_before', 'cargo_after', 'drone_before', 'drone_after',
-      'ship_name', 'ship_class', 'notes', 'items', 'fitting', 'implants',
+      'ship_name', 'ship_class', 'notes', 'tags', 'killmail_ids', 'appraised_at',
+      'items', 'fitting', 'implants',
     ]));
     return {
       character_id: requireInteger(value.character_id, 'Character ID'),
@@ -381,6 +402,9 @@
       system_id: value.system_id == null
         ? null
         : requireInteger(value.system_id, 'System ID'),
+      system_name: value.system_name == null
+        ? null
+        : requireText(value.system_name, 'System name', 128, { multiline: false }),
       cargo_before: requireText(value.cargo_before ?? '', 'Pre-run cargo', 512 * 1024),
       cargo_after: requireText(value.cargo_after ?? '', 'Post-run cargo', 512 * 1024),
       drone_before: requireText(value.drone_before ?? '', 'Pre-run drone bay', 512 * 1024),
@@ -388,6 +412,11 @@
       ship_name: requireText(value.ship_name ?? '', 'Ship name', 256, { multiline: false }),
       ship_class: requireEnum(value.ship_class ?? 'Unknown', 'Ship class', SHIP_CLASSES),
       notes: requireText(value.notes ?? '', 'Run notes', 16 * 1024),
+      tags: validateTags(value.tags ?? []),
+      killmail_ids: validateKillmailIds(value.killmail_ids ?? []),
+      appraised_at: value.appraised_at == null
+        ? null
+        : requireInteger(value.appraised_at, 'Appraisal time', { min: 0 }),
       items: validateRunItems(value.items ?? []),
       fitting: validateFitting(value.fitting ?? []),
       implants: validateImplants(value.implants ?? []),
@@ -404,8 +433,8 @@
     if (!isPlainObject(run)) throw new TypeError('Active run must be an object');
     assertAllowedKeys(run, 'Active run', new Set([
       'character_id', 'started_at', 'duration', 'tier', 'weather', 'outcome',
-      'system_id', 'cargoBefore', 'cargoAfter', 'droneBefore', 'droneAfter',
-      'ship_name', 'ship_class', 'fitting', 'implants', 'fitCaptured',
+      'system_id', 'system_name', 'cargoBefore', 'cargoAfter', 'droneBefore', 'droneAfter',
+      'ship_name', 'ship_class', 'notes', 'tags', 'fitting', 'implants', 'fitCaptured',
       'killmailItems', 'killmailIds',
     ]));
 
@@ -435,6 +464,9 @@
         system_id: run.system_id == null
           ? null
           : requireInteger(run.system_id, 'System ID'),
+        system_name: run.system_name == null
+          ? null
+          : requireText(run.system_name, 'System name', 128, { multiline: false }),
         cargoBefore: requireText(run.cargoBefore ?? '', 'Pre-run cargo', 512 * 1024),
         cargoAfter: requireText(run.cargoAfter ?? '', 'Post-run cargo', 512 * 1024),
         droneBefore: requireText(run.droneBefore ?? '', 'Pre-run drone bay', 512 * 1024),
@@ -443,13 +475,13 @@
           multiline: false,
         }),
         ship_class: requireEnum(run.ship_class ?? 'Unknown', 'Ship class', SHIP_CLASSES),
+        notes: requireText(run.notes ?? '', 'Run notes', 16 * 1024),
+        tags: validateTags(run.tags ?? []),
         fitting: validateFitting(run.fitting ?? []),
         implants: validateImplants(run.implants ?? []),
         fitCaptured: run.fitCaptured,
         killmailItems: validateKillmailLossItems(run.killmailItems ?? []),
-        killmailIds: requireArray(run.killmailIds ?? [], 'Killmail IDs', 20).map(
-          (killmailId, index) => requireInteger(killmailId, `Killmail ID ${index + 1}`)
-        ),
+        killmailIds: validateKillmailIds(run.killmailIds ?? []),
       },
     };
   }
@@ -657,6 +689,7 @@
     if (!isPlainObject(value)) throw new TypeError('Run filters must be an object');
     assertAllowedKeys(value, 'Run filters', new Set([
       'character_id', 'tier', 'weather', 'outcome', 'limit',
+      'search', 'date_from', 'date_to', 'ship', 'tag',
     ]));
     const filters = {};
     if (value.character_id != null && value.character_id !== '') {
@@ -665,12 +698,33 @@
     if (value.tier) filters.tier = requireEnum(value.tier, 'Run tier', RUN_TIERS);
     if (value.weather) filters.weather = requireEnum(value.weather, 'Run weather', RUN_WEATHERS);
     if (value.outcome) filters.outcome = requireEnum(value.outcome, 'Run outcome', RUN_OUTCOMES);
+    if (value.search != null && String(value.search).trim()) {
+      filters.search = requireText(value.search, 'Run search', 256, { multiline: false }).trim();
+    }
+    if (value.date_from != null && value.date_from !== '') {
+      filters.date_from = requireInteger(value.date_from, 'Run date start', { min: 0 });
+    }
+    if (value.date_to != null && value.date_to !== '') {
+      filters.date_to = requireInteger(value.date_to, 'Run date end', { min: 1 });
+    }
+    if (
+      filters.date_from != null
+      && filters.date_to != null
+      && filters.date_to <= filters.date_from
+    ) {
+      throw new TypeError('Run date end must be after its start');
+    }
+    if (value.ship != null && String(value.ship).trim()) {
+      filters.ship = requireText(value.ship, 'Ship filter', 256, { multiline: false }).trim();
+    }
+    if (value.tag != null && String(value.tag).trim()) {
+      filters.tag = requireTrimmedText(value.tag, 'Tag filter', 48);
+    }
     if (value.limit != null) {
       filters.limit = requireInteger(value.limit, 'Run limit', { min: 1, max: 1000 });
     }
     return filters;
   }
-
   function validateStatsFilters(value) {
     if (!isPlainObject(value)) throw new TypeError('Statistics filters must be an object');
     assertAllowedKeys(value, 'Statistics filters', new Set([
@@ -700,7 +754,8 @@
     if (!isPlainObject(value)) throw new TypeError('Run update must be an object');
     assertAllowedKeys(value, 'Run update', new Set([
       'tier', 'weather', 'outcome', 'duration', 'started_at',
-      'total_loss', 'ship_name', 'ship_class',
+      'total_loss', 'ship_name', 'ship_class', 'system_id', 'system_name',
+      'notes', 'tags',
     ]));
     return {
       tier: requireEnum(value.tier, 'Run tier', RUN_TIERS),
@@ -715,9 +770,18 @@
       ship_class: value.ship_class === undefined
         ? null
         : requireEnum(value.ship_class, 'Ship class', SHIP_CLASSES),
+      system_id: value.system_id == null
+        ? null
+        : requireInteger(value.system_id, 'System ID'),
+      system_name: value.system_name === undefined
+        ? null
+        : requireText(value.system_name, 'System name', 128, { multiline: false }),
+      notes: value.notes === undefined
+        ? null
+        : requireText(value.notes, 'Run notes', 16 * 1024),
+      tags: value.tags === undefined ? null : validateTags(value.tags),
     };
   }
-
   function validateCargoUpdate(value) {
     if (!isPlainObject(value)) throw new TypeError('Cargo update must be an object');
     assertAllowedKeys(value, 'Cargo update', new Set([
@@ -735,7 +799,7 @@
     if (!isPlainObject(value)) throw new TypeError('Appraisal update must be an object');
     assertAllowedKeys(value, 'Appraisal update', new Set([
       'loot_value', 'consumed_cost', 'net_isk', 'cargo_before', 'cargo_after',
-      'drone_before', 'drone_after', 'items',
+      'drone_before', 'drone_after', 'items', 'appraised_at',
     ]));
     return {
       loot_value: requireFiniteNumber(value.loot_value ?? 0, 'Loot value', { min: 0 }),
@@ -750,6 +814,9 @@
         ? null
         : requireText(value.drone_after, 'Post-run drone bay', 512 * 1024),
       items: validateRunItems(value.items ?? []),
+      appraised_at: value.appraised_at == null
+        ? null
+        : requireInteger(value.appraised_at, 'Appraisal time', { min: 0 }),
     };
   }
 

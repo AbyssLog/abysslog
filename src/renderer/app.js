@@ -1,11 +1,15 @@
 // ── State ─────────────────────────────────────────────────────────────────
 const runTracking = window.AbyssRunTracking;
+const appraisalHelpers = window.AbyssAppraisal;
 const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
 const statistics = window.AbyssStatistics;
+const statsViewHelpers = window.AbyssStatsView;
+const historyViewHelpers = window.AbyssHistoryView;
 const loadoutHelpers = window.AbyssLoadouts;
 const shipGroups = window.AbyssShipGroups;
 const inventoryEditors = window.AbyssInventoryEditor;
+const runSessionHelpers = window.AbyssRunSession;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -66,8 +70,6 @@ const S = {
   pollTimeout: null,
   pollGeneration: 0,
   pollFailureCount: 0,
-  sortCol: 'started_at',
-  sortDir: 'desc',
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────
@@ -189,12 +191,12 @@ async function performCharacterSwitch(charId, save = true) {
   stopESIPoll();
   if (S.activeRun) {
     const run = S.activeRun;
-    run.suspended = true;
+    runSessionController.suspend(run);
     syncActiveRunInputs();
     try {
       await persistActiveRun();
     } catch (error) {
-      run.suspended = false;
+      runSessionController.resume(run);
       if (S.capabilities.tracking) startESIPoll();
       throw error;
     }
@@ -202,8 +204,9 @@ async function performCharacterSwitch(charId, save = true) {
   S.activeRun = null;
   resetRunUI();
   clearTrackerInputs();
-  lastShipTypeId = null;
+  lastShipTypeId = lastShipHullName = null;
   lastSystemId = null;
+  lastSystemName = null;
 
   const normalizedCharacterId = charId ? Number(charId) : null;
   S.activeCharId = normalizedCharacterId;
@@ -294,8 +297,9 @@ function handleAuthError(message) {
 // ── ESI Polling ───────────────────────────────────────────────────────────
 const ABYSSAL_MIN = 32000000;
 const CAPSULE_IDS = [670, 33328];
-let lastShipTypeId = null;
+let lastShipTypeId = null, lastShipHullName = null;
 let lastSystemId = null;
+let lastSystemName = null;
 let inventoryBaselineRunId = null;
 let transitionTracker = runTracking.createTransitionTracker();
 
@@ -330,18 +334,27 @@ async function pollESI(generation, characterId) {
     if (!Number.isSafeInteger(shipTypeId) || shipTypeId < 1) {
       throw new TypeError('ESI returned an invalid ship type');
     }
+    const unresolvedHullName = 'Ship ' + shipTypeId;
+    let shipHullName = lastShipHullName;
+    if (shipTypeId !== lastShipTypeId || !shipHullName || shipHullName === unresolvedHullName) {
+      const typeNames = await window.api.esi.getTypeNames([shipTypeId]).catch(() => ({}));
+      if (!isCurrentPoll(generation, characterId)) return;
+      shipHullName = typeNames[shipTypeId] || unresolvedHullName;
+    }
     const inAbyss = sysId >= ABYSSAL_MIN;
     const isCapsule = CAPSULE_IDS.includes(shipTypeId);
 
     // Update HUD
     if (inAbyss) {
-      document.getElementById('hudLocationVal').textContent = `Abyssal #${sysId}`;
+      lastSystemName = 'Abyssal #' + sysId;
+      document.getElementById('hudLocationVal').textContent = lastSystemName;
       document.getElementById('hudLocation').classList.add('active');
     } else {
       document.getElementById('hudLocation').classList.remove('active');
       if (sysId !== lastSystemId) {
         window.api.esi.getSystemName(sysId).then(name => {
           if (isCurrentPoll(generation, characterId) && lastSystemId === sysId) {
+            lastSystemName = name;
             document.getElementById('hudLocationVal').textContent = name;
           }
         }).catch(() => {});
@@ -354,6 +367,7 @@ async function pollESI(generation, characterId) {
 
     lastSystemId = sysId;
     lastShipTypeId = shipTypeId;
+    lastShipHullName = shipHullName;
 
     const transition = transitionTracker.observe({
       inAbyss,
@@ -437,13 +451,10 @@ function stopESIPoll() {
 }
 
 // ── Run Lifecycle ─────────────────────────────────────────────────────────
-let activeRunAppraisalGeneration = 0;
+let runSessionController = null;
 
 function isCurrentRunAppraisal(run, generation) {
-  return generation === activeRunAppraisalGeneration
-    && S.activeRun === run
-    && !run.finalizing
-    && !run.suspended;
+  return runSessionController.isCurrentAppraisal(run, generation);
 }
 
 async function classifyShip(typeId) {
@@ -456,8 +467,6 @@ async function classifyShip(typeId) {
   }
 }
 
-let activeCheckpointTimer = null;
-let activeCheckpointChain = Promise.resolve();
 let activeCheckpointErrorReportedAt = 0;
 const ACTIVE_CHECKPOINT_ERROR_COOLDOWN_MS = 60_000;
 
@@ -474,6 +483,18 @@ function reportActiveRunCheckpointError(error) {
     'checkpoint-error'
   );
 }
+
+runSessionController = runSessionHelpers.createRunSessionController({
+  getActiveRun: () => S.activeRun,
+  createSnapshot: () => activeRunSnapshot(),
+  saveActive: snapshot => window.api.runs.saveActive(snapshot).then(result => {
+    activeCheckpointErrorReportedAt = 0;
+    return result;
+  }),
+  clearActive: characterId => window.api.runs.clearActive(characterId),
+  syncInputs: () => syncActiveRunInputs(),
+  onCheckpointError: error => reportActiveRunCheckpointError(error),
+});
 
 function clearTrackerInputs() {
   inventoryBaselineRunId = null;
@@ -680,12 +701,28 @@ function applyLoadoutPreset() {
   status.hidden = false;
 }
 
+function parseRunTags(value) {
+  const seen = new Set();
+  const tags = [];
+  for (const rawTag of String(value || '').split(',')) {
+    const tag = rawTag.trim();
+    if (!tag) continue;
+    const key = tag.toLocaleLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      tags.push(tag);
+    }
+  }
+  return tags;
+}
 function syncActiveRunInputs() {
   if (!S.activeRun) return;
   S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
   S.activeRun.cargoAfter = document.getElementById('cargoAfterText').value;
   S.activeRun.droneBefore = document.getElementById('droneBeforeText').value;
   S.activeRun.droneAfter = document.getElementById('droneAfterText').value;
+  S.activeRun.notes = document.getElementById('activeRunNotes').value;
+  S.activeRun.tags = parseRunTags(document.getElementById('activeRunTags').value);
 }
 
 function activeRunSnapshot() {
@@ -705,12 +742,15 @@ function activeRunSnapshot() {
       weather: run.weather,
       outcome: state === 'in-abyss' ? null : state === 'died' ? 'Died' : 'Survived',
       system_id: run.system_id ?? lastSystemId,
+      system_name: run.system_name || lastSystemName,
       cargoBefore: run.cargoBefore || '',
       cargoAfter: run.cargoAfter || '',
       droneBefore: run.droneBefore || '',
       droneAfter: run.droneAfter || '',
       ship_name: run.ship_name || '',
       ship_class: run.ship_class || 'Unknown',
+      notes: run.notes || '',
+      tags: run.tags || [],
       fitting: run.fitting || [],
       implants: run.implants || [],
       fitCaptured: Boolean(run.fitCaptured),
@@ -721,37 +761,15 @@ function activeRunSnapshot() {
 }
 
 function persistActiveRun() {
-  const snapshot = activeRunSnapshot();
-  if (!snapshot) return activeCheckpointChain;
-  activeCheckpointChain = activeCheckpointChain
-    .catch(() => {})
-    .then(() => window.api.runs.saveActive(snapshot))
-    .then(result => {
-      activeCheckpointErrorReportedAt = 0;
-      return result;
-    });
-  return activeCheckpointChain;
+  return runSessionController.persist();
 }
 
 function scheduleActiveRunCheckpoint() {
-  if (!S.activeRun || S.activeRun.finalizing || S.activeRun.suspended) return;
-  if (activeCheckpointTimer) clearTimeout(activeCheckpointTimer);
-  activeCheckpointTimer = setTimeout(() => {
-    activeCheckpointTimer = null;
-    syncActiveRunInputs();
-    void persistActiveRun().catch(reportActiveRunCheckpointError);
-  }, 250);
+  runSessionController.scheduleCheckpoint();
 }
 
 async function clearPersistedActiveRun(characterId) {
-  if (activeCheckpointTimer) {
-    clearTimeout(activeCheckpointTimer);
-    activeCheckpointTimer = null;
-  }
-  activeCheckpointChain = activeCheckpointChain
-    .catch(() => {})
-    .then(() => window.api.runs.clearActive(characterId));
-  await activeCheckpointChain;
+  await runSessionController.clearPersisted(characterId);
 }
 
 async function restoreActiveRun(characterId) {
@@ -761,6 +779,10 @@ async function restoreActiveRun(characterId) {
   hideInventoryBaselineStatus();
   S.activeRun = snapshot.run;
   lastSystemId = snapshot.run.system_id;
+  lastSystemName = snapshot.run.system_name;
+  lastShipHullName = snapshot.run.ship_name || null;
+  document.getElementById('activeRunNotes').value = snapshot.run.notes || '';
+  document.getElementById('activeRunTags').value = (snapshot.run.tags || []).join(', ');
   setInventoryText('cargoBeforeText', snapshot.run.cargoBefore);
   setInventoryText('cargoAfterText', snapshot.run.cargoAfter);
   setInventoryText('droneBeforeText', snapshot.run.droneBefore);
@@ -800,6 +822,8 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
   const weather = document.getElementById('weatherSelect').value;
   const cargoBefore = document.getElementById('cargoBeforeText').value;
   const droneBefore = document.getElementById('droneBeforeText').value;
+  const notes = document.getElementById('activeRunNotes').value;
+  const tags = parseRunTags(document.getElementById('activeRunTags').value);
   const shipTypeId = lastShipTypeId;
 
   S.activeRun = {
@@ -808,9 +832,12 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
     duration: 0,
     tier: tier || 'Unknown',
     weather: weather || 'Unknown',
-    ship_name: document.getElementById('hudShipVal').textContent || '',
+    ship_name: lastShipHullName || document.getElementById('hudShipVal').textContent || '',
     ship_class: 'Unknown',
     system_id: lastSystemId,
+    system_name: lastSystemName,
+    notes,
+    tags,
     cargoBefore,
     cargoAfter: '',
     droneBefore,
@@ -1003,7 +1030,7 @@ async function reconcileKillmailLoss({ reappraise = false } = {}) {
     }
 
     const names = await window.api.esi.getTypeNames(loss.items.map(item => item.type_id));
-    if (S.activeRun !== run) return false;
+    if (S.activeRun !== run || run.finalizing || run.suspended) return false;
     run.killmailItems = loss.items.map(item => ({
       type_id: item.type_id,
       type_name: names[item.type_id] || `Type ${item.type_id}`,
@@ -1045,7 +1072,7 @@ async function appraiseRun() {
     document.getElementById('appraise-error').style.display = 'block';
     return;
   }
-  const generation = ++activeRunAppraisalGeneration;
+  const generation = runSessionController.beginAppraisal(run);
   if (!isCurrentRunAppraisal(run, generation)) return;
   document.getElementById('appraise-error').style.display = 'none';
   document.getElementById('appraiseSpinner').style.display = 'inline-block';
@@ -1058,39 +1085,38 @@ async function appraiseRun() {
   run.cargoAfter = cargoAfter;
   run.droneAfter = droneAfter;
 
-  // Merge cargo and drone bay diffs
-  const cargoDiff = diffCargo(run.cargoBefore, cargoAfter);
-  const droneDiff = diffOptionalDroneBay(run.droneBefore || '', droneAfter);
-  const diff = {
-    gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
-    consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed)
-  };
-
   try {
     await persistActiveRun();
     if (!isCurrentRunAppraisal(run, generation)) return;
-    let lootResult = null, consumedResult = null;
+    const appraisal = await appraisalHelpers.appraiseSurvivedInventory({
+      cargoBefore: run.cargoBefore,
+      cargoAfter,
+      droneBefore: run.droneBefore || '',
+      droneAfter,
+      appraise: async (items, pricing) => {
+        const result = await window.api.janice.appraise(items, pricing);
+        if (!isCurrentRunAppraisal(run, generation)) {
+          throw new Error('Appraisal was superseded');
+        }
+        return result;
+      },
+    });
+    if (!isCurrentRunAppraisal(run, generation)) return;
 
-    if (diff.gained.length > 0) {
-      lootResult = await window.api.janice.appraise(diff.gained, 'buy');
-      if (!isCurrentRunAppraisal(run, generation)) return;
-    }
-    if (diff.consumed.length > 0) {
-      consumedResult = await window.api.janice.appraise(diff.consumed, 'sell');
-      if (!isCurrentRunAppraisal(run, generation)) return;
-    }
+    run.diff = appraisal.diff;
+    run.lootResult = appraisal.lootResult;
+    run.consumedResult = appraisal.consumedResult;
+    run.loot_value = appraisal.loot_value;
+    run.consumed_cost = appraisal.consumed_cost;
+    run.net_isk = appraisal.net_isk;
+    run.items = appraisal.items;
+    run.appraised_at = Math.floor(Date.now() / 1000);
 
-    run.diff = diff;
-    run.lootResult = lootResult;
-    run.consumedResult = consumedResult;
-
-    const lootVal = lootResult ? lootResult.totalBuyPrice : 0;
-    const consumedCost = consumedResult ? consumedResult.totalSellPrice : 0;
-    run.loot_value = lootVal;
-    run.consumed_cost = consumedCost;
-    run.net_isk = lootVal - consumedCost;
-
-    renderAppraisalResults(lootResult, consumedResult, diff);
+    renderAppraisalResults(
+      appraisal.lootResult,
+      appraisal.consumedResult,
+      appraisal.diff
+    );
     setRunState('appraisal');
     void persistActiveRun().catch(reportActiveRunCheckpointError);
   } catch (e) {
@@ -1099,7 +1125,7 @@ async function appraiseRun() {
       document.getElementById('appraise-error').style.display = 'block';
     }
   } finally {
-    if (generation === activeRunAppraisalGeneration) {
+    if (runSessionController.isLatestAppraisal(generation)) {
       document.getElementById('appraiseSpinner').style.display = 'none';
     }
   }
@@ -1108,7 +1134,7 @@ async function appraiseRun() {
 async function appraiseLoss() {
   const run = S.activeRun;
   if (!run) return;
-  const generation = ++activeRunAppraisalGeneration;
+  const generation = runSessionController.beginAppraisal(run);
   if (!isCurrentRunAppraisal(run, generation)) return;
   const cargoItems = parseCargo(run.cargoBefore);
   const droneItems = parseCargo(run.droneBefore || '');
@@ -1157,6 +1183,28 @@ async function appraiseLoss() {
     const implantLoss = results.implants ? results.implants.totalSellPrice : 0;
     run.total_loss = killmailLoss + cargoLoss + fittingLoss + implantLoss;
     run.lossResults = results;
+    run.items = run.killmailItems?.length > 0
+      ? appraisalHelpers.toCompleteRunItems(
+          run.killmailItems.map(item => ({ name: item.type_name, qty: item.qty })),
+          results.killmail,
+          'lost'
+        )
+      : [
+          ...appraisalHelpers.toCompleteRunItems(manuallyTrackedInventory, results.cargo, 'lost'),
+          ...appraisalHelpers.toCompleteRunItems(
+            fittingItems.map(item => ({ name: item.type_name, qty: item.qty })),
+            results.fitting,
+            'lost'
+          ),
+          ...appraisalHelpers.toCompleteRunItems(
+            run.implants.map(item => ({ name: item.type_name, qty: 1 })),
+            results.implants,
+            'lost'
+          ),
+        ];
+    run.appraised_at = Object.values(results).some(Boolean)
+      ? Math.floor(Date.now() / 1000)
+      : null;
 
     renderLossResults(results, cargoLoss, fittingLoss, implantLoss, killmailLoss);
   } catch (e) {
@@ -1270,59 +1318,15 @@ async function saveCurrentRun() {
   if (!S.activeRun || S.activeRun.finalizing) return;
 
   const run = S.activeRun;
-  run.finalizing = true;
-  if (activeCheckpointTimer) {
-    clearTimeout(activeCheckpointTimer);
-    activeCheckpointTimer = null;
-  }
+  if (!runSessionController.beginFinalization(run)) return;
   syncActiveRunInputs();
   try {
     await persistActiveRun();
   } catch (error) {
-    run.finalizing = false;
+    runSessionController.rollbackFinalization(run);
     throw error;
   }
-  const items = [];
-
-  if (run.outcome === 'Survived') {
-    // Build items from appraisal results
-    if (run.lootResult) {
-      for (const item of run.lootResult.items) {
-        const p = item.effectivePrices;
-        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'gained', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
-      }
-    }
-    if (run.consumedResult) {
-      for (const item of run.consumedResult.items) {
-        const p = item.effectivePrices;
-        items.push({ item_name: item.itemType.name, qty: item.amount, type: 'consumed', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
-      }
-    }
-  } else {
-    // Build loss items from loss results
-    if (run.lossResults) {
-      for (const [, result] of Object.entries(run.lossResults)) {
-        if (!result) continue;
-        for (const item of result.items) {
-          const p = item.effectivePrices;
-          items.push({ item_name: item.itemType.name, qty: item.amount, type: 'lost', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
-        }
-      }
-    }
-    // Preserve a verified killmail inventory even when no Janice key or price
-    // result is available. This keeps the loss record exact, with zero prices.
-    if (run.killmailItems?.length > 0 && !run.lossResults?.killmail) {
-      for (const item of run.killmailItems) {
-        items.push({
-          item_name: item.type_name,
-          qty: item.qty,
-          type: 'lost',
-          unit_price_buy: 0,
-          unit_price_sell: 0,
-        });
-      }
-    }
-  }
+  const items = run.items || [];
 
   // Build fitting items with pricing
   const fitting = run.fitting.map(f => ({
@@ -1346,6 +1350,11 @@ async function saveCurrentRun() {
     net_isk: run.net_isk || 0,
     total_loss: run.total_loss || 0,
     system_id: run.system_id ?? lastSystemId,
+    system_name: run.system_name || lastSystemName,
+    notes: run.notes || '',
+    tags: run.tags || [],
+    killmail_ids: run.killmailIds || [],
+    appraised_at: run.appraised_at || null,
     cargo_before: run.cargoBefore || '',
     cargo_after: run.cargoAfter || '',
     drone_before: run.droneBefore || '',
@@ -1461,6 +1470,11 @@ function openManualEntryModal() {
   document.getElementById('manualWeather').value = S.settings.default_weather || '';
   document.getElementById('manualOutcome').value = 'Survived';
   document.getElementById('manualDuration').value = '';
+  document.getElementById('manualShipClass').value = 'Unknown';
+  document.getElementById('manualShipName').value = '';
+  document.getElementById('manualSystemName').value = '';
+  document.getElementById('manualTags').value = '';
+  document.getElementById('manualNotes').value = '';
   setInventoryText('manualCargoBefore', '');
   setInventoryText('manualDroneBefore', '');
   setInventoryText('manualCargoAfter', '');
@@ -1499,6 +1513,10 @@ async function openEditRunModal(runId) {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
   document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
+  document.getElementById('manualShipName').value = run.ship_name || '';
+  document.getElementById('manualSystemName').value = run.system_name || '';
+  document.getElementById('manualTags').value = (run.tags || []).join(', ');
+  document.getElementById('manualNotes').value = run.notes || '';
   setInventoryText('manualCargoBefore', run.cargo_before || '');
   setInventoryText('manualDroneBefore', run.drone_before || '');
   setInventoryText('manualDroneAfter', run.drone_after || '');
@@ -1639,6 +1657,10 @@ async function submitManualEntry(doAppraise = true) {
   const outcome = document.getElementById('manualOutcome').value;
   const duration = parseDuration(document.getElementById('manualDuration').value);
   const shipClass = document.getElementById('manualShipClass').value;
+  const shipName = document.getElementById('manualShipName').value.trim();
+  const systemName = document.getElementById('manualSystemName').value.trim();
+  const tags = parseRunTags(document.getElementById('manualTags').value);
+  const notes = document.getElementById('manualNotes').value;
   const dateVal = document.getElementById('manualDate').value;
   const cargoBefore = document.getElementById('manualCargoBefore').value;
   const cargoAfter = document.getElementById('manualCargoAfter').value;
@@ -1700,7 +1722,11 @@ async function submitManualEntry(doAppraise = true) {
         total_loss: pendingAppraisal
           ? pendingAppraisal.total_loss
           : (editOriginal?.total_loss || 0),
+        ship_name: shipName,
         ship_class: shipClass,
+        system_name: systemName,
+        notes,
+        tags,
       };
       const update = pendingAppraisal
         ? { meta, appraisal: pendingAppraisal.appraisal }
@@ -1719,50 +1745,31 @@ async function submitManualEntry(doAppraise = true) {
       return;
     }
     if (outcome === 'Survived') {
-      const _cd = diffCargo(cargoBefore, savedCargoAfter);
-      const _dd = diffOptionalDroneBay(droneBefore, savedDroneAfter);
-      const diff = { gained: mergeDiffItems(_cd.gained, _dd.gained), consumed: mergeDiffItems(_cd.consumed, _dd.consumed) };
-      let lootResult = null, consumedResult = null;
-
-      if (diff.gained.length > 0) {
-        lootResult = await window.api.janice.appraise(diff.gained, 'buy');
-      }
-      if (diff.consumed.length > 0) {
-        consumedResult = await window.api.janice.appraise(diff.consumed, 'sell');
-      }
-
-      loot_value = lootResult ? lootResult.totalBuyPrice : 0;
-      consumed_cost = consumedResult ? consumedResult.totalSellPrice : 0;
-      net_isk = loot_value - consumed_cost;
-
-      if (lootResult) {
-        for (const item of lootResult.items) {
-          const p = item.effectivePrices;
-          items.push({ item_name: item.itemType.name, qty: item.amount, type: 'gained', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
-        }
-      }
-      if (consumedResult) {
-        for (const item of consumedResult.items) {
-          const p = item.effectivePrices;
-          items.push({ item_name: item.itemType.name, qty: item.amount, type: 'consumed', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
-        }
-      }
+      const appraisal = await appraisalHelpers.appraiseSurvivedInventory({
+        cargoBefore,
+        cargoAfter: savedCargoAfter,
+        droneBefore,
+        droneAfter: savedDroneAfter,
+        appraise: (appraisalItems, pricing) =>
+          window.api.janice.appraise(appraisalItems, pricing),
+      });
+      loot_value = appraisal.loot_value;
+      consumed_cost = appraisal.consumed_cost;
+      net_isk = appraisal.net_isk;
+      items = appraisal.items;
     } else {
       // Died — appraise all manually supplied pre-run inventory as loss
       const lossItems = mergeDiffItems(
         parseCargo(cargoBefore),
         parseCargo(droneBefore)
       );
-      if (lossItems.length > 0) {
-        const lossResult = await window.api.janice.appraise(lossItems, 'sell');
-        total_loss = lossResult ? lossResult.totalSellPrice : 0;
-        if (lossResult) {
-          for (const item of lossResult.items) {
-            const p = item.effectivePrices;
-            items.push({ item_name: item.itemType.name, qty: item.amount, type: 'lost', unit_price_buy: p.buyPrice, unit_price_sell: p.sellPrice });
-          }
-        }
-      }
+      const loss = await appraisalHelpers.appraiseLostInventory(
+        lossItems,
+        (appraisalItems, pricing) =>
+          window.api.janice.appraise(appraisalItems, pricing)
+      );
+      total_loss = loss.total_loss;
+      items = loss.items;
     }
 
     const runData = {
@@ -1780,8 +1787,12 @@ async function submitManualEntry(doAppraise = true) {
       cargo_after: savedCargoAfter,
       drone_before: droneBefore,
       drone_after: savedDroneAfter,
-      ship_name: '',
+      system_name: systemName,
+      ship_name: shipName,
       ship_class: shipClass,
+      notes,
+      tags,
+      appraised_at: Math.floor(Date.now() / 1000),
       items,
       fitting: [],
       implants: []
@@ -1796,6 +1807,7 @@ async function submitManualEntry(doAppraise = true) {
       drone_before: droneBefore,
       drone_after: savedDroneAfter,
       items,
+      appraised_at: Math.floor(Date.now() / 1000),
     };
 
     if (editRunId) {
@@ -1824,11 +1836,11 @@ async function submitManualEntry(doAppraise = true) {
 async function cancelRun() {
   if (!S.activeRun || S.activeRun.finalizing) return;
   const run = S.activeRun;
-  run.finalizing = true;
+  if (!runSessionController.beginFinalization(run)) return;
   try {
     await clearPersistedActiveRun(run.character_id);
   } catch (error) {
-    run.finalizing = false;
+    runSessionController.rollbackFinalization(run);
     throw error;
   }
   if (S.activeRun === run) S.activeRun = null;
@@ -1856,6 +1868,8 @@ function resetRunUI() {
   document.getElementById('infoWeather').textContent = '—';
   document.getElementById('infoStarted').textContent = '—';
   document.getElementById('infoOutcome').textContent = '—';
+  document.getElementById('activeRunNotes').value = '';
+  document.getElementById('activeRunTags').value = '';
   setInventoryText('cargoAfterText', '');
   setInventoryText('droneAfterText', '');
   document.getElementById('fitCaptured').style.display = 'none';
@@ -1966,82 +1980,30 @@ function diffOptionalDroneBay(beforeRaw, afterRaw) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────
-let historyRenderGeneration = 0;
+const historyView = historyViewHelpers.createHistoryView({
+  document,
+  api: window.api,
+  getActiveCharacterId: () => S.activeCharId,
+  formatIsk: fmtIsk,
+  formatDuration: fmtDuration,
+  escapeHtml: esc,
+});
+let historySearchTimer = null;
 
-async function renderHistory() {
-  const generation = ++historyRenderGeneration;
-  const characterId = S.activeCharId;
-  const el = document.getElementById('historyContent');
-  const filters = {
-    character_id: characterId || undefined,
-    tier: document.getElementById('filterTier').value || undefined,
-    weather: document.getElementById('filterWeather').value || undefined,
-    outcome: document.getElementById('filterOutcome').value || undefined,
-  };
-
-  const runs = await window.api.runs.getAll(filters);
-  if (generation !== historyRenderGeneration || S.activeCharId !== characterId) return;
-  if (!runs.length) {
-    el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
-    return;
-  }
-
-  // Sort
-  runs.sort((a, b) => {
-    let av = a[S.sortCol], bv = b[S.sortCol];
-    if (typeof av === 'string') av = av.toLowerCase();
-    if (typeof bv === 'string') bv = bv.toLowerCase();
-    if (av === bv) return 0;
-    return S.sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
-  });
-
-  const cols = [
-    { key: 'started_at', label: 'Date' },
-    { key: 'tier', label: 'Tier' },
-    { key: 'weather', label: 'Weather' },
-    { key: 'ship_class', label: 'Ship' },
-    { key: 'duration', label: 'Duration' },
-    { key: 'outcome', label: 'Outcome' },
-    { key: 'net_isk', label: 'Net ISK' },
-    { key: 'total_loss', label: 'Total Loss' },
-    { key: '_detail', label: '' },
-  ];
-
-  let html = `<table class="data-table"><thead><tr>`;
-  for (const col of cols) {
-    if (col.key === '_detail') { html += `<th></th>`; continue; }
-    const cls = S.sortCol === col.key ? (S.sortDir === 'asc' ? 'sort-asc' : 'sort-desc') : '';
-    const ariaSort = S.sortCol === col.key
-      ? (S.sortDir === 'asc' ? 'ascending' : 'descending')
-      : 'none';
-    html += `<th class="${cls}" aria-sort="${ariaSort}"><button class="table-sort" data-action="sort-history" data-sort-column="${esc(col.key)}">${esc(col.label)}</button></th>`;
-  }
-  html += `</tr></thead><tbody>`;
-
-  for (const run of runs) {
-    const d = new Date(run.started_at * 1000);
-    html += `<tr>
-      <td class="mono">${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-      <td><span class="badge tier">${esc(run.tier || '—')}</span></td>
-      <td><span class="badge weather">${esc(run.weather || '—')}</span></td>
-      <td style="color:var(--dim);font-size:11px">${esc(run.ship_class || '—')}</td>
-      <td class="mono">${fmtDuration(run.duration)}</td>
-      <td><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${esc(run.outcome)}</span></td>
-      <td class="${run.outcome === 'Survived' ? (run.net_isk >= 0 ? 'positive' : 'negative') : ''}">${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '—'}</td>
-      <td class="${run.outcome === 'Died' ? 'negative' : 'mono'}">${run.outcome === 'Died' ? '−' + fmtIsk(run.total_loss) : '—'}</td>
-      <td><button class="btn sm ghost" data-action="show-run-detail" data-run-id="${esc(run.id)}">Detail</button></td>
-    </tr>`;
-  }
-  html += `</tbody></table>`;
-  el.innerHTML = html;
+function renderHistory() {
+  return historyView.render();
 }
 
-function sortHistory(col) {
-  if (S.sortCol === col) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
-  else { S.sortCol = col; S.sortDir = 'desc'; }
-  return renderHistory();
+function sortHistory(column) {
+  return historyView.sort(column);
 }
 
+function scheduleHistorySearch() {
+  clearTimeout(historySearchTimer);
+  historySearchTimer = setTimeout(() => {
+    void runUiTask('Could not search run history', () => renderHistory());
+  }, 250);
+}
 let pendingHistoricalReappraisal = null;
 
 async function showRunDetail(runId) {
@@ -2078,6 +2040,35 @@ async function showRunDetail(runId) {
     </div></div>
   </div>`;
 
+  const metadataRows = [];
+  if (run.ship_name) metadataRows.push(['Ship', run.ship_name]);
+  if (run.system_name || run.system_id) {
+    metadataRows.push(['System', run.system_name || String(run.system_id)]);
+  }
+  if (run.appraised_at) {
+    metadataRows.push(['Appraised', new Date(run.appraised_at * 1000).toLocaleString()]);
+  }
+  if (run.killmail_ids?.length) {
+    metadataRows.push(['Killmail IDs', run.killmail_ids.join(', ')]);
+  }
+  if (metadataRows.length || run.tags?.length || run.notes) {
+    html += '<section class="run-detail-metadata"><div class="run-detail-metadata-grid">';
+    for (const [label, value] of metadataRows) {
+      html += '<div><div class="field-label">' + esc(label)
+        + '</div><div>' + esc(value) + '</div></div>';
+    }
+    html += '</div>';
+    if (run.tags?.length) {
+      html += '<div class="run-detail-tags">'
+        + run.tags.map(tag => '<span class="history-tag">' + esc(tag) + '</span>').join(' ')
+        + '</div>';
+    }
+    if (run.notes) {
+      html += '<div class="run-detail-notes"><div class="field-label">Notes</div>'
+        + '<div>' + esc(run.notes) + '</div></div>';
+    }
+    html += '</section>';
+  }
   if (run.fitting.length || run.implants.length) {
     const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
     const counts = [];
@@ -2239,67 +2230,30 @@ async function reappraiseRun(runId) {
   statusEl.replaceChildren();
 
   try {
-    const cargoDiff = diffCargo(cargoBefore, cargoAfter);
-    const droneDiff = diffOptionalDroneBay(droneBefore, droneAfter);
-    const diff = {
-      gained: mergeDiffItems(cargoDiff.gained, droneDiff.gained),
-      consumed: mergeDiffItems(cargoDiff.consumed, droneDiff.consumed),
-    };
-
-    let lootResult = null;
-    let consumedResult = null;
-    if (diff.gained.length > 0) {
-      lootResult = await window.api.janice.appraise(diff.gained, 'buy');
-    }
-    if (diff.consumed.length > 0) {
-      consumedResult = await window.api.janice.appraise(diff.consumed, 'sell');
-    }
-
-    const lootValue = lootResult ? lootResult.totalBuyPrice : 0;
-    const consumedCost = consumedResult ? consumedResult.totalSellPrice : 0;
-    const netIsk = lootValue - consumedCost;
-
-    const items = [];
-    if (lootResult) {
-      for (const item of lootResult.items) {
-        const prices = item.effectivePrices;
-        items.push({
-          item_name: item.itemType.name,
-          qty: item.amount,
-          type: 'gained',
-          unit_price_buy: prices.buyPrice,
-          unit_price_sell: prices.sellPrice,
-        });
-      }
-    }
-    if (consumedResult) {
-      for (const item of consumedResult.items) {
-        const prices = item.effectivePrices;
-        items.push({
-          item_name: item.itemType.name,
-          qty: item.amount,
-          type: 'consumed',
-          unit_price_buy: prices.buyPrice,
-          unit_price_sell: prices.sellPrice,
-        });
-      }
-    }
-
+    const preview = await appraisalHelpers.appraiseSurvivedInventory({
+      cargoBefore,
+      cargoAfter,
+      droneBefore,
+      droneAfter,
+      appraise: (appraisalItems, pricing) =>
+        window.api.janice.appraise(appraisalItems, pricing),
+    });
     const appraisal = {
-      loot_value: lootValue,
-      consumed_cost: consumedCost,
-      net_isk: netIsk,
+      loot_value: preview.loot_value,
+      consumed_cost: preview.consumed_cost,
+      net_isk: preview.net_isk,
       cargo_before: cargoBefore,
       cargo_after: cargoAfter,
       drone_before: droneBefore,
       drone_after: droneAfter,
-      items,
+      items: preview.items,
+      appraised_at: Math.floor(Date.now() / 1000),
     };
     pendingHistoricalReappraisal = { runId, appraisal };
     setReappraisalActionsVisible(runId, true);
     setReappraisalStatus(
       runId,
-      `Preview: ${fmtIsk(lootValue)} loot, ${fmtIsk(consumedCost)} consumed, ${fmtIsk(netIsk)} net. Save or discard these changes.`,
+      `Preview: ${fmtIsk(preview.loot_value)} loot, ${fmtIsk(preview.consumed_cost)} consumed, ${fmtIsk(preview.net_isk)} net. Save or discard these changes.`,
       'success'
     );
   } catch (error) {
@@ -2404,10 +2358,14 @@ function shipSetupSectionHtml(title, items) {
   return `${html}</div>`;
 }
 
-async function showShipSetup(runId) {
+async function showShipSetup(runId, returnModal = 'runDetailModal') {
   const run = await window.api.runs.getById(runId);
   if (!run) return;
 
+  const setupModal = document.getElementById('shipSetupModal');
+  setupModal.dataset.returnModal = returnModal;
+  const closeButton = setupModal.querySelector('[data-action="close-ship-setup"]');
+  closeButton.setAttribute('aria-label', returnModal ? 'Back to run details' : 'Back to statistics');
   const grouped = window.AbyssFitting.groupSnapshot(run.fitting, run.implants);
   const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
   const hullName = grouped.hull?.name || run.ship_name || 'Unknown ship';
@@ -2440,7 +2398,7 @@ async function showShipSetup(runId) {
   <div id="copyFittingStatus" role="status" aria-live="polite" style="margin-top:10px"></div>
   <div class="ship-setup-actions">
     <button class="btn gold" data-action="copy-run-fitting" data-run-id="${esc(run.id)}">Copy to Clipboard</button>
-    <button class="btn sm ghost" data-action="close-ship-setup">Back to run details</button>
+    <button class="btn sm ghost" data-action="close-ship-setup">${returnModal ? 'Back to run details' : 'Back to statistics'}</button>
   </div>`;
 
   document.getElementById('shipSetupContent').innerHTML = html;
@@ -2449,8 +2407,9 @@ async function showShipSetup(runId) {
 }
 
 function closeShipSetupModal() {
+  const returnModal = document.getElementById('shipSetupModal').dataset.returnModal;
   closeModal('shipSetupModal');
-  openModal('runDetailModal');
+  if (returnModal) openModal(returnModal);
 }
 
 async function copyRunFitting(runId) {
@@ -2471,269 +2430,22 @@ async function deleteRun(runId) {
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────
-let statsRenderGeneration = 0;
+const statsView = statsViewHelpers.createStatsView({
+  document,
+  api: window.api,
+  statistics,
+  getActiveCharacterId: () => S.activeCharId,
+  formatIsk: fmtIsk,
+  formatDuration: fmtDuration,
+  escapeHtml: esc,
+});
 
 function handleStatsRangeChange() {
-  const preset = document.getElementById('statsRangePreset').value;
-  const customRange = document.getElementById('statsCustomRange');
-  const from = document.getElementById('statsDateFrom');
-  const to = document.getElementById('statsDateTo');
-  const isCustom = preset === 'custom';
-  customRange.hidden = !isCustom;
-  if (isCustom && (!from.value || !to.value)) {
-    const defaults = statistics.defaultCustomDates();
-    from.value ||= defaults.from;
-    to.value ||= defaults.to;
-  }
-  return renderStats();
+  return statsView.handleRangeChange();
 }
 
-function getSelectedStatsRange() {
-  return statistics.resolveDateRange({
-    preset: document.getElementById('statsRangePreset').value,
-    from: document.getElementById('statsDateFrom').value,
-    to: document.getElementById('statsDateTo').value,
-  });
-}
-
-function createStatsFilters(range, characterId) {
-  const filters = {};
-  if (characterId) filters.character_id = characterId;
-  if (range.range_start !== undefined) filters.range_start = range.range_start;
-  if (range.range_end !== undefined) filters.range_end = range.range_end;
-  return filters;
-}
-
-async function renderStats() {
-  const generation = ++statsRenderGeneration;
-  const characterId = S.activeCharId;
-  const el = document.getElementById('statsContent');
-  const filterError = document.getElementById('statsFilterError');
-  let range;
-  try {
-    range = getSelectedStatsRange();
-  } catch (error) {
-    filterError.textContent = error instanceof Error ? error.message : 'Date range is invalid';
-    filterError.hidden = false;
-    el.innerHTML = '';
-    return;
-  }
-  filterError.hidden = true;
-  document.getElementById('statsRangeSummary').textContent = range.label;
-  const filters = createStatsFilters(range, characterId);
-  const [stats, daily] = await Promise.all([
-    window.api.runs.getStats(filters),
-    window.api.runs.getDailyStats(filters)
-  ]);
-  if (generation !== statsRenderGeneration || S.activeCharId !== characterId) return;
-  const o = stats.overall;
-
-  if (!o || o.total_runs === 0) {
-    const message = range.preset === 'all' ? 'No runs logged yet' : 'No runs in selected period';
-    el.innerHTML = `<div class="empty-state">${message}</div>`;
-    return;
-  }
-
-  const survRate = o.total_runs > 0 ? Math.round(o.survived / o.total_runs * 100) : 0;
-  const chart = statistics.createChartSeries(daily, {
-    start: range.start,
-    end: range.end,
-    firstRun: o.first_run,
-    lastRun: o.last_run,
-  });
-  const chartTitle = chart.bucket === 'day'
-    ? 'Daily Activity'
-    : chart.bucket === 'week' ? 'Weekly Activity' : `${chart.bucketDays}-Day Activity`;
-  const chartNote = chart.bucket === 'day'
-    ? 'Daily totals; inactive days are shown as zero'
-    : `${chart.bucketDays}-day totals; inactive days are included`;
-
-  let html = `<div class="stat-grid">
-    <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">${survRate}%</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Survival Duration</div><div class="stat-card-value">${fmtDuration(Math.round(o.avg_duration_survived || 0))}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Net / Hour</div><div class="stat-card-value ${stats.iskPerHour >= 0 ? 'gold' : 'red'}">${fmtIsk(stats.iskPerHour)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Total Net</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${fmtIsk(o.total_net_isk || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Net / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${fmtIsk(o.avg_net_isk || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Avg Death Loss</div><div class="stat-card-value red">${fmtIsk(o.avg_loss || 0)}</div></div>
-    <div class="stat-card"><div class="stat-card-label">Total Death Losses</div><div class="stat-card-value red">${fmtIsk(o.total_loss || 0)}</div></div>
-  </div>`;
-
-  // Daily chart — always shown
-  html += `<div class="section-title">${chartTitle}</div>
-    <div class="stats-chart-note">${chartNote}</div>
-    <div id="dailyChart" style="background:var(--panel);border:1px solid var(--border);padding:16px;margin-bottom:16px"></div>`;
-
-  if (stats.byTier.length) {
-    html += `<div class="section-title">By Tier</div>
-    <table class="data-table" style="margin-bottom:16px"><thead><tr>
-      <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Survival Duration</th><th>Avg Net</th>
-    </tr></thead><tbody>`;
-    for (const t of stats.byTier) {
-      const sr = t.total_runs > 0 ? Math.round(t.survived / t.total_runs * 100) : 0;
-      html += `<tr>
-        <td><span class="badge tier">${esc(t.tier || '—')}</span></td>
-        <td>${t.total_runs}</td>
-        <td style="color:var(--green)">${t.survived}</td>
-        <td style="color:var(--red)">${t.total_runs - t.survived}</td>
-        <td>${sr}%</td>
-        <td class="mono">${fmtDuration(Math.round(t.avg_duration || 0))}</td>
-        <td class="${(t.avg_net_isk || 0) >= 0 ? 'positive' : 'negative'}">${fmtIsk(t.avg_net_isk || 0)}</td>
-      </tr>`;
-    }
-    html += `</tbody></table>`;
-  }
-
-  if (stats.byWeather.length) {
-    html += `<div class="section-title">By Weather</div>
-    <table class="data-table"><thead><tr>
-      <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Net</th>
-    </tr></thead><tbody>`;
-    for (const w of stats.byWeather) {
-      const sr = w.total_runs > 0 ? Math.round(w.survived / w.total_runs * 100) : 0;
-      html += `<tr>
-        <td><span class="badge weather">${esc(w.weather || '—')}</span></td>
-        <td>${w.total_runs}</td>
-        <td style="color:var(--green)">${w.survived}</td>
-        <td style="color:var(--red)">${w.total_runs - w.survived}</td>
-        <td>${sr}%</td>
-        <td class="${(w.avg_net_isk || 0) >= 0 ? 'positive' : 'negative'}">${fmtIsk(w.avg_net_isk || 0)}</td>
-      </tr>`;
-    }
-    html += `</tbody></table>`;
-  }
-
-  el.innerHTML = html;
-
-  // Render chart after DOM is set
-  renderDailyChart(chart.rows, chart.bucket, chart.bucketDays);
-}
-
-function renderDailyChart(daily, bucket = 'day', bucketDays = 1) {
-  const container = document.getElementById('dailyChart');
-  if (!container) return;
-  if (!daily || daily.length === 0) {
-    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:11px;letter-spacing:2px;text-transform:uppercase">No data yet</div>';
-    return;
-  }
-  if (daily.length === 1) {
-    // Pad with a zero day before so the single point renders as a bar rather than a flat line
-    daily = [{ day: '', total_runs: 0, net_isk: 0, total_loss: 0, survived: 0 }, ...daily];
-  }
-
-  const W = container.clientWidth - 32;
-  const H = 200;
-  const PAD = { top: 10, right: 16, bottom: 36, left: 64 };
-  const cw = W - PAD.left - PAD.right;
-  const ch = H - PAD.top - PAD.bottom;
-
-  // Data ranges
-  const maxRuns = Math.max(...daily.map(d => d.total_runs), 1);
-  const maxIsk = Math.max(...daily.map(d => Math.abs(d.net_isk)), 1);
-
-  const n = daily.length;
-  const barW = Math.max(2, Math.floor(cw / n) - 2);
-
-  // Build SVG
-  let svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
-    <defs>
-      <linearGradient id="iskGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#66bb6a" stop-opacity="0.8"/>
-        <stop offset="100%" stop-color="#66bb6a" stop-opacity="0.1"/>
-      </linearGradient>
-      <linearGradient id="lossGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#ef5350" stop-opacity="0.1"/>
-        <stop offset="100%" stop-color="#ef5350" stop-opacity="0.8"/>
-      </linearGradient>
-    </defs>
-    <g transform="translate(${PAD.left},${PAD.top})">`;
-
-  // Y axis gridlines (ISK) — 4 lines
-  for (let i = 0; i <= 4; i++) {
-    const y = Math.round(ch * (1 - i / 4));
-    const val = (maxIsk * i / 4);
-    const label = fmtIsk(val);
-    svg += `<line x1="0" y1="${y}" x2="${cw}" y2="${y}" stroke="#1e2d3d" stroke-width="1"/>`;
-    svg += `<text x="-6" y="${y + 4}" fill="#2a4a6a" font-size="10" text-anchor="end" font-family="Consolas,monospace">${label}</text>`;
-  }
-
-  // Zero line
-  const zeroY = ch;
-  svg += `<line x1="0" y1="${zeroY}" x2="${cw}" y2="${zeroY}" stroke="#2a4060" stroke-width="1"/>`;
-
-  // ISK and loss area paths
-  let iskPath = '', lossPath = '';
-
-  daily.forEach((d, i) => {
-    const x = Math.round((i + 0.5) * cw / n);
-    const iskY = d.net_isk >= 0
-      ? Math.round(ch - (d.net_isk / maxIsk) * ch)
-      : ch;
-    const lossY = d.net_isk < 0
-      ? Math.round(ch - (Math.abs(d.net_isk) / maxIsk) * ch)
-      : ch;
-
-    if (i === 0) {
-      iskPath = `M${x},${iskY}`;
-      lossPath = `M${x},${lossY}`;
-    } else {
-      iskPath += ` L${x},${iskY}`;
-      lossPath += ` L${x},${lossY}`;
-    }
-  });
-
-  // Close the area fills at the zero line.
-  const lastX = Math.round((daily.length - 0.5) * cw / n);
-  const firstX = Math.round(0.5 * cw / n);
-  const hasLoss = daily.some(d => d.net_isk < 0);
-  svg += `<path d="${iskPath} L${lastX},${ch} L${firstX},${ch} Z" fill="url(#iskGrad)" opacity="0.7"/>`;
-  if (hasLoss) {
-    svg += `<path d="${lossPath} L${lastX},${ch} L${firstX},${ch} Z" fill="url(#lossGrad)" opacity="0.7"/>`;
-  }
-
-  // Run count bars are painted before the ISK lines so the lines remain visible.
-  daily.forEach((d, i) => {
-    const x = Math.round(i * cw / n + (cw / n - barW) / 2);
-    const barH = Math.round((d.total_runs / maxRuns) * (ch * 0.25));
-    const y = ch - barH;
-    svg += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="#4fc3f7" opacity="0.25" rx="1"/>`;
-  });
-
-  svg += `<path d="${iskPath}" fill="none" stroke="#66bb6a" stroke-width="1.5"/>`;
-  if (hasLoss) {
-    svg += `<path d="${lossPath}" fill="none" stroke="#ef5350" stroke-width="1.5"/>`;
-  }
-
-  // Fit date labels to the available width regardless of the selected range.
-  const maxLabels = Math.max(2, Math.floor(cw / 48));
-  const labelEvery = Math.max(1, Math.ceil(daily.length / maxLabels));
-  daily.forEach((d, i) => {
-    if (i % labelEvery !== 0 && i !== daily.length - 1) return;
-    const x = Math.round((i + 0.5) * cw / n);
-    const dateStr = d.day.slice(5); // MM-DD
-    svg += `<text x="${x}" y="${ch + 20}" fill="#2a4a6a" font-size="10" text-anchor="middle" font-family="Consolas,monospace">${dateStr}</text>`;
-  });
-
-  // Tooltip hit areas (title tag for native hover)
-  daily.forEach((d, i) => {
-    const x = Math.round(i * cw / n);
-    const w = Math.round(cw / n);
-    const iskStr = d.net_isk >= 0 ? '+' + fmtIsk(d.net_isk) : '-' + fmtIsk(Math.abs(d.net_isk));
-    const period = bucket === 'day'
-      ? d.day
-      : bucket === 'week' ? `Week of ${d.day}` : `${bucketDays}-day period from ${d.day}`;
-    const title = `${period}  |  ${d.total_runs} runs  |  Net: ${iskStr}`;
-    svg += `<rect x="${x}" y="0" width="${w}" height="${ch}" fill="transparent"><title>${title}</title></rect>`;
-  });
-
-  // Legend
-  svg += `<circle cx="${cw - 120}" cy="-4" r="4" fill="#66bb6a"/>
-    <text x="${cw - 112}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Net</text>
-    <rect x="${cw - 54}" y="-8" width="8" height="8" fill="#4fc3f7" opacity="0.4" rx="1"/>
-    <text x="${cw - 42}" y="0" fill="#5a7a9a" font-size="10" font-family="Consolas,monospace">Runs</text>`;
-
-  svg += `</g></svg>`;
-  container.innerHTML = svg;
+function renderStats() {
+  return statsView.render();
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────
@@ -3068,7 +2780,7 @@ async function updateRecentRuns() {
   if (generation !== recentRunsRenderGeneration || S.activeCharId !== characterId) return;
   if (!runs.length) { el.textContent = 'No runs yet'; return; }
   el.innerHTML = runs.map(r => {
-    const col = r.outcome === 'Survived' ? 'var(--green)' : 'var(--red)';
+    const col = r.outcome === 'Survived' && r.net_isk >= 0 ? 'var(--green)' : 'var(--red)';
     const val = r.outcome === 'Survived' ? fmtIsk(r.net_isk) : '−' + fmtIsk(r.total_loss);
     return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
       <span>${esc(r.tier)} ${esc(r.weather)} <span class="badge ${r.outcome === 'Survived' ? 'survived' : 'died'}" style="font-size:9px">${r.outcome === 'Survived' ? '✓' : '✗'}</span></span>
@@ -3269,7 +2981,10 @@ const clickActions = {
   'submit-manual-entry': element => submitManualEntry(element.dataset.appraise === 'true'),
   'sort-history': element => sortHistory(element.dataset.sortColumn),
   'show-run-detail': element => showRunDetail(Number(element.dataset.runId)),
-  'show-ship-setup': element => showShipSetup(Number(element.dataset.runId)),
+  'show-ship-setup': element => showShipSetup(
+    Number(element.dataset.runId),
+    element.dataset.returnModal === 'none' ? '' : 'runDetailModal'
+  ),
   'copy-run-fitting': element => copyRunFitting(Number(element.dataset.runId)),
   'close-ship-setup': () => closeShipSetupModal(),
   'reappraise-run': element => reappraiseRun(Number(element.dataset.runId)),
@@ -3381,14 +3096,21 @@ document.addEventListener('input', event => {
   invalidateHistoricalReappraisalPreview(element);
   if (element.dataset.inputAction === 'paste-hint') {
     updatePasteHint(element.id, element.dataset.hint);
+  } else if (element.dataset.inputAction === 'history-search') {
+    scheduleHistorySearch();
   }
   if ([
     'cargoBeforeText',
     'cargoAfterText',
     'droneBeforeText',
     'droneAfterText',
+    'activeRunNotes',
+    'activeRunTags',
   ].includes(element.id)) {
-    scheduleActiveRunCheckpoint();
+    if (S.activeRun) {
+      syncActiveRunInputs();
+      scheduleActiveRunCheckpoint();
+    }
   }
   if (['cargoBeforeText', 'droneBeforeText'].includes(element.id)) {
     document.getElementById('loadoutApplyStatus').hidden = true;

@@ -102,7 +102,14 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     consumed_cost: 25,
     net_isk: 75,
     total_loss: 0,
+    ship_name: 'Gila',
     ship_class: 'Cruiser',
+    system_id: 32_000_001,
+    system_name: 'Abyssal #32000001',
+    notes: 'New route',
+    tags: ['Farm', 'farm', 'New Fit'],
+    killmail_ids: [456, 456],
+    appraised_at: 1_700_001_200,
     items: [{
       item_name: 'Triglavian Survey Database',
       qty: 1,
@@ -114,8 +121,24 @@ test('run IPC payloads are schema-validated and sanitized', () => {
 
   assert.equal(run.net_isk, 75);
   assert.equal(run.cargo_before, '');
-  assert.deepEqual(security.validateRunFilters({ character_id: '123', limit: 5 }), {
+  assert.deepEqual(run.tags, ['Farm', 'New Fit']);
+  assert.deepEqual(run.killmail_ids, [456]);
+  assert.equal(run.system_name, 'Abyssal #32000001');
+  assert.deepEqual(security.validateRunFilters({
+    character_id: '123',
+    limit: 5,
+    search: '  mutaplasmid  ',
+    date_from: 1_700_000_000,
+    date_to: 1_700_086_400,
+    ship: ' Gila ',
+    tag: ' Farm ',
+  }), {
     character_id: 123,
+    search: 'mutaplasmid',
+    date_from: 1_700_000_000,
+    date_to: 1_700_086_400,
+    ship: 'Gila',
+    tag: 'Farm',
     limit: 5,
   });
   assert.deepEqual(security.validateStatsFilters({
@@ -150,6 +173,10 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     total_loss: 0,
     ship_class: 'Cruiser',
   };
+  assert.throws(() => security.validateRunFilters({
+    search: 'mutaplasmid',
+    search_scope: 'lost',
+  }));
   const edit = security.validateRunEdit({
     meta,
     cargo: {
@@ -189,6 +216,9 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
       weather: 'Electrical',
       outcome: null,
       system_id: 32_000_001,
+      system_name: 'Abyssal #32000001',
+      notes: 'Watch the final room',
+      tags: ['Testing', 'testing'],
       cargoBefore: 'Tritanium, 2',
       cargoAfter: '',
       droneBefore: 'Vespa II, 5',
@@ -205,6 +235,9 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
 
   assert.equal(snapshot.state, 'in-abyss');
   assert.equal(snapshot.run.character_id, 123);
+  assert.equal(snapshot.run.system_name, 'Abyssal #32000001');
+  assert.equal(snapshot.run.notes, 'Watch the final room');
+  assert.deepEqual(snapshot.run.tags, ['Testing']);
   assert.deepEqual(snapshot.run.killmailItems, [{
     type_id: 12_345,
     type_name: 'Test Module',
@@ -438,6 +471,8 @@ test('CSV cells neutralize spreadsheet formulas without changing numeric values'
 test('renderer policy blocks inline script and inline event handlers', () => {
   const html = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
+  const appraisalJs = fs.readFileSync(path.join(projectRoot, 'src/shared/appraisal.js'), 'utf8');
+  const historyJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/history-view.js'), 'utf8');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const esi = fs.readFileSync(path.join(projectRoot, 'src/main/esi.js'), 'utf8');
 
@@ -459,19 +494,19 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /window\.api\.runs\.clearInventoryBaseline/);
   assert.match(appJs, /window\.api\.loadouts\.save/);
   assert.match(appJs, /createPresetFromInventoryText/);
+  assert.match(html, /src="\.\.\/shared\/appraisal\.js"/);
   assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
   assert.match(appJs, /editOriginal\?\.total_loss\s*\|\|\s*0/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
-  assert.match(appJs, /const droneDiff = diffOptionalDroneBay/);
-  assert.match(appJs, /const _dd = diffOptionalDroneBay/);
-  assert.doesNotMatch(appJs, /const droneDiff = diffCargo\(droneBefore,\s*droneAfter\)/);
-  assert.match(appJs, /mergeDiffItems\(cargoDiff\.gained,\s*droneDiff\.gained\)/);
+  assert.match(appJs, /appraisalHelpers\.appraiseSurvivedInventory/);
+  assert.match(appraisalJs, /diffOptionalInventoryPastes/);
+  assert.match(appraisalJs, /mergeInventoryItems\(cargo\.gained,\s*drones\.gained\)/);
   assert.match(appJs, /MODAL_FOCUSABLE_SELECTOR/);
   assert.match(appJs, /event\.key === 'Escape'/);
   assert.match(appJs, /aria-current/);
   assert.match(appJs, /aria-expanded/);
-  assert.match(appJs, /class="table-sort"/);
+  assert.match(historyJs, /class="table-sort"/);
   assert.match(appJs, /function runUiTask/);
   assert.match(appJs, /Promise\.resolve\(\)\s*\.then\(operation\)/);
   assert.match(appJs, /window\.addEventListener\('unhandledrejection'/);
@@ -511,17 +546,21 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
 
 test('IPC bridge matches guarded main-process handlers', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'src/main/main.js'), 'utf8');
-  const characterHandlers = fs.readFileSync(
-    path.join(projectRoot, 'src/main/character-handlers.js'),
-    'utf8'
-  );
+  const handlerSources = [
+    fs.readFileSync(path.join(projectRoot, 'src/main/character-handlers.js'), 'utf8'),
+    ...fs.readdirSync(path.join(projectRoot, 'src/main/ipc'))
+      .filter(name => name.endsWith('.js'))
+      .map(name => fs.readFileSync(path.join(projectRoot, 'src/main/ipc', name), 'utf8')),
+  ];
+  const handlerSource = handlerSources.join('\n');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
   const handlerChannels = new Set(
-    [...`${main}\n${characterHandlers}`.matchAll(/secureHandle\('([^']+)'/g)].map(match => match[1])
+    [...([main, ...handlerSources].join('\n')).matchAll(/secureHandle\('([^']+)'/g)]
+      .map(match => match[1])
   );
   const invokedChannels = new Set(
     [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map(match => match[1])
@@ -543,16 +582,16 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /createDiagnostics\(\{/);
   assert.match(main, /uncaughtExceptionMonitor/);
   assert.match(main, /render-process-gone/);
-  assert.match(main, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
+  assert.match(handlerSource, /clipboard\.writeText\(createDiagnosticsSummary\(\)\)/);
   assert.doesNotMatch(preload, /clipboard|node:fs|require\('fs'\)/);
   assert.match(inventoryEditor, /await navigator\.clipboard\.readText\(\)/);
-  assert.match(main, /security\.validateRunData/);
-  assert.match(main, /security\.validateAppraisalUpdate/);
-  assert.match(main, /security\.validateRunEdit/);
+  assert.match(handlerSource, /security\.validateRunData/);
+  assert.match(handlerSource, /security\.validateAppraisalUpdate/);
+  assert.match(handlerSource, /security\.validateRunEdit/);
   assert.match(main, /security\.validateEsiCapabilitySelection/);
-  assert.match(main, /loadouts\.serializePresets\(data\.presets\)/);
-  assert.match(main, /withCharacterCapability\(characterId, 'fitting'/);
-  assert.match(main, /withCharacterCapability\(characterId, 'killmails'/);
+  assert.match(handlerSource, /loadouts\.serializePresets\(data\.presets\)/);
+  assert.match(handlerSource, /withCharacterCapability\(characterId, 'fitting'/);
+  assert.match(handlerSource, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
   assert.match(main, /clearTokens: characterId => db\.deleteSetting\(tokenKey\(characterId\)\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);
