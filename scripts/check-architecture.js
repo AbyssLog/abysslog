@@ -41,8 +41,10 @@ expect(
   'src/renderer/index.html must load styles/app.css'
 );
 expect(
-  /AbyssRunSession/.test(rendererApp) && /AbyssStatsView/.test(rendererApp),
-  'renderer/app.js must delegate run lifecycle and statistics rendering'
+  /AbyssRunSession/.test(rendererApp)
+    && /AbyssStatsView/.test(rendererApp)
+    && /AbyssHistoryView/.test(rendererApp),
+  'renderer/app.js must delegate run lifecycle, history, and statistics rendering'
 );
 expect(
   !/secureHandle\('[^']+'/.test(main),
@@ -56,8 +58,10 @@ expect(
   'src/main/main.js must compose every IPC registrar'
 );
 expect(
-  /createStatisticsRepository/.test(database) && /createRunCsvRepository/.test(database),
-  'src/main/database.js must preserve the statistics and CSV repository boundaries'
+  /createStatisticsRepository/.test(database)
+    && /createRunCsvRepository/.test(database)
+    && /createRunRepository/.test(database),
+  'src/main/database.js must preserve the run, statistics, and CSV repository boundaries'
 );
 expect(
   !/parseCsv|security\.validateRunData/.test(database),

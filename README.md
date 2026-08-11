@@ -15,11 +15,13 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Remembered inventory baseline** — carries a survived run's post-run cargo and drones into the next run
 - **Loadout presets** - save, edit, and apply reusable cargo and drone inventories using item names and quantities only
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
-- **Run history** — filterable, sortable table with editable runs and re-appraisal previews that can be saved or discarded
-- **Statistics** — survival rate, death-adjusted profit/hour, average profit, losses, and breakdowns by tier and weather
+- **Run history search** — search notes, tags, systems, ships, and specific loot, consumed, or lost item names; combine text with date, tier, weather, outcome, ship, and tag filters
+- **Statistics** — survival rate, death-adjusted profit/hour, latest automatic session summary, and breakdowns by tier, weather, ship, captured fit, and item
 - **Statistics ranges** - view all time, rolling last hour, today, recent-day, current-month, or custom-date results
 - **Multi-character** — add multiple characters, switch between them
 - **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
+- **Run journal & provenance** — save notes, tags, system names, appraisal time, and verified killmail IDs with each run
+- **Consistent ship identity** — run records use the hull type (for example, Gila), not the pilot-assigned ship name
 
 ---
 

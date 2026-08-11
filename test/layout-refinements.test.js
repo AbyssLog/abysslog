@@ -41,3 +41,17 @@ test('unchanged drone fallback remains visual until edited and clipboard wording
   assert.match(editorJs, /'Paste Clipboard'/);
   assert.doesNotMatch(editorJs, /'Paste from EVE'/);
 });
+
+test('Statistics precedes History in the primary navigation', () => {
+  const statistics = html.indexOf('data-page="stats"');
+  const history = html.indexOf('data-page="history"');
+  assert.ok(statistics >= 0);
+  assert.ok(history > statistics);
+});
+
+test('statistics tables use one fixed seven-column grid and uniform weather badges', () => {
+  assert.match(styles, /\.stats-table \{[^}]*table-layout: fixed[^}]*min-width: 840px/);
+  assert.match(styles, /\.stats-table th:first-child \{[^}]*width: 28%/);
+  assert.match(styles, /\.stats-table \.stat-number \{[^}]*width: 12%[^}]*text-align: right/);
+  assert.match(styles, /\.weather-badge-group \.badge\.weather \{[^}]*width: 78px/);
+});

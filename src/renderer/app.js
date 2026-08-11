@@ -5,6 +5,7 @@ const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
 const statistics = window.AbyssStatistics;
 const statsViewHelpers = window.AbyssStatsView;
+const historyViewHelpers = window.AbyssHistoryView;
 const loadoutHelpers = window.AbyssLoadouts;
 const shipGroups = window.AbyssShipGroups;
 const inventoryEditors = window.AbyssInventoryEditor;
@@ -69,8 +70,6 @@ const S = {
   pollTimeout: null,
   pollGeneration: 0,
   pollFailureCount: 0,
-  sortCol: 'started_at',
-  sortDir: 'desc',
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────
@@ -205,8 +204,9 @@ async function performCharacterSwitch(charId, save = true) {
   S.activeRun = null;
   resetRunUI();
   clearTrackerInputs();
-  lastShipTypeId = null;
+  lastShipTypeId = lastShipHullName = null;
   lastSystemId = null;
+  lastSystemName = null;
 
   const normalizedCharacterId = charId ? Number(charId) : null;
   S.activeCharId = normalizedCharacterId;
@@ -297,8 +297,9 @@ function handleAuthError(message) {
 // ── ESI Polling ───────────────────────────────────────────────────────────
 const ABYSSAL_MIN = 32000000;
 const CAPSULE_IDS = [670, 33328];
-let lastShipTypeId = null;
+let lastShipTypeId = null, lastShipHullName = null;
 let lastSystemId = null;
+let lastSystemName = null;
 let inventoryBaselineRunId = null;
 let transitionTracker = runTracking.createTransitionTracker();
 
@@ -333,18 +334,27 @@ async function pollESI(generation, characterId) {
     if (!Number.isSafeInteger(shipTypeId) || shipTypeId < 1) {
       throw new TypeError('ESI returned an invalid ship type');
     }
+    const unresolvedHullName = 'Ship ' + shipTypeId;
+    let shipHullName = lastShipHullName;
+    if (shipTypeId !== lastShipTypeId || !shipHullName || shipHullName === unresolvedHullName) {
+      const typeNames = await window.api.esi.getTypeNames([shipTypeId]).catch(() => ({}));
+      if (!isCurrentPoll(generation, characterId)) return;
+      shipHullName = typeNames[shipTypeId] || unresolvedHullName;
+    }
     const inAbyss = sysId >= ABYSSAL_MIN;
     const isCapsule = CAPSULE_IDS.includes(shipTypeId);
 
     // Update HUD
     if (inAbyss) {
-      document.getElementById('hudLocationVal').textContent = `Abyssal #${sysId}`;
+      lastSystemName = 'Abyssal #' + sysId;
+      document.getElementById('hudLocationVal').textContent = lastSystemName;
       document.getElementById('hudLocation').classList.add('active');
     } else {
       document.getElementById('hudLocation').classList.remove('active');
       if (sysId !== lastSystemId) {
         window.api.esi.getSystemName(sysId).then(name => {
           if (isCurrentPoll(generation, characterId) && lastSystemId === sysId) {
+            lastSystemName = name;
             document.getElementById('hudLocationVal').textContent = name;
           }
         }).catch(() => {});
@@ -357,6 +367,7 @@ async function pollESI(generation, characterId) {
 
     lastSystemId = sysId;
     lastShipTypeId = shipTypeId;
+    lastShipHullName = shipHullName;
 
     const transition = transitionTracker.observe({
       inAbyss,
@@ -690,12 +701,28 @@ function applyLoadoutPreset() {
   status.hidden = false;
 }
 
+function parseRunTags(value) {
+  const seen = new Set();
+  const tags = [];
+  for (const rawTag of String(value || '').split(',')) {
+    const tag = rawTag.trim();
+    if (!tag) continue;
+    const key = tag.toLocaleLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      tags.push(tag);
+    }
+  }
+  return tags;
+}
 function syncActiveRunInputs() {
   if (!S.activeRun) return;
   S.activeRun.cargoBefore = document.getElementById('cargoBeforeText').value;
   S.activeRun.cargoAfter = document.getElementById('cargoAfterText').value;
   S.activeRun.droneBefore = document.getElementById('droneBeforeText').value;
   S.activeRun.droneAfter = document.getElementById('droneAfterText').value;
+  S.activeRun.notes = document.getElementById('activeRunNotes').value;
+  S.activeRun.tags = parseRunTags(document.getElementById('activeRunTags').value);
 }
 
 function activeRunSnapshot() {
@@ -715,12 +742,15 @@ function activeRunSnapshot() {
       weather: run.weather,
       outcome: state === 'in-abyss' ? null : state === 'died' ? 'Died' : 'Survived',
       system_id: run.system_id ?? lastSystemId,
+      system_name: run.system_name || lastSystemName,
       cargoBefore: run.cargoBefore || '',
       cargoAfter: run.cargoAfter || '',
       droneBefore: run.droneBefore || '',
       droneAfter: run.droneAfter || '',
       ship_name: run.ship_name || '',
       ship_class: run.ship_class || 'Unknown',
+      notes: run.notes || '',
+      tags: run.tags || [],
       fitting: run.fitting || [],
       implants: run.implants || [],
       fitCaptured: Boolean(run.fitCaptured),
@@ -749,6 +779,10 @@ async function restoreActiveRun(characterId) {
   hideInventoryBaselineStatus();
   S.activeRun = snapshot.run;
   lastSystemId = snapshot.run.system_id;
+  lastSystemName = snapshot.run.system_name;
+  lastShipHullName = snapshot.run.ship_name || null;
+  document.getElementById('activeRunNotes').value = snapshot.run.notes || '';
+  document.getElementById('activeRunTags').value = (snapshot.run.tags || []).join(', ');
   setInventoryText('cargoBeforeText', snapshot.run.cargoBefore);
   setInventoryText('cargoAfterText', snapshot.run.cargoAfter);
   setInventoryText('droneBeforeText', snapshot.run.droneBefore);
@@ -788,6 +822,8 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
   const weather = document.getElementById('weatherSelect').value;
   const cargoBefore = document.getElementById('cargoBeforeText').value;
   const droneBefore = document.getElementById('droneBeforeText').value;
+  const notes = document.getElementById('activeRunNotes').value;
+  const tags = parseRunTags(document.getElementById('activeRunTags').value);
   const shipTypeId = lastShipTypeId;
 
   S.activeRun = {
@@ -796,9 +832,12 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
     duration: 0,
     tier: tier || 'Unknown',
     weather: weather || 'Unknown',
-    ship_name: document.getElementById('hudShipVal').textContent || '',
+    ship_name: lastShipHullName || document.getElementById('hudShipVal').textContent || '',
     ship_class: 'Unknown',
     system_id: lastSystemId,
+    system_name: lastSystemName,
+    notes,
+    tags,
     cargoBefore,
     cargoAfter: '',
     droneBefore,
@@ -1070,6 +1109,8 @@ async function appraiseRun() {
     run.loot_value = appraisal.loot_value;
     run.consumed_cost = appraisal.consumed_cost;
     run.net_isk = appraisal.net_isk;
+    run.items = appraisal.items;
+    run.appraised_at = Math.floor(Date.now() / 1000);
 
     renderAppraisalResults(
       appraisal.lootResult,
@@ -1142,6 +1183,28 @@ async function appraiseLoss() {
     const implantLoss = results.implants ? results.implants.totalSellPrice : 0;
     run.total_loss = killmailLoss + cargoLoss + fittingLoss + implantLoss;
     run.lossResults = results;
+    run.items = run.killmailItems?.length > 0
+      ? appraisalHelpers.toCompleteRunItems(
+          run.killmailItems.map(item => ({ name: item.type_name, qty: item.qty })),
+          results.killmail,
+          'lost'
+        )
+      : [
+          ...appraisalHelpers.toCompleteRunItems(manuallyTrackedInventory, results.cargo, 'lost'),
+          ...appraisalHelpers.toCompleteRunItems(
+            fittingItems.map(item => ({ name: item.type_name, qty: item.qty })),
+            results.fitting,
+            'lost'
+          ),
+          ...appraisalHelpers.toCompleteRunItems(
+            run.implants.map(item => ({ name: item.type_name, qty: 1 })),
+            results.implants,
+            'lost'
+          ),
+        ];
+    run.appraised_at = Object.values(results).some(Boolean)
+      ? Math.floor(Date.now() / 1000)
+      : null;
 
     renderLossResults(results, cargoLoss, fittingLoss, implantLoss, killmailLoss);
   } catch (e) {
@@ -1263,32 +1326,7 @@ async function saveCurrentRun() {
     runSessionController.rollbackFinalization(run);
     throw error;
   }
-  const items = [];
-
-  if (run.outcome === 'Survived') {
-    items.push(
-      ...appraisalHelpers.toRunItems(run.lootResult, 'gained'),
-      ...appraisalHelpers.toRunItems(run.consumedResult, 'consumed')
-    );
-  } else {
-    if (run.lossResults) {
-      for (const [, result] of Object.entries(run.lossResults)) {
-        items.push(...appraisalHelpers.toRunItems(result, 'lost'));
-      }
-    }
-    // Preserve a verified killmail inventory when no priced result is available.
-    if (run.killmailItems?.length > 0 && !run.lossResults?.killmail) {
-      for (const item of run.killmailItems) {
-        items.push({
-          item_name: item.type_name,
-          qty: item.qty,
-          type: 'lost',
-          unit_price_buy: 0,
-          unit_price_sell: 0,
-        });
-      }
-    }
-  }
+  const items = run.items || [];
 
   // Build fitting items with pricing
   const fitting = run.fitting.map(f => ({
@@ -1312,6 +1350,11 @@ async function saveCurrentRun() {
     net_isk: run.net_isk || 0,
     total_loss: run.total_loss || 0,
     system_id: run.system_id ?? lastSystemId,
+    system_name: run.system_name || lastSystemName,
+    notes: run.notes || '',
+    tags: run.tags || [],
+    killmail_ids: run.killmailIds || [],
+    appraised_at: run.appraised_at || null,
     cargo_before: run.cargoBefore || '',
     cargo_after: run.cargoAfter || '',
     drone_before: run.droneBefore || '',
@@ -1427,6 +1470,11 @@ function openManualEntryModal() {
   document.getElementById('manualWeather').value = S.settings.default_weather || '';
   document.getElementById('manualOutcome').value = 'Survived';
   document.getElementById('manualDuration').value = '';
+  document.getElementById('manualShipClass').value = 'Unknown';
+  document.getElementById('manualShipName').value = '';
+  document.getElementById('manualSystemName').value = '';
+  document.getElementById('manualTags').value = '';
+  document.getElementById('manualNotes').value = '';
   setInventoryText('manualCargoBefore', '');
   setInventoryText('manualDroneBefore', '');
   setInventoryText('manualCargoAfter', '');
@@ -1465,6 +1513,10 @@ async function openEditRunModal(runId) {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
   document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
+  document.getElementById('manualShipName').value = run.ship_name || '';
+  document.getElementById('manualSystemName').value = run.system_name || '';
+  document.getElementById('manualTags').value = (run.tags || []).join(', ');
+  document.getElementById('manualNotes').value = run.notes || '';
   setInventoryText('manualCargoBefore', run.cargo_before || '');
   setInventoryText('manualDroneBefore', run.drone_before || '');
   setInventoryText('manualDroneAfter', run.drone_after || '');
@@ -1605,6 +1657,10 @@ async function submitManualEntry(doAppraise = true) {
   const outcome = document.getElementById('manualOutcome').value;
   const duration = parseDuration(document.getElementById('manualDuration').value);
   const shipClass = document.getElementById('manualShipClass').value;
+  const shipName = document.getElementById('manualShipName').value.trim();
+  const systemName = document.getElementById('manualSystemName').value.trim();
+  const tags = parseRunTags(document.getElementById('manualTags').value);
+  const notes = document.getElementById('manualNotes').value;
   const dateVal = document.getElementById('manualDate').value;
   const cargoBefore = document.getElementById('manualCargoBefore').value;
   const cargoAfter = document.getElementById('manualCargoAfter').value;
@@ -1666,7 +1722,11 @@ async function submitManualEntry(doAppraise = true) {
         total_loss: pendingAppraisal
           ? pendingAppraisal.total_loss
           : (editOriginal?.total_loss || 0),
+        ship_name: shipName,
         ship_class: shipClass,
+        system_name: systemName,
+        notes,
+        tags,
       };
       const update = pendingAppraisal
         ? { meta, appraisal: pendingAppraisal.appraisal }
@@ -1727,8 +1787,12 @@ async function submitManualEntry(doAppraise = true) {
       cargo_after: savedCargoAfter,
       drone_before: droneBefore,
       drone_after: savedDroneAfter,
-      ship_name: '',
+      system_name: systemName,
+      ship_name: shipName,
       ship_class: shipClass,
+      notes,
+      tags,
+      appraised_at: Math.floor(Date.now() / 1000),
       items,
       fitting: [],
       implants: []
@@ -1743,6 +1807,7 @@ async function submitManualEntry(doAppraise = true) {
       drone_before: droneBefore,
       drone_after: savedDroneAfter,
       items,
+      appraised_at: Math.floor(Date.now() / 1000),
     };
 
     if (editRunId) {
@@ -1803,6 +1868,8 @@ function resetRunUI() {
   document.getElementById('infoWeather').textContent = '—';
   document.getElementById('infoStarted').textContent = '—';
   document.getElementById('infoOutcome').textContent = '—';
+  document.getElementById('activeRunNotes').value = '';
+  document.getElementById('activeRunTags').value = '';
   setInventoryText('cargoAfterText', '');
   setInventoryText('droneAfterText', '');
   document.getElementById('fitCaptured').style.display = 'none';
@@ -1913,82 +1980,30 @@ function diffOptionalDroneBay(beforeRaw, afterRaw) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────
-let historyRenderGeneration = 0;
+const historyView = historyViewHelpers.createHistoryView({
+  document,
+  api: window.api,
+  getActiveCharacterId: () => S.activeCharId,
+  formatIsk: fmtIsk,
+  formatDuration: fmtDuration,
+  escapeHtml: esc,
+});
+let historySearchTimer = null;
 
-async function renderHistory() {
-  const generation = ++historyRenderGeneration;
-  const characterId = S.activeCharId;
-  const el = document.getElementById('historyContent');
-  const filters = {
-    character_id: characterId || undefined,
-    tier: document.getElementById('filterTier').value || undefined,
-    weather: document.getElementById('filterWeather').value || undefined,
-    outcome: document.getElementById('filterOutcome').value || undefined,
-  };
-
-  const runs = await window.api.runs.getAll(filters);
-  if (generation !== historyRenderGeneration || S.activeCharId !== characterId) return;
-  if (!runs.length) {
-    el.innerHTML = '<div class="empty-state">No runs logged yet</div>';
-    return;
-  }
-
-  // Sort
-  runs.sort((a, b) => {
-    let av = a[S.sortCol], bv = b[S.sortCol];
-    if (typeof av === 'string') av = av.toLowerCase();
-    if (typeof bv === 'string') bv = bv.toLowerCase();
-    if (av === bv) return 0;
-    return S.sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
-  });
-
-  const cols = [
-    { key: 'started_at', label: 'Date' },
-    { key: 'tier', label: 'Tier' },
-    { key: 'weather', label: 'Weather' },
-    { key: 'ship_class', label: 'Ship' },
-    { key: 'duration', label: 'Duration' },
-    { key: 'outcome', label: 'Outcome' },
-    { key: 'net_isk', label: 'Net ISK' },
-    { key: 'total_loss', label: 'Total Loss' },
-    { key: '_detail', label: '' },
-  ];
-
-  let html = `<table class="data-table"><thead><tr>`;
-  for (const col of cols) {
-    if (col.key === '_detail') { html += `<th></th>`; continue; }
-    const cls = S.sortCol === col.key ? (S.sortDir === 'asc' ? 'sort-asc' : 'sort-desc') : '';
-    const ariaSort = S.sortCol === col.key
-      ? (S.sortDir === 'asc' ? 'ascending' : 'descending')
-      : 'none';
-    html += `<th class="${cls}" aria-sort="${ariaSort}"><button class="table-sort" data-action="sort-history" data-sort-column="${esc(col.key)}">${esc(col.label)}</button></th>`;
-  }
-  html += `</tr></thead><tbody>`;
-
-  for (const run of runs) {
-    const d = new Date(run.started_at * 1000);
-    html += `<tr>
-      <td class="mono">${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-      <td><span class="badge tier">${esc(run.tier || '—')}</span></td>
-      <td><span class="badge weather">${esc(run.weather || '—')}</span></td>
-      <td style="color:var(--dim);font-size:11px">${esc(run.ship_class || '—')}</td>
-      <td class="mono">${fmtDuration(run.duration)}</td>
-      <td><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${esc(run.outcome)}</span></td>
-      <td class="${run.outcome === 'Survived' ? (run.net_isk >= 0 ? 'positive' : 'negative') : ''}">${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '—'}</td>
-      <td class="${run.outcome === 'Died' ? 'negative' : 'mono'}">${run.outcome === 'Died' ? '−' + fmtIsk(run.total_loss) : '—'}</td>
-      <td><button class="btn sm ghost" data-action="show-run-detail" data-run-id="${esc(run.id)}">Detail</button></td>
-    </tr>`;
-  }
-  html += `</tbody></table>`;
-  el.innerHTML = html;
+function renderHistory() {
+  return historyView.render();
 }
 
-function sortHistory(col) {
-  if (S.sortCol === col) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
-  else { S.sortCol = col; S.sortDir = 'desc'; }
-  return renderHistory();
+function sortHistory(column) {
+  return historyView.sort(column);
 }
 
+function scheduleHistorySearch() {
+  clearTimeout(historySearchTimer);
+  historySearchTimer = setTimeout(() => {
+    void runUiTask('Could not search run history', () => renderHistory());
+  }, 250);
+}
 let pendingHistoricalReappraisal = null;
 
 async function showRunDetail(runId) {
@@ -2025,6 +2040,35 @@ async function showRunDetail(runId) {
     </div></div>
   </div>`;
 
+  const metadataRows = [];
+  if (run.ship_name) metadataRows.push(['Ship', run.ship_name]);
+  if (run.system_name || run.system_id) {
+    metadataRows.push(['System', run.system_name || String(run.system_id)]);
+  }
+  if (run.appraised_at) {
+    metadataRows.push(['Appraised', new Date(run.appraised_at * 1000).toLocaleString()]);
+  }
+  if (run.killmail_ids?.length) {
+    metadataRows.push(['Killmail IDs', run.killmail_ids.join(', ')]);
+  }
+  if (metadataRows.length || run.tags?.length || run.notes) {
+    html += '<section class="run-detail-metadata"><div class="run-detail-metadata-grid">';
+    for (const [label, value] of metadataRows) {
+      html += '<div><div class="field-label">' + esc(label)
+        + '</div><div>' + esc(value) + '</div></div>';
+    }
+    html += '</div>';
+    if (run.tags?.length) {
+      html += '<div class="run-detail-tags">'
+        + run.tags.map(tag => '<span class="history-tag">' + esc(tag) + '</span>').join(' ')
+        + '</div>';
+    }
+    if (run.notes) {
+      html += '<div class="run-detail-notes"><div class="field-label">Notes</div>'
+        + '<div>' + esc(run.notes) + '</div></div>';
+    }
+    html += '</section>';
+  }
   if (run.fitting.length || run.implants.length) {
     const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
     const counts = [];
@@ -2203,6 +2247,7 @@ async function reappraiseRun(runId) {
       drone_before: droneBefore,
       drone_after: droneAfter,
       items: preview.items,
+      appraised_at: Math.floor(Date.now() / 1000),
     };
     pendingHistoricalReappraisal = { runId, appraisal };
     setReappraisalActionsVisible(runId, true);
@@ -2313,10 +2358,14 @@ function shipSetupSectionHtml(title, items) {
   return `${html}</div>`;
 }
 
-async function showShipSetup(runId) {
+async function showShipSetup(runId, returnModal = 'runDetailModal') {
   const run = await window.api.runs.getById(runId);
   if (!run) return;
 
+  const setupModal = document.getElementById('shipSetupModal');
+  setupModal.dataset.returnModal = returnModal;
+  const closeButton = setupModal.querySelector('[data-action="close-ship-setup"]');
+  closeButton.setAttribute('aria-label', returnModal ? 'Back to run details' : 'Back to statistics');
   const grouped = window.AbyssFitting.groupSnapshot(run.fitting, run.implants);
   const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
   const hullName = grouped.hull?.name || run.ship_name || 'Unknown ship';
@@ -2349,7 +2398,7 @@ async function showShipSetup(runId) {
   <div id="copyFittingStatus" role="status" aria-live="polite" style="margin-top:10px"></div>
   <div class="ship-setup-actions">
     <button class="btn gold" data-action="copy-run-fitting" data-run-id="${esc(run.id)}">Copy to Clipboard</button>
-    <button class="btn sm ghost" data-action="close-ship-setup">Back to run details</button>
+    <button class="btn sm ghost" data-action="close-ship-setup">${returnModal ? 'Back to run details' : 'Back to statistics'}</button>
   </div>`;
 
   document.getElementById('shipSetupContent').innerHTML = html;
@@ -2358,8 +2407,9 @@ async function showShipSetup(runId) {
 }
 
 function closeShipSetupModal() {
+  const returnModal = document.getElementById('shipSetupModal').dataset.returnModal;
   closeModal('shipSetupModal');
-  openModal('runDetailModal');
+  if (returnModal) openModal(returnModal);
 }
 
 async function copyRunFitting(runId) {
@@ -2730,7 +2780,7 @@ async function updateRecentRuns() {
   if (generation !== recentRunsRenderGeneration || S.activeCharId !== characterId) return;
   if (!runs.length) { el.textContent = 'No runs yet'; return; }
   el.innerHTML = runs.map(r => {
-    const col = r.outcome === 'Survived' ? 'var(--green)' : 'var(--red)';
+    const col = r.outcome === 'Survived' && r.net_isk >= 0 ? 'var(--green)' : 'var(--red)';
     const val = r.outcome === 'Survived' ? fmtIsk(r.net_isk) : '−' + fmtIsk(r.total_loss);
     return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
       <span>${esc(r.tier)} ${esc(r.weather)} <span class="badge ${r.outcome === 'Survived' ? 'survived' : 'died'}" style="font-size:9px">${r.outcome === 'Survived' ? '✓' : '✗'}</span></span>
@@ -2931,7 +2981,10 @@ const clickActions = {
   'submit-manual-entry': element => submitManualEntry(element.dataset.appraise === 'true'),
   'sort-history': element => sortHistory(element.dataset.sortColumn),
   'show-run-detail': element => showRunDetail(Number(element.dataset.runId)),
-  'show-ship-setup': element => showShipSetup(Number(element.dataset.runId)),
+  'show-ship-setup': element => showShipSetup(
+    Number(element.dataset.runId),
+    element.dataset.returnModal === 'none' ? '' : 'runDetailModal'
+  ),
   'copy-run-fitting': element => copyRunFitting(Number(element.dataset.runId)),
   'close-ship-setup': () => closeShipSetupModal(),
   'reappraise-run': element => reappraiseRun(Number(element.dataset.runId)),
@@ -3043,14 +3096,21 @@ document.addEventListener('input', event => {
   invalidateHistoricalReappraisalPreview(element);
   if (element.dataset.inputAction === 'paste-hint') {
     updatePasteHint(element.id, element.dataset.hint);
+  } else if (element.dataset.inputAction === 'history-search') {
+    scheduleHistorySearch();
   }
   if ([
     'cargoBeforeText',
     'cargoAfterText',
     'droneBeforeText',
     'droneAfterText',
+    'activeRunNotes',
+    'activeRunTags',
   ].includes(element.id)) {
-    scheduleActiveRunCheckpoint();
+    if (S.activeRun) {
+      syncActiveRunInputs();
+      scheduleActiveRunCheckpoint();
+    }
   }
   if (['cargoBeforeText', 'droneBeforeText'].includes(element.id)) {
     document.getElementById('loadoutApplyStatus').hidden = true;

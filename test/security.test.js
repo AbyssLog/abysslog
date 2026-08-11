@@ -102,7 +102,14 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     consumed_cost: 25,
     net_isk: 75,
     total_loss: 0,
+    ship_name: 'Gila',
     ship_class: 'Cruiser',
+    system_id: 32_000_001,
+    system_name: 'Abyssal #32000001',
+    notes: 'New route',
+    tags: ['Farm', 'farm', 'New Fit'],
+    killmail_ids: [456, 456],
+    appraised_at: 1_700_001_200,
     items: [{
       item_name: 'Triglavian Survey Database',
       qty: 1,
@@ -114,8 +121,24 @@ test('run IPC payloads are schema-validated and sanitized', () => {
 
   assert.equal(run.net_isk, 75);
   assert.equal(run.cargo_before, '');
-  assert.deepEqual(security.validateRunFilters({ character_id: '123', limit: 5 }), {
+  assert.deepEqual(run.tags, ['Farm', 'New Fit']);
+  assert.deepEqual(run.killmail_ids, [456]);
+  assert.equal(run.system_name, 'Abyssal #32000001');
+  assert.deepEqual(security.validateRunFilters({
+    character_id: '123',
+    limit: 5,
+    search: '  mutaplasmid  ',
+    date_from: 1_700_000_000,
+    date_to: 1_700_086_400,
+    ship: ' Gila ',
+    tag: ' Farm ',
+  }), {
     character_id: 123,
+    search: 'mutaplasmid',
+    date_from: 1_700_000_000,
+    date_to: 1_700_086_400,
+    ship: 'Gila',
+    tag: 'Farm',
     limit: 5,
   });
   assert.deepEqual(security.validateStatsFilters({
@@ -150,6 +173,10 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     total_loss: 0,
     ship_class: 'Cruiser',
   };
+  assert.throws(() => security.validateRunFilters({
+    search: 'mutaplasmid',
+    search_scope: 'lost',
+  }));
   const edit = security.validateRunEdit({
     meta,
     cargo: {
@@ -189,6 +216,9 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
       weather: 'Electrical',
       outcome: null,
       system_id: 32_000_001,
+      system_name: 'Abyssal #32000001',
+      notes: 'Watch the final room',
+      tags: ['Testing', 'testing'],
       cargoBefore: 'Tritanium, 2',
       cargoAfter: '',
       droneBefore: 'Vespa II, 5',
@@ -205,6 +235,9 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
 
   assert.equal(snapshot.state, 'in-abyss');
   assert.equal(snapshot.run.character_id, 123);
+  assert.equal(snapshot.run.system_name, 'Abyssal #32000001');
+  assert.equal(snapshot.run.notes, 'Watch the final room');
+  assert.deepEqual(snapshot.run.tags, ['Testing']);
   assert.deepEqual(snapshot.run.killmailItems, [{
     type_id: 12_345,
     type_name: 'Test Module',
@@ -439,6 +472,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   const html = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const appraisalJs = fs.readFileSync(path.join(projectRoot, 'src/shared/appraisal.js'), 'utf8');
+  const historyJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/history-view.js'), 'utf8');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const esi = fs.readFileSync(path.join(projectRoot, 'src/main/esi.js'), 'utf8');
 
@@ -472,7 +506,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /event\.key === 'Escape'/);
   assert.match(appJs, /aria-current/);
   assert.match(appJs, /aria-expanded/);
-  assert.match(appJs, /class="table-sort"/);
+  assert.match(historyJs, /class="table-sort"/);
   assert.match(appJs, /function runUiTask/);
   assert.match(appJs, /Promise\.resolve\(\)\s*\.then\(operation\)/);
   assert.match(appJs, /window\.addEventListener\('unhandledrejection'/);

@@ -1,6 +1,6 @@
 # AbyssLog Privacy Notice
 
-Last updated: 28 July 2026
+Last updated: 9 August 2026
 
 AbyssLog is a locally installed, non-commercial hobby project. The developer does
 not operate an AbyssLog account service or application server, and the app does
@@ -14,8 +14,8 @@ AbyssLog stores the following data in its local SQLite database:
 - EVE character IDs, names, portrait URLs, and selected ESI permissions;
 - EVE OAuth access and refresh tokens;
 - the Janice API key you provide;
-- run history, notes, cargo and drone text, appraisals, fittings, implants, and
-  matching killmail IDs;
+- run history, notes, tags, system names, cargo and drone text, appraisal
+  timestamps and items, fittings, implants, and matching killmail IDs;
 - unfinished-run checkpoints, inventory-baseline state, and app settings.
 
 OAuth tokens and the Janice API key are encrypted with Electron `safeStorage`

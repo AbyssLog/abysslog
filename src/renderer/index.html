@@ -39,8 +39,8 @@
     <div class="topbar-sep"></div>
     <nav class="nav" aria-label="Primary navigation">
       <button class="nav-btn active" data-action="show-page" data-page="tracker" aria-controls="page-tracker" aria-current="page">Tracker</button>
-      <button class="nav-btn" data-action="show-page" data-page="history" aria-controls="page-history">History</button>
       <button class="nav-btn" data-action="show-page" data-page="stats" aria-controls="page-stats">Statistics</button>
+      <button class="nav-btn" data-action="show-page" data-page="history" aria-controls="page-history">History</button>
       <button class="nav-btn" data-action="show-page" data-page="settings" aria-controls="page-settings">Settings</button>
       <button class="nav-btn" data-action="show-page" data-page="about" aria-controls="page-about">About</button>
     </nav>
@@ -241,6 +241,12 @@
                 <div><div class="field-label">Started</div><div id="infoStarted" style="font-size:12px;font-family:var(--font-mono);color:var(--text-dim)">—</div></div>
                 <div><div class="field-label">Outcome</div><div id="infoOutcome">—</div></div>
               </div>
+              <div class="run-journal-fields">
+                <label class="field-label" for="activeRunTags">Tags</label>
+                <input class="field-input" id="activeRunTags" maxlength="512" placeholder="testing, farm, new fit" data-input-action="active-run-metadata">
+                <label class="field-label" for="activeRunNotes">Notes</label>
+                <textarea class="field-textarea" id="activeRunNotes" maxlength="16384" placeholder="Tactics, room notes, anomalies…" data-input-action="active-run-metadata"></textarea>
+              </div>
             </div>
             <div class="panel">
               <div class="panel-title">Recent Runs</div>
@@ -253,26 +259,50 @@
 
     <!-- ── HISTORY PAGE ───────────────────────────────────────────────── -->
     <div class="page" id="page-history" aria-hidden="true">
-      <div class="filter-row">
-        <select class="field-select" id="filterTier" data-change-action="render-history" aria-label="Filter history by tier">
+      <div class="filter-row history-primary-filters">
+        <div class="history-search-field">
+          <label class="field-label" for="historySearch">Search History</label>
+          <input class="field-input" id="historySearch" maxlength="256" placeholder="Notes, tags, systems, ships, or item names…" data-input-action="history-search">
+        </div>
+        <select class="field-select history-compact-filter" id="filterTier" data-change-action="render-history" aria-label="Filter history by tier">
           <option value="">All Tiers</option>
           <option value="T0">T0</option>
           <option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option>
           <option value="T4">T4</option><option value="T5">T5</option><option value="T6">T6</option>
         </select>
-        <select class="field-select" id="filterWeather" data-change-action="render-history" aria-label="Filter history by weather">
+        <select class="field-select history-compact-filter" id="filterWeather" data-change-action="render-history" aria-label="Filter history by weather">
           <option value="">All Weather</option>
           <option value="Electrical">Electrical</option><option value="Exotic">Exotic</option>
           <option value="Dark">Dark</option><option value="Firestorm">Firestorm</option>
           <option value="Gamma">Gamma</option>
         </select>
-        <select class="field-select" id="filterOutcome" data-change-action="render-history" aria-label="Filter history by outcome">
+        <select class="field-select history-compact-filter" id="filterOutcome" data-change-action="render-history" aria-label="Filter history by outcome">
           <option value="">All Outcomes</option>
           <option value="Survived">Survived</option>
           <option value="Died">Died</option>
         </select>
-        <button class="btn sm ghost" data-action="render-history" style="margin-left:auto">Refresh</button>
       </div>
+      <div class="filter-row history-advanced-filters">
+        <div>
+          <label class="field-label" for="historyDateFrom">From</label>
+          <input class="field-input" id="historyDateFrom" type="date" data-change-action="render-history">
+        </div>
+        <div>
+          <label class="field-label" for="historyDateTo">Through</label>
+          <input class="field-input" id="historyDateTo" type="date" data-change-action="render-history">
+        </div>
+        <div>
+          <label class="field-label" for="historyShip">Ship</label>
+          <input class="field-input" id="historyShip" maxlength="256" placeholder="Name or class" data-input-action="history-search">
+        </div>
+        <div>
+          <label class="field-label" for="historyTag">Tag</label>
+          <input class="field-input" id="historyTag" maxlength="48" placeholder="e.g. testing" data-input-action="history-search">
+        </div>
+        <button class="btn sm ghost history-refresh" data-action="render-history">Refresh</button>
+        <div id="historyResultSummary" class="history-result-summary" role="status" aria-live="polite"></div>
+      </div>
+      <div class="stats-filter-error" id="historyFilterError" role="alert" hidden></div>
       <div id="historyContent"></div>
     </div>
 
@@ -534,10 +564,28 @@
           <option value="Cruiser">Cruiser</option>
         </select>
       </div>
+      <div>
+        <label class="field-label" for="manualShipName">Ship Hull</label>
+        <input class="field-input" id="manualShipName" maxlength="256" placeholder="e.g. Gila">
+      </div>
+      <div>
+        <label class="field-label" for="manualSystemName">System</label>
+        <input class="field-input" id="manualSystemName" maxlength="128" placeholder="Solar system or Abyssal ID">
+      </div>
+    </div>
+    <div class="manual-meta-grid">
+      <div>
+        <label class="field-label" for="manualDate">Date &amp; Time</label>
+        <input type="datetime-local" class="field-input" id="manualDate" />
+      </div>
+      <div>
+        <label class="field-label" for="manualTags">Tags</label>
+        <input class="field-input" id="manualTags" maxlength="512" placeholder="Comma-separated tags">
+      </div>
     </div>
     <div style="margin-bottom:10px">
-      <label class="field-label" for="manualDate">Date &amp; Time</label>
-      <input type="datetime-local" class="field-input" id="manualDate" />
+      <label class="field-label" for="manualNotes">Notes</label>
+      <textarea class="field-textarea" id="manualNotes" maxlength="16384" style="min-height:64px" placeholder="Tactics, room notes, anomalies…"></textarea>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px" id="manualCargoGrid">
       <div>
@@ -632,6 +680,7 @@
 <script src="../shared/updates.js"></script>
 <script src="../shared/statistics.js"></script>
 <script src="./stats-view.js"></script>
+<script src="./history-view.js"></script>
 <script src="../shared/ship-groups.js"></script>
 <script src="./inventory-editor.js"></script>
 <script src="./run-session-controller.js"></script>

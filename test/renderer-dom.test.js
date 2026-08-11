@@ -17,6 +17,7 @@ const rendererScripts = [
   'src/shared/updates.js',
   'src/shared/statistics.js',
   'src/renderer/stats-view.js',
+  'src/renderer/history-view.js',
   'src/shared/ship-groups.js',
   'src/renderer/inventory-editor.js',
   'src/renderer/run-session-controller.js',
@@ -116,6 +117,7 @@ async function createRendererHarness() {
     deleteCharacterGate: null,
     esiPollCalls: 0,
     esiSystemId: 30_000_142,
+    elementClientWidth: 600,
     janiceCalls: [],
     janiceGate: null,
     killmailGate: null,
@@ -240,7 +242,7 @@ async function createRendererHarness() {
         state.esiPollCalls++;
         return { solar_system_id: state.esiSystemId };
       },
-      getShip: async () => ({ ship_type_id: 17_918, ship_name: 'Gila' }),
+      getShip: async () => ({ ship_type_id: 17_918, ship_name: 'Abbie Duba III' }),
       getSystemName: async () => 'Jita',
       getRecentAbyssLoss: async (...args) => {
         state.killmailRequests.push(args);
@@ -250,7 +252,10 @@ async function createRendererHarness() {
       getTypeNames: async typeIds => {
         state.typeNameRequests.push([...typeIds]);
         if (state.typeNamesGate) return state.typeNamesGate.promise;
-        return Object.fromEntries(typeIds.map(typeId => [typeId, `Type ${typeId}`]));
+        return Object.fromEntries(typeIds.map(typeId => [
+          typeId,
+          typeId === 17_918 ? 'Gila' : 'Type ' + typeId,
+        ]));
       },
     }),
     shell: apiGroup({}),
@@ -258,7 +263,7 @@ async function createRendererHarness() {
 
   Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', {
     configurable: true,
-    get: () => 600,
+    get: () => state.elementClientWidth,
   });
   window.confirm = () => true;
 
@@ -401,6 +406,17 @@ test('renderer async workflows execute against the real DOM', async t => {
       state.runQueryHandler = null;
     });
 
+    await t.test('negative survived-run values are red in Recent Runs', async () => {
+      state.runQueryHandler = query => query.limit === 5
+        ? [{ ...createHistoryRun(3, 'Gila'), net_isk: -500 }]
+        : [];
+
+      await evaluate('updateRecentRuns()');
+
+      const value = document.querySelector('#recentRunsList > div > span:last-child');
+      assert.match(value.getAttribute('style'), /color:var\(--red\)/);
+      state.runQueryHandler = null;
+    });
     await t.test('manual submission is single-flight and unlocks after saving', async () => {
       document.querySelector('[data-page="tracker"]').click();
       document.querySelector('[data-action="open-manual-entry"]').click();
@@ -505,6 +521,84 @@ test('renderer async workflows execute against the real DOM', async t => {
       assert.ok(barIndex >= 0, 'run-count bar should be rendered');
       assert.ok(iskLineIndex > barIndex, 'ISK line should be painted over the bars');
       assert.match(document.getElementById('statsContent').textContent, /Net \/ Hour/);
+    });
+
+    await t.test('daily chart re-renders when the window resizes', async () => {
+      document.querySelector('[data-page="stats"]').click();
+      await waitFor(
+        () => document.querySelector('#dailyChart svg')?.getAttribute('width') === '568',
+        'initial chart width'
+      );
+
+      state.elementClientWidth = 900;
+      window.dispatchEvent(new window.Event('resize'));
+      await waitFor(
+        () => document.querySelector('#dailyChart svg')?.getAttribute('width') === '868',
+        'resized chart width'
+      );
+
+      state.elementClientWidth = 600;
+      window.dispatchEvent(new window.Event('resize'));
+      await waitFor(
+        () => document.querySelector('#dailyChart svg')?.getAttribute('width') === '568',
+        'restored chart width'
+      );
+    });
+    await t.test('statistics fits open the shared setup modal and return to Statistics', async () => {
+      const fitRun = {
+        ...createHistoryRun(88, 'Cruiser'),
+        ship_name: 'Gila',
+        started_at: Math.floor(Date.UTC(2026, 7, 1) / 1000),
+        fitting: [
+          { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
+          { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 2, slot: 'HiSlot0' },
+        ],
+        implants: [
+          { type_id: 22_101, type_name: 'Mid-grade Crystal Alpha', slot: 1 },
+        ],
+        items: [],
+      };
+      state.runDetails.set(fitRun.id, fitRun);
+      state.stats.byFit = [{
+        fit_key: 'abc12345',
+        representative_run_id: fitRun.id,
+        ship_name: 'Gila',
+        ship_class: 'Cruiser',
+        weather: 'Exotic',
+        total_runs: 2,
+        survived: 2,
+        avg_net_isk: 500,
+      }];
+
+      document.querySelector('[data-page="stats"]').click();
+      await waitFor(
+        () => document.querySelector('[data-action="show-ship-setup"][data-return-modal="none"]'),
+        'statistics fit action'
+      );
+      document.querySelector(
+        '[data-action="show-ship-setup"][data-return-modal="none"]'
+      ).click();
+      await waitFor(
+        () => document.getElementById('shipSetupModal').classList.contains('open'),
+        'statistics fit modal'
+      );
+
+      const setupText = document.getElementById('shipSetupContent').textContent;
+      assert.match(setupText, /Rapid Light Missile Launcher II/);
+      assert.match(setupText, /Mid-grade Crystal Alpha/);
+      assert.match(setupText, /Back to statistics/);
+      assert.equal(document.getElementById('runDetailModal').classList.contains('open'), false);
+
+      document.querySelector(
+        '#shipSetupContent [data-action="close-ship-setup"]'
+      ).click();
+      await waitFor(
+        () => !document.getElementById('shipSetupModal').classList.contains('open'),
+        'statistics fit modal close'
+      );
+      assert.equal(document.getElementById('runDetailModal').classList.contains('open'), false);
+      delete state.stats.byFit;
+      state.runDetails.delete(fitRun.id);
     });
 
     await t.test('historical run details initialize structured inventory editors', async () => {
@@ -644,6 +738,7 @@ test('renderer async workflows execute against the real DOM', async t => {
       );
 
       assert.equal(state.completedRuns.at(-1).system_id, 32_000_001);
+      assert.equal(state.completedRuns.at(-1).ship_name, 'Gila');
       await waitFor(
         () => document.getElementById('state-awaiting').style.display === 'block',
         'automatic run reset'

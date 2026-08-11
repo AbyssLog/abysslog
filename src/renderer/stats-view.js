@@ -27,6 +27,9 @@
     }
 
   let statsRenderGeneration = 0;
+  let lastChart = null;
+  let chartResizeFrame = null;
+  const viewWindow = document.defaultView;
 
   function handleStatsRangeChange() {
     const preset = document.getElementById('statsRangePreset').value;
@@ -59,6 +62,41 @@
     return filters;
   }
 
+  function renderWeatherBadges(value) {
+    const weathers = String(value || 'Unknown')
+      .split(',')
+      .map(weather => weather.trim())
+      .filter(Boolean);
+    return '<span class="weather-badge-group">'
+      + weathers.map(weather => '<span class="badge weather">'
+        + escapeHtml(weather) + '</span>').join('')
+      + '</span>';
+  }
+
+  function renderStatColumnHeaders() {
+    return '<th class="stat-number">Runs</th>'
+      + '<th class="stat-number">Survived</th>'
+      + '<th class="stat-number">Died</th>'
+      + '<th class="stat-number">Survival %</th>'
+      + '<th class="stat-number">Avg. Duration</th>'
+      + '<th class="stat-number">Avg. Net</th>';
+  }
+
+  function renderStatCells(group) {
+    const totalRuns = Number(group.total_runs) || 0;
+    const survived = Number(group.survived) || 0;
+    const died = Math.max(0, totalRuns - survived);
+    const survivalRate = totalRuns > 0 ? Math.round(survived / totalRuns * 100) : 0;
+    const avgDuration = Math.round(Number(group.avg_duration) || 0);
+    const avgNet = Number(group.avg_net_isk) || 0;
+    return '<td class="stat-number">' + totalRuns + '</td>'
+      + '<td class="stat-number" style="color:var(--green)">' + survived + '</td>'
+      + '<td class="stat-number" style="color:var(--red)">' + died + '</td>'
+      + '<td class="stat-number">' + survivalRate + '%</td>'
+      + '<td class="mono stat-number">' + formatDuration(avgDuration) + '</td>'
+      + '<td class="stat-number ' + (avgNet >= 0 ? 'positive' : 'negative') + '">'
+      + formatIsk(avgNet) + '</td>';
+  }
   async function renderStats() {
     const generation = ++statsRenderGeneration;
     const characterId = getActiveCharacterId();
@@ -70,6 +108,7 @@
     } catch (error) {
       filterError.textContent = error instanceof Error ? error.message : 'Date range is invalid';
       filterError.hidden = false;
+      lastChart = null;
       el.innerHTML = '';
       return;
     }
@@ -85,6 +124,7 @@
 
     if (!o || o.total_runs === 0) {
       const message = range.preset === 'all' ? 'No runs logged yet' : 'No runs in selected period';
+      lastChart = null;
       el.innerHTML = `<div class="empty-state">${message}</div>`;
       return;
     }
@@ -114,54 +154,112 @@
       <div class="stat-card"><div class="stat-card-label">Total Death Losses</div><div class="stat-card-value red">${formatIsk(o.total_loss || 0)}</div></div>
     </div>`;
 
+    if (stats.latestSession) {
+      const session = stats.latestSession;
+      const sessionRate = Math.round(session.survived / session.total_runs * 100);
+      const sessionStart = new Date(session.started_at * 1000).toLocaleString();
+      html += '<div class="section-title">Latest Session</div>'
+        + '<div class="stats-chart-note">Automatically groups consecutive runs separated by no more than one hour · started '
+        + escapeHtml(sessionStart) + '</div>'
+        + '<div class="stat-grid session-stat-grid">'
+        + '<div class="stat-card"><div class="stat-card-label">Runs</div><div class="stat-card-value cyan">'
+        + session.total_runs + '</div></div>'
+        + '<div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">'
+        + sessionRate + '%</div></div>'
+        + '<div class="stat-card"><div class="stat-card-label">Run Time</div><div class="stat-card-value">'
+        + formatDuration(session.total_duration) + '</div></div>'
+        + '<div class="stat-card"><div class="stat-card-label">Session Net</div><div class="stat-card-value '
+        + (session.total_net_isk >= 0 ? 'green' : 'red') + '">'
+        + formatIsk(session.total_net_isk) + '</div></div></div>';
+    }
+
     // Daily chart - always shown
     html += `<div class="section-title">${chartTitle}</div>
       <div class="stats-chart-note">${chartNote}</div>
       <div id="dailyChart" style="background:var(--panel);border:1px solid var(--border);padding:16px;margin-bottom:16px"></div>`;
 
     if (stats.byTier.length) {
-      html += `<div class="section-title">By Tier</div>
-      <table class="data-table" style="margin-bottom:16px"><thead><tr>
-        <th>Tier</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Survival Duration</th><th>Avg Net</th>
-      </tr></thead><tbody>`;
-      for (const t of stats.byTier) {
-        const sr = t.total_runs > 0 ? Math.round(t.survived / t.total_runs * 100) : 0;
-        html += `<tr>
-          <td><span class="badge tier">${escapeHtml(t.tier || '-')}</span></td>
-          <td>${t.total_runs}</td>
-          <td style="color:var(--green)">${t.survived}</td>
-          <td style="color:var(--red)">${t.total_runs - t.survived}</td>
-          <td>${sr}%</td>
-          <td class="mono">${formatDuration(Math.round(t.avg_duration || 0))}</td>
-          <td class="${(t.avg_net_isk || 0) >= 0 ? 'positive' : 'negative'}">${formatIsk(t.avg_net_isk || 0)}</td>
-        </tr>`;
+      html += '<div class="section-title">By Tier</div>'
+        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
+        + '<th>Tier</th>' + renderStatColumnHeaders()
+        + '</tr></thead><tbody>';
+      for (const tier of stats.byTier) {
+        html += '<tr><td><span class="badge tier">' + escapeHtml(tier.tier || '-') + '</span></td>'
+          + renderStatCells(tier) + '</tr>';
       }
-      html += `</tbody></table>`;
+      html += '</tbody></table></div>';
     }
 
     if (stats.byWeather.length) {
-      html += `<div class="section-title">By Weather</div>
-      <table class="data-table"><thead><tr>
-        <th>Weather</th><th>Runs</th><th>Survived</th><th>Died</th><th>Survival %</th><th>Avg Net</th>
-      </tr></thead><tbody>`;
-      for (const w of stats.byWeather) {
-        const sr = w.total_runs > 0 ? Math.round(w.survived / w.total_runs * 100) : 0;
-        html += `<tr>
-          <td><span class="badge weather">${escapeHtml(w.weather || '-')}</span></td>
-          <td>${w.total_runs}</td>
-          <td style="color:var(--green)">${w.survived}</td>
-          <td style="color:var(--red)">${w.total_runs - w.survived}</td>
-          <td>${sr}%</td>
-          <td class="${(w.avg_net_isk || 0) >= 0 ? 'positive' : 'negative'}">${formatIsk(w.avg_net_isk || 0)}</td>
-        </tr>`;
+      html += '<div class="section-title">By Weather</div>'
+        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
+        + '<th>Weather</th>' + renderStatColumnHeaders()
+        + '</tr></thead><tbody>';
+      for (const weather of stats.byWeather) {
+        html += '<tr><td>' + renderWeatherBadges(weather.weather || '-') + '</td>'
+          + renderStatCells(weather) + '</tr>';
       }
-      html += `</tbody></table>`;
+      html += '</tbody></table></div>';
     }
 
+    if (stats.byShip?.length) {
+      html += '<div class="section-title">By Ship</div>'
+        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
+        + '<th>Ship</th>' + renderStatColumnHeaders()
+        + '</tr></thead><tbody>';
+      for (const ship of stats.byShip) {
+        html += '<tr><td>' + escapeHtml(ship.ship_name)
+          + ' <span class="stats-group-detail">(' + escapeHtml(ship.ship_class) + ')</span></td>'
+          + renderStatCells(ship) + '</tr>';
+      }
+      html += '</tbody></table></div>';
+    }
+
+    if (stats.byFit?.length) {
+      html += '<div class="section-title">By Fit</div>'
+        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
+        + '<th>Fit</th>' + renderStatColumnHeaders()
+        + '</tr></thead><tbody>';
+      for (const fit of stats.byFit) {
+        const fitLabel = fit.ship_name + ' fit #' + fit.fit_key;
+        html += '<tr><td><button type="button" class="analytics-fit-link" '
+          + 'data-action="show-ship-setup" data-run-id="'
+          + escapeHtml(fit.representative_run_id) + '" data-return-modal="none" '
+          + 'aria-label="View ' + escapeHtml(fitLabel) + ' details">'
+          + escapeHtml(fit.ship_name) + ' <span class="analytics-key">#'
+          + escapeHtml(fit.fit_key) + '</span></button></td>'
+          + renderStatCells(fit) + '</tr>';
+      }
+      html += '</tbody></table></div>';
+    }
+
+    const itemGroups = [
+      ['gained', 'Loot Drops'],
+      ['consumed', 'Consumed Items'],
+      ['lost', 'Lost Items'],
+    ];
+    const populatedItemGroups = itemGroups.filter(([type]) => stats.items?.[type]?.length);
+    if (populatedItemGroups.length) {
+      html += '<div class="section-title">Item Analytics</div><div class="item-analytics-grid">';
+      for (const [type, label] of populatedItemGroups) {
+        html += '<section class="item-analytics-panel"><h3>' + label + '</h3>'
+          + '<div class="table-scroll"><table class="data-table analytics-table"><thead><tr>'
+          + '<th>Item</th><th>Runs</th><th>Qty</th><th>Value</th>'
+          + '</tr></thead><tbody>';
+        for (const item of stats.items[type]) {
+          html += '<tr><td>' + escapeHtml(item.item_name) + '</td>'
+            + '<td>' + item.runs_containing + '</td><td>' + item.total_qty + '</td>'
+            + '<td>' + formatIsk(item.total_value || 0) + '</td></tr>';
+        }
+        html += '</tbody></table></div></section>';
+      }
+      html += '</div>';
+    }
     el.innerHTML = html;
 
     // Render chart after DOM is set
-    renderDailyChart(chart.rows, chart.bucket, chart.bucketDays);
+    lastChart = { daily: chart.rows, bucket: chart.bucket, bucketDays: chart.bucketDays };
+    renderDailyChart(lastChart.daily, lastChart.bucket, lastChart.bucketDays);
   }
 
   function renderDailyChart(daily, bucket = 'day', bucketDays = 1) {
@@ -176,7 +274,9 @@
       daily = [{ day: '', total_runs: 0, net_isk: 0, total_loss: 0, survived: 0 }, ...daily];
     }
 
-    const W = container.clientWidth - 32;
+    const containerWidth = container.clientWidth;
+    if (containerWidth <= 32) return;
+    const W = containerWidth - 32;
     const H = 200;
     const PAD = { top: 10, right: 16, bottom: 36, left: 64 };
     const cw = W - PAD.left - PAD.right;
@@ -290,6 +390,21 @@
     svg += `</g></svg>`;
     container.innerHTML = svg;
   }
+  function handleChartResize() {
+    if (!lastChart) return;
+    const draw = () => {
+      chartResizeFrame = null;
+      renderDailyChart(lastChart.daily, lastChart.bucket, lastChart.bucketDays);
+    };
+    if (!viewWindow?.requestAnimationFrame) {
+      draw();
+      return;
+    }
+    if (chartResizeFrame !== null) viewWindow.cancelAnimationFrame(chartResizeFrame);
+    chartResizeFrame = viewWindow.requestAnimationFrame(draw);
+  }
+
+  viewWindow?.addEventListener?.('resize', handleChartResize);
     return Object.freeze({
       handleRangeChange: handleStatsRangeChange,
       render: renderStats,

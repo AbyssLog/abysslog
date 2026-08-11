@@ -59,6 +59,30 @@ test('survived appraisal combines cargo and optional drone changes', async () =>
   ]);
 });
 
+test('unpriced loot remains in canonical run items for history search', async () => {
+  const output = await appraisal.appraiseSurvivedInventory({
+    cargoBefore: '',
+    cargoAfter: 'Priced Loot\t1\nUnpriced Mutaplasmid\t2',
+    appraise: async items => result(items.filter(item => item.name === 'Priced Loot'), 50, 60),
+  });
+
+  assert.deepEqual(output.items, [
+    {
+      item_name: 'Priced Loot',
+      qty: 1,
+      type: 'gained',
+      unit_price_buy: 50,
+      unit_price_sell: 60,
+    },
+    {
+      item_name: 'Unpriced Mutaplasmid',
+      qty: 2,
+      type: 'gained',
+      unit_price_buy: 0,
+      unit_price_sell: 0,
+    },
+  ]);
+});
 test('omitted post-run drones remain unchanged', async () => {
   const calls = [];
   const output = await appraisal.appraiseSurvivedInventory({

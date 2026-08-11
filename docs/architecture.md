@@ -24,14 +24,15 @@ network access are blocked.
 - src/renderer/app.js coordinates feature controllers and top-level events.
 - src/renderer/run-session-controller.js owns checkpoint serialization and
   appraisal/finalization generations.
-- src/renderer/stats-view.js owns statistics range controls, markup, and charts.
+- src/renderer/stats-view.js owns statistics range controls, session and analytics markup, and charts.
+- src/renderer/history-view.js owns history filter mapping, sorting, result generations, and match context.
 - src/renderer/styles/app.css owns the application stylesheet.
 - src/renderer/inventory-editor.js owns structured cargo and drone editing.
 - src/main/preload.js defines the renderer-to-main contract.
 - src/main/main.js bootstraps Electron and composes main-process services.
 - src/main/ipc contains feature registrars for authenticated IPC channels.
 - src/main/database.js is the stable facade for local persistence.
-- src/main/database contains focused statistics and CSV repositories.
+- src/main/database contains focused run-search/persistence, statistics, and CSV repositories.
 - src/main/esi.js and src/main/janice.js are validated external-service clients.
 - src/main/http-client.js provides bounded HTTP, retries, and rate-limit waits.
 - src/shared contains deterministic logic usable by both Node tests and the
@@ -70,7 +71,7 @@ returns to awaiting-cargo and re-appraises against current prices.
 A run can start manually or after the transition tracker confirms consecutive
 Abyssal observations. The run captures:
 
-- character, timestamp, tier, weather, system, and ship display name;
+- character, timestamp, tier, weather, system, ship display name, notes, and tags;
 - pre-run cargo and drone snapshots;
 - optional fitting and implant snapshots when authorized.
 
@@ -93,7 +94,7 @@ loop or previously selected character must not update current state.
 
 Cargo and optional drone snapshots are parsed and diffed. Gained items are
 appraised at Janice buy prices, while consumed items are appraised at Janice
-sell prices. Net ISK is loot value minus replacement cost.
+sell prices. Net ISK is loot value minus replacement cost. Canonical item rows are retained with zero prices when Janice cannot resolve them, which keeps item-name history search complete.
 
 When saved, the post-run cargo and drone state becomes the next pre-run
 inventory baseline. An explicit clear marker prevents an older survived run
@@ -137,8 +138,9 @@ SQLite runs in WAL mode with foreign keys and secure deletion enabled.
 
 - characters stores public EVE character identity.
 - settings stores public preferences plus encrypted credential blobs.
-- runs stores run metadata and raw inventory snapshots.
+- runs stores run metadata, system name, appraisal timestamp, and raw inventory snapshots. The legacy-named `ship_name` column stores the hull type, not the pilot-assigned ship name.
 - run_items stores gained, consumed, and lost appraisal rows.
+- run_tags and run_killmails store searchable tags and verified loss provenance.
 - run_fitting and run_implants store optional loss snapshots.
 - active_run_state stores one versioned recovery snapshot per character.
 

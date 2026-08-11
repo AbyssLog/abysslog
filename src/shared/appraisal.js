@@ -61,6 +61,34 @@
     });
   }
 
+  function toCompleteRunItems(expectedItems, result, type) {
+    if (!ITEM_TYPES.has(type)) throw new TypeError('Run item type is invalid');
+    if (!Array.isArray(expectedItems)) throw new TypeError('Expected appraisal items are invalid');
+    const pricedItems = toRunItems(result, type);
+    const pricesByName = new Map(
+      pricedItems.map(item => [item.item_name.toLocaleLowerCase(), item])
+    );
+    const completed = expectedItems.map((item, index) => {
+      if (
+        typeof item?.name !== 'string'
+        || !item.name.trim()
+        || !Number.isSafeInteger(item.qty)
+        || item.qty <= 0
+      ) {
+        throw new TypeError('Expected appraisal item ' + (index + 1) + ' is invalid');
+      }
+      const priced = pricesByName.get(item.name.toLocaleLowerCase());
+      if (priced) pricesByName.delete(item.name.toLocaleLowerCase());
+      return {
+        item_name: item.name,
+        qty: item.qty,
+        type,
+        unit_price_buy: priced?.unit_price_buy || 0,
+        unit_price_sell: priced?.unit_price_sell || 0,
+      };
+    });
+    return [...completed, ...pricesByName.values()];
+  }
   async function appraiseSurvivedInventory({
     cargoBefore = '',
     cargoAfter = '',
@@ -91,8 +119,8 @@
       consumed_cost: consumedCost,
       net_isk: lootValue - consumedCost,
       items: [
-        ...toRunItems(lootResult, 'gained'),
-        ...toRunItems(consumedResult, 'consumed'),
+        ...toCompleteRunItems(diff.gained, lootResult, 'gained'),
+        ...toCompleteRunItems(diff.consumed, consumedResult, 'consumed'),
       ],
     };
   }
@@ -106,7 +134,7 @@
     return {
       result,
       total_loss: Number(result?.totalSellPrice) || 0,
-      items: toRunItems(result, 'lost'),
+      items: toCompleteRunItems(items, result, 'lost'),
     };
   }
 
@@ -114,6 +142,7 @@
     appraiseLostInventory,
     appraiseSurvivedInventory,
     createInventoryDiff,
+    toCompleteRunItems,
     toRunItems,
   };
 });

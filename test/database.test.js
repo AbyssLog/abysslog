@@ -72,7 +72,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   database.hardenSensitiveStorage();
 
   const exitStatus = database.createExitBackup();
-  assert.equal(exitStatus.schemaVersion, 2);
+  assert.equal(exitStatus.schemaVersion, 3);
   const migratedRun = database.getRuns({ character_id: 8999 })[0];
   assert.equal(migratedRun.notes, 'Created by the original schema');
   assert.equal(migratedRun.cargo_before, null);
@@ -136,6 +136,11 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     consumed_cost: 25,
     net_isk: 100,
     total_loss: 0,
+    system_id: 32_000_123,
+    system_name: 'Abyssal #32000123',
+    appraised_at: 1_700_000_900,
+    tags: ['Experimental', 'Farm'],
+    killmail_ids: [9_001_001],
     cargo_before: '=Tritanium, 2\r\nPLEX, 1',
     cargo_after: 'Triglavian Survey Database, 3',
     drone_before: 'Vespa II, 5\nHammerhead II, 5',
@@ -162,7 +167,8 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     errors: [],
   });
 
-  const importedRun = database.getRuns({ character_id: 9002 })[0];
+  const importedSummary = database.getRuns({ character_id: 9002 })[0];
+  const importedRun = database.getRunById(importedSummary.id);
   for (const field of [
     'started_at',
     'duration',
@@ -171,6 +177,9 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     'outcome',
     'ship_name',
     'ship_class',
+    'system_id',
+    'system_name',
+    'appraised_at',
     'cargo_before',
     'cargo_after',
     'drone_before',
@@ -179,12 +188,14 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   ]) {
     assert.equal(importedRun[field], sourceRun[field], field);
   }
+  assert.deepEqual(importedRun.tags, sourceRun.tags);
+  assert.deepEqual(importedRun.killmail_ids, sourceRun.killmail_ids);
 
   const manualStatus = database.createManualBackup();
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
   assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
-    schemaVersion: 2,
+    schemaVersion: 3,
     characterCount: 4,
     runCount: 3,
     size: fs.statSync(manualStatus.filePath).size,
@@ -237,7 +248,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   );
 
   const restoreResult = database.restoreBackup(manualStatus.filePath);
-  assert.equal(restoreResult.schemaVersion, 2);
+  assert.equal(restoreResult.schemaVersion, 3);
   assert.equal(restoreResult.characterCount, 4);
   assert.equal(restoreResult.runCount, 3);
   assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
@@ -477,6 +488,80 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
   assert.equal(cargoOnly.items[0].qty, 2);
 });
 
+test('history search finds rich metadata and all item names', () => {
+  database.saveCharacter({
+    id: 9050,
+    name: 'Search Pilot',
+    portrait_url: '',
+    client_id: 'search-client',
+  });
+  const runId = database.saveRun({
+    character_id: 9050,
+    started_at: 1_730_000_000,
+    duration: 750,
+    tier: 'T5',
+    weather: 'Gamma',
+    outcome: 'Survived',
+    ship_name: 'Ishtar',
+    ship_class: 'Cruiser',
+    system_id: 32_000_456,
+    system_name: 'Abyssal #32000456',
+    notes: 'Triple battleship room; overheat the second wave.',
+    tags: ['New Fit', 'Farm'],
+    killmail_ids: [9_050_001],
+    items: [
+      {
+        item_name: 'Unstable Large Plasma Mutaplasmid',
+        qty: 1,
+        type: 'gained',
+        unit_price_buy: 0,
+        unit_price_sell: 0,
+      },
+      {
+        item_name: 'Caldari Navy Inferno Heavy Missile',
+        qty: 200,
+        type: 'consumed',
+        unit_price_buy: 0,
+        unit_price_sell: 1200,
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    database.getRuns({ character_id: 9050, search: 'plasma' })
+      .map(run => run.id),
+    [runId]
+  );
+  assert.equal(database.getRuns({ character_id: 9050, search: 'inferno' }).length, 1);
+  assert.equal(database.getRuns({ character_id: 9050, search: 'battleship' }).length, 1);
+  assert.equal(database.getRuns({ character_id: 9050, search: '9050001' }).length, 1);
+  assert.equal(database.getRuns({ character_id: 9050, tag: 'new fit' }).length, 1);
+  assert.equal(database.getRuns({ character_id: 9050, ship: 'ishtar' }).length, 1);
+  assert.equal(database.getRuns({
+    character_id: 9050,
+    date_from: 1_729_999_999,
+    date_to: 1_730_000_001,
+  }).length, 1);
+
+  const match = database.getRuns({
+    character_id: 9050,
+    search: 'plasma',
+  })[0];
+  assert.deepEqual(match.tags, ['Farm', 'New Fit']);
+  assert.deepEqual(match.matching_items, [{
+    item_name: 'Unstable Large Plasma Mutaplasmid',
+    type: 'gained',
+  }]);
+  assert.deepEqual(
+    database.getRuns({ character_id: 9050, search: 'inferno' })[0].matching_items,
+    [{ item_name: 'Caldari Navy Inferno Heavy Missile', type: 'consumed' }]
+  );
+
+  const detail = database.getRunById(runId);
+  assert.equal(detail.system_name, 'Abyssal #32000456');
+  assert.deepEqual(detail.tags, ['Farm', 'New Fit']);
+  assert.deepEqual(detail.killmail_ids, [9_050_001]);
+});
 test('statistics include death losses and apply consistent date ranges', () => {
   database.saveCharacter({
     id: 9010,
@@ -509,19 +594,53 @@ test('statistics include death losses and apply consistent date ranges', () => {
     ...baseRun,
     outcome: 'Survived',
     net_isk: 100,
+    items: [{
+      item_name: 'Triglavian Survey Database',
+      qty: 3,
+      type: 'gained',
+      unit_price_buy: 100,
+      unit_price_sell: 110,
+    }],
+    fitting: [
+      { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
+      { type_id: 12_345, type_name: 'Rapid Light Missile Launcher II', qty: 4, slot: 'HiSlot0' },
+    ],
   });
-  database.saveRun({
+  const representativeFitRunId = database.saveRun({
     ...baseRun,
     started_at: baseRun.started_at + 300,
     outcome: 'Died',
     total_loss: 50,
+    items: [{
+      item_name: 'Vespa II',
+      qty: 5,
+      type: 'lost',
+      unit_price_buy: 1,
+      unit_price_sell: 10,
+    }],
+    fitting: [
+      { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
+      { type_id: 12_345, type_name: 'Rapid Light Missile Launcher II', qty: 4, slot: 'HiSlot0' },
+    ],
   });
 
   const stats = database.getStats({ character_id: 9010 });
   assert.equal(stats.overall.total_net_isk, 50);
   assert.equal(stats.overall.avg_net_isk, 25);
   assert.equal(stats.byTier[0].avg_net_isk, 25);
+  assert.equal(stats.byTier[0].avg_duration, 100);
   assert.equal(stats.byWeather[0].avg_net_isk, 25);
+  assert.equal(stats.byWeather[0].avg_duration, 100);
+  assert.equal(stats.byShip[0].ship_name, 'Gila');
+  assert.equal(stats.byShip[0].total_runs, 2);
+  assert.equal(stats.byShip[0].avg_duration, 100);
+  assert.equal(stats.byFit[0].total_runs, 2);
+  assert.equal(stats.byFit[0].avg_duration, 100);
+  assert.equal(Number(stats.byFit[0].representative_run_id), Number(representativeFitRunId));
+  assert.equal(stats.items.gained[0].item_name, 'Triglavian Survey Database');
+  assert.equal(stats.items.lost[0].item_name, 'Vespa II');
+  assert.equal(stats.latestSession.total_runs, 2);
+  assert.equal(stats.latestSession.total_net_isk, 50);
   assert.equal(stats.iskPerHour, 900);
   assert.deepEqual(database.getDailyStats({ character_id: 9010 }), [{
     day: '2025-01-01',
@@ -632,4 +751,60 @@ test('cleared inventory baselines stay cleared until a newer survived run', () =
   assert.equal(database.getInventoryBaseline(9040).id, secondRunId);
   assert.equal(database.clearInventoryBaseline(9040, firstRunId), false);
   assert.equal(database.getInventoryBaseline(9040).id, secondRunId);
+});
+
+test('fit statistics merge custom ship names and equivalent slot layouts', () => {
+  database.saveCharacter({
+    id: 9012,
+    name: 'Fit Pilot',
+    portrait_url: '',
+    client_id: 'fit-client',
+  });
+  const baseRun = {
+    character_id: 9012,
+    started_at: 1_735_732_800,
+    duration: 600,
+    tier: 'T4',
+    weather: 'Electrical',
+    outcome: 'Survived',
+    loot_value: 100,
+    consumed_cost: 20,
+    net_isk: 80,
+    total_loss: 0,
+    ship_class: 'Cruiser',
+    cargo_before: '',
+    cargo_after: '',
+    drone_before: '',
+    drone_after: '',
+    items: [],
+    implants: [{ type_id: 22_101, type_name: 'Mid-grade Crystal Alpha', slot: 1 }],
+  };
+  database.saveRun({
+    ...baseRun,
+    ship_name: 'First Custom Name',
+    fitting: [
+      { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
+      { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 4, slot: 'HiSlot0' },
+      { type_id: 21_638, type_name: 'Vespa II', qty: 5, slot: 'DroneBay' },
+    ],
+  });
+  const latestRunId = database.saveRun({
+    ...baseRun,
+    started_at: baseRun.started_at + 900,
+    weather: 'Gamma',
+    ship_name: 'Second Custom Name',
+    fitting: [
+      { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
+      { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 2, slot: 'HiSlot1' },
+      { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 2, slot: 'HiSlot4' },
+      { type_id: 21_638, type_name: 'Vespa II', qty: 5, slot: 'DroneBay' },
+    ],
+  });
+
+  const fits = database.getStats({ character_id: 9012 }).byFit;
+  assert.equal(fits.length, 1);
+  assert.equal(fits[0].total_runs, 2);
+  assert.equal(fits[0].avg_duration, 600);
+  assert.equal(fits[0].ship_name, 'Gila');
+  assert.equal(Number(fits[0].representative_run_id), Number(latestRunId));
 });

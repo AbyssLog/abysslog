@@ -3,6 +3,7 @@ const path = require('path');
 const { app } = require('electron');
 const { createRunCsvRepository } = require('./database/run-csv-repository');
 const { createStatisticsRepository } = require('./database/statistics-repository');
+const { createRunRepository } = require('./database/run-repository');
 
 let db;
 let Database;
@@ -10,10 +11,23 @@ let databasePath;
 let backupDirectory;
 const runCsvRepository = createRunCsvRepository(() => db);
 const statisticsRepository = createStatisticsRepository(() => db);
+const runRepository = createRunRepository(() => db);
+const {
+  clearActiveRun,
+  completeActiveRun,
+  deleteRun,
+  getActiveRun,
+  getRunById,
+  getRuns,
+  saveActiveRun,
+  saveRun,
+  updateAppraisal,
+  updateRun,
+} = runRepository;
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
 const INVENTORY_BASELINE_CLEAR_PREFIX = 'inventory_baseline_cleared_run_';
 const CHARACTER_TOKEN_PREFIX = 'tokens_';
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const AUTOMATIC_BACKUP_RETENTION = 7;
 
 function init() {
@@ -184,6 +198,11 @@ function inspectBackup(filePath) {
     }
     if (schemaVersion >= 2) {
       requiredColumns.active_run_state = ['character_id', 'snapshot', 'updated_at'];
+    }
+    if (schemaVersion >= 3) {
+      requiredColumns.runs.push('system_name', 'appraised_at');
+      requiredColumns.run_tags = ['run_id', 'tag'];
+      requiredColumns.run_killmails = ['run_id', 'killmail_id'];
     }
 
     for (const [table, expectedColumns] of Object.entries(requiredColumns)) {
@@ -413,6 +432,8 @@ function createSchema() {
       net_isk REAL DEFAULT 0,
       total_loss REAL DEFAULT 0,
       system_id INTEGER,
+      system_name TEXT,
+      appraised_at INTEGER,
       cargo_before TEXT,
       cargo_after TEXT,
       drone_before TEXT,
@@ -456,12 +477,33 @@ function createSchema() {
       FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS run_tags (
+      run_id INTEGER NOT NULL,
+      tag TEXT NOT NULL COLLATE NOCASE,
+      PRIMARY KEY (run_id, tag),
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS run_killmails (
+      run_id INTEGER NOT NULL,
+      killmail_id INTEGER NOT NULL,
+      PRIMARY KEY (run_id, killmail_id),
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS active_run_state (
       character_id INTEGER PRIMARY KEY,
       snapshot TEXT NOT NULL,
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
     );
+
+    CREATE INDEX IF NOT EXISTS idx_runs_character_started
+      ON runs(character_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_run_items_run_type_name
+      ON run_items(run_id, type, item_name COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS idx_run_tags_tag
+      ON run_tags(tag COLLATE NOCASE);
   `);
 }
 
@@ -504,6 +546,38 @@ function migrateSchema(currentVersion) {
       )
     `);
     db.pragma('user_version = 2');
+    version = 2;
+  }
+
+  if (version < 3) {
+    const cols = db.pragma('table_info(runs)').map(column => column.name);
+    if (!cols.includes('system_name')) {
+      db.exec('ALTER TABLE runs ADD COLUMN system_name TEXT');
+    }
+    if (!cols.includes('appraised_at')) {
+      db.exec('ALTER TABLE runs ADD COLUMN appraised_at INTEGER');
+    }
+    db.exec([
+      'CREATE TABLE IF NOT EXISTS run_tags (',
+      '  run_id INTEGER NOT NULL,',
+      '  tag TEXT NOT NULL COLLATE NOCASE,',
+      '  PRIMARY KEY (run_id, tag),',
+      '  FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE',
+      ');',
+      'CREATE TABLE IF NOT EXISTS run_killmails (',
+      '  run_id INTEGER NOT NULL,',
+      '  killmail_id INTEGER NOT NULL,',
+      '  PRIMARY KEY (run_id, killmail_id),',
+      '  FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE',
+      ');',
+      'CREATE INDEX IF NOT EXISTS idx_runs_character_started',
+      '  ON runs(character_id, started_at DESC);',
+      'CREATE INDEX IF NOT EXISTS idx_run_items_run_type_name',
+      '  ON run_items(run_id, type, item_name COLLATE NOCASE);',
+      'CREATE INDEX IF NOT EXISTS idx_run_tags_tag',
+      '  ON run_tags(tag COLLATE NOCASE);',
+    ].join('\n'));
+    db.pragma('user_version = 3');
   }
 }
 
@@ -592,149 +666,6 @@ function clearInventoryBaseline(characterId, runId) {
 
 // ── Runs ──────────────────────────────────────────────────────────────────
 
-function saveRun(runData) {
-  const {
-    character_id, started_at, duration, tier, weather, outcome,
-    loot_value, consumed_cost, net_isk, total_loss, system_id,
-    cargo_before, cargo_after, drone_before, drone_after, ship_name, ship_class, notes,
-    items = [], fitting = [], implants = []
-  } = runData;
-
-  const insertRun = db.prepare(`
-    INSERT INTO runs (character_id, started_at, duration, tier, weather, outcome,
-      loot_value, consumed_cost, net_isk, total_loss, system_id, cargo_before, cargo_after, drone_before, drone_after, ship_name, ship_class, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertItem = db.prepare(`
-    INSERT INTO run_items (run_id, item_name, qty, type, unit_price_buy, unit_price_sell)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertFitting = db.prepare(`
-    INSERT INTO run_fitting (run_id, type_id, type_name, qty, slot, unit_price_sell)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertImplant = db.prepare(`
-    INSERT INTO run_implants (run_id, type_id, type_name, slot, unit_price_sell)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-
-  const transaction = db.transaction(() => {
-    const info = insertRun.run(
-      character_id, started_at, duration, tier, weather, outcome,
-      loot_value || 0, consumed_cost || 0, net_isk || 0, total_loss || 0,
-      system_id, cargo_before || null, cargo_after || null,
-      drone_before || null, drone_after || null,
-      ship_name || null, ship_class || null, notes
-    );
-    const runId = info.lastInsertRowid;
-
-    for (const item of items) {
-      insertItem.run(runId, item.item_name, item.qty, item.type,
-        item.unit_price_buy || 0, item.unit_price_sell || 0);
-    }
-    for (const f of fitting) {
-      insertFitting.run(runId, f.type_id, f.type_name, f.qty || 1, f.slot || null, f.unit_price_sell || 0);
-    }
-    for (const imp of implants) {
-      insertImplant.run(runId, imp.type_id, imp.type_name, imp.slot || null, imp.unit_price_sell || 0);
-    }
-
-    return runId;
-  });
-
-  return transaction();
-}
-
-function saveActiveRun(snapshot) {
-  db.prepare(`
-    INSERT INTO active_run_state (character_id, snapshot, updated_at)
-    VALUES (?, ?, strftime('%s','now'))
-    ON CONFLICT(character_id) DO UPDATE SET
-      snapshot = excluded.snapshot,
-      updated_at = excluded.updated_at
-  `).run(snapshot.run.character_id, JSON.stringify(snapshot));
-  return true;
-}
-
-function getActiveRun(characterId) {
-  const row = db.prepare(
-    'SELECT snapshot FROM active_run_state WHERE character_id = ?'
-  ).get(characterId);
-  if (!row) return null;
-  try {
-    return JSON.parse(row.snapshot);
-  } catch {
-    clearActiveRun(characterId);
-    return null;
-  }
-}
-
-function clearActiveRun(characterId) {
-  db.prepare('DELETE FROM active_run_state WHERE character_id = ?').run(characterId);
-  return true;
-}
-
-function completeActiveRun(runData) {
-  return db.transaction(() => {
-    const existing = db.prepare(
-      'SELECT id FROM runs WHERE character_id = ? AND started_at = ? LIMIT 1'
-    ).get(runData.character_id, runData.started_at);
-    const runId = existing ? existing.id : saveRun(runData);
-    clearActiveRun(runData.character_id);
-    return runId;
-  })();
-}
-
-function getRuns(filters = {}) {
-  let query = 'SELECT r.*, c.name as character_name FROM runs r JOIN characters c ON r.character_id = c.id WHERE 1=1';
-  const params = [];
-
-  if (filters.character_id) {
-    query += ' AND r.character_id = ?';
-    params.push(filters.character_id);
-  }
-  if (filters.tier) {
-    query += ' AND r.tier = ?';
-    params.push(filters.tier);
-  }
-  if (filters.weather) {
-    query += ' AND r.weather = ?';
-    params.push(filters.weather);
-  }
-  if (filters.outcome) {
-    query += ' AND r.outcome = ?';
-    params.push(filters.outcome);
-  }
-
-  query += ' ORDER BY r.started_at DESC';
-
-  if (filters.limit) {
-    query += ' LIMIT ?';
-    params.push(filters.limit);
-  }
-
-  return db.prepare(query).all(...params);
-}
-
-function getRunById(runId) {
-  const run = db.prepare('SELECT r.*, c.name as character_name FROM runs r JOIN characters c ON r.character_id = c.id WHERE r.id = ?').get(runId);
-  if (!run) return null;
-
-  run.items = db.prepare('SELECT * FROM run_items WHERE run_id = ? ORDER BY type, item_name').all(runId);
-  run.fitting = db.prepare('SELECT * FROM run_fitting WHERE run_id = ? ORDER BY slot, type_name').all(runId);
-  run.implants = db.prepare('SELECT * FROM run_implants WHERE run_id = ? ORDER BY slot').all(runId);
-
-  return run;
-}
-
-function deleteRun(runId) {
-  db.prepare('DELETE FROM runs WHERE id = ?').run(runId);
-  return true;
-}
-
 function getStats(filters = {}) {
   return statisticsRepository.getStats(filters);
 }
@@ -753,85 +684,6 @@ function importRunsCSV(csvText, characterId) {
 
 function deleteSetting(key) {
   db.prepare("DELETE FROM settings WHERE key = ?").run(key);
-  return true;
-}
-
-function requireUpdatedRun(result) {
-  if (result.changes !== 1) throw new Error('Run not found');
-}
-
-function applyCargoUpdate(runId, { cargo_before, cargo_after, drone_before, drone_after }) {
-  const result = db.prepare(
-    'UPDATE runs SET cargo_before = ?, cargo_after = ?, drone_before = ?, drone_after = ? WHERE id = ?'
-  ).run(cargo_before || null, cargo_after || null, drone_before || null, drone_after || null, runId);
-  requireUpdatedRun(result);
-}
-
-function applyMetaUpdate(runId, { tier, weather, outcome, duration, started_at, total_loss, ship_name, ship_class }) {
-  const result = db.prepare(`
-    UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, started_at = ?, total_loss = ?,
-      ship_name = COALESCE(?, ship_name), ship_class = COALESCE(?, ship_class)
-    WHERE id = ?
-  `).run(tier, weather, outcome, duration, started_at, total_loss || 0, ship_name, ship_class, runId);
-  requireUpdatedRun(result);
-}
-
-function applyAppraisalUpdate(runId, {
-  loot_value,
-  consumed_cost,
-  net_isk,
-  cargo_before,
-  cargo_after,
-  drone_before,
-  drone_after,
-  items,
-}) {
-  const result = db.prepare(`
-    UPDATE runs SET loot_value = ?, consumed_cost = ?, net_isk = ?,
-      cargo_before = ?, cargo_after = ?,
-      drone_before = COALESCE(?, drone_before), drone_after = COALESCE(?, drone_after)
-      WHERE id = ?
-  `).run(
-    loot_value,
-    consumed_cost,
-    net_isk,
-    cargo_before,
-    cargo_after,
-    drone_before,
-    drone_after,
-    runId
-  );
-  requireUpdatedRun(result);
-
-  // Appraisal updates provide the complete item set, including death-loss reappraisals.
-  db.prepare('DELETE FROM run_items WHERE run_id = ?').run(runId);
-
-  const insertItem = db.prepare(`
-    INSERT INTO run_items (run_id, item_name, qty, type, unit_price_buy, unit_price_sell)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  for (const item of items) {
-    insertItem.run(runId, item.item_name, item.qty, item.type,
-      item.unit_price_buy || 0, item.unit_price_sell || 0);
-  }
-}
-
-function updateAppraisal(runId, appraisal) {
-  db.transaction(() => applyAppraisalUpdate(runId, appraisal))();
-  return true;
-}
-
-function updateRun(runId, { meta, cargo, appraisal }) {
-  const hasCargo = cargo !== null && cargo !== undefined;
-  const hasAppraisal = appraisal !== null && appraisal !== undefined;
-  if (hasCargo === hasAppraisal) {
-    throw new TypeError('Run update requires exactly one cargo or appraisal update');
-  }
-  db.transaction(() => {
-    applyMetaUpdate(runId, meta);
-    if (hasAppraisal) applyAppraisalUpdate(runId, appraisal);
-    else applyCargoUpdate(runId, cargo);
-  })();
   return true;
 }
 
