@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { createStatsView } = require('../src/renderer/stats-view');
+const { createDocumentHarness } = require('./support/builders');
 
 function createHarness(statsResult = {
   overall: { total_runs: 0 },
@@ -9,7 +10,7 @@ function createHarness(statsResult = {
   byWeather: [],
   iskPerHour: 0,
 }) {
-  const elements = new Map([
+  const { elements, document } = createDocumentHarness([
     ['statsRangePreset', { value: 'all' }],
     ['statsCustomRange', { hidden: true }],
     ['statsDateFrom', { value: '' }],
@@ -20,9 +21,6 @@ function createHarness(statsResult = {
   ]);
   const calls = [];
   const range = { preset: 'all', label: 'All time' };
-  const document = {
-    getElementById: id => elements.get(id) || null,
-  };
   const api = {
     runs: {
       getStats: async filters => {
@@ -94,7 +92,7 @@ test('statistics fit rows link to the captured fit and implants dialog', async (
     byFit: [{
       fit_key: 'abc12345',
       representative_run_id: 42,
-      ship_name: 'Gila',
+      hull_name: 'Gila',
       total_runs: 3,
       survived: 2,
       avg_duration: 600,
@@ -125,11 +123,11 @@ test('statistics grouped tables share metric columns and combine ship metadata',
     overall: { total_runs: 3 },
     byTier: [{ tier: 'T5', ...metrics }],
     byWeather: [{ weather: 'Exotic', ...metrics }],
-    byShip: [{ ship_name: 'Gila', ship_class: 'Cruiser', ...metrics }],
+    byHull: [{ hull_name: 'Gila', ship_class: 'Cruiser', ...metrics }],
     byFit: [{
       fit_key: 'abc12345',
       representative_run_id: 42,
-      ship_name: 'Gila',
+      hull_name: 'Gila',
       ...metrics,
     }],
     iskPerHour: 0,
@@ -146,6 +144,63 @@ test('statistics grouped tables share metric columns and combine ship metadata',
     + '<th class="stat-number">Avg. Net</th>';
   assert.equal(html.split(commonHeaders).length - 1, 4);
   assert.equal((html.match(/data-table analytics-table stats-table/g) || []).length, 4);
-  assert.match(html, /<td>Gila <span class="stats-group-detail">\(Cruiser\)<\/span><\/td>/);
+  assert.match(html, /data-drill-group="hull"/);
+  assert.match(html, /Gila <span class="stats-group-detail">\(Cruiser\)<\/span><\/button>/);
   assert.equal((html.match(/class="badge weather"/g) || []).length, 1);
+});
+
+test('statistics drill-through preserves the selected date range and exact group filter', async () => {
+  const { elements, document } = createDocumentHarness([
+    ['statsRangePreset', { value: '30d' }],
+    ['statsCustomRange', { hidden: true }],
+    ['statsDateFrom', { value: '' }],
+    ['statsDateTo', { value: '' }],
+    ['statsContent', { innerHTML: '' }],
+    ['statsFilterError', { textContent: '', hidden: true }],
+    ['statsRangeSummary', { textContent: '' }],
+  ]);
+  const drillCalls = [];
+  const view = createStatsView({
+    document,
+    api: {
+      runs: {
+        getStats: async () => ({
+          overall: { total_runs: 1, survived: 1 },
+          byTier: [{
+            tier: 'T5', total_runs: 1, survived: 1, avg_duration: 600, avg_net_isk: 10,
+          }],
+          byWeather: [],
+          iskPerHour: 0,
+        }),
+        getDailyStats: async () => [],
+      },
+    },
+    statistics: {
+      defaultCustomDates: () => ({ from: '', to: '' }),
+      resolveDateRange: () => ({
+        preset: '30d', label: 'Last 30 days', range_start: 100, range_end: 200,
+      }),
+      createChartSeries: () => ({ rows: [], bucket: 'day', bucketDays: 1 }),
+    },
+    getActiveCharacterId: () => 9001,
+    formatIsk: String,
+    formatDuration: String,
+    escapeHtml: String,
+    onDrillThrough: selection => drillCalls.push(selection),
+  });
+
+  await view.render();
+  view.openHistory({
+    dataset: {
+      drillGroup: 'tier',
+      drillValue: 'T5',
+      drillLabel: 'Tier: T5',
+      drillShipClass: '',
+    },
+  });
+
+  assert.deepEqual(drillCalls, [{
+    filters: { date_from: 100, date_to: 200, tier: 'T5' },
+    labels: ['Tier: T5', 'Date range: Last 30 days'],
+  }]);
 });

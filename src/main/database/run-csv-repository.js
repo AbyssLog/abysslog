@@ -1,30 +1,25 @@
 const { parseCsv } = require('../../shared/csv');
 const security = require('../../shared/security');
+const { runInTransaction } = require('./transaction');
 
-function createRunCsvRepository(getConnection) {
+function createRunCsvRepository(getConnection, listRuns) {
   if (typeof getConnection !== 'function') {
     throw new TypeError('Run CSV repository requires a connection provider');
   }
 
-  function exportRunsCSV(characterId) {
+  if (typeof listRuns !== 'function') {
+    throw new TypeError('Run CSV repository requires a run query');
+  }
+  function exportRunsCSV(filters = {}) {
     const db = getConnection();
-    const filters = characterId ? 'WHERE r.character_id = ?' : '';
-    const params = characterId ? [characterId] : [];
-    const runs = db.prepare(`
-      SELECT r.*, c.name as character_name
-      FROM runs r JOIN characters c ON r.character_id = c.id
-      ${filters}
-      ORDER BY r.started_at ASC
-    `).all(...params);
+    const runs = listRuns(filters).slice().sort((left, right) =>
+      left.started_at - right.started_at || left.id - right.id);
 
-    const tagsForRun = db.prepare(
-      'SELECT tag FROM run_tags WHERE run_id = ? ORDER BY tag COLLATE NOCASE'
-    );
     const killmailsForRun = db.prepare(
       'SELECT killmail_id FROM run_killmails WHERE run_id = ? ORDER BY killmail_id'
     );
     for (const run of runs) {
-      run.tags = JSON.stringify(tagsForRun.all(run.id).map(row => row.tag));
+      run.tags = JSON.stringify(run.tags || []);
       run.killmail_ids = JSON.stringify(
         killmailsForRun.all(run.id).map(row => row.killmail_id)
       );
@@ -32,13 +27,16 @@ function createRunCsvRepository(getConnection) {
 
     const headers = [
       'id','character_id','character_name','started_at','duration','tier','weather','outcome',
-      'ship_name','ship_class','system_id','system_name','loot_value','consumed_cost',
+      'hull_name','ship_class','system_id','system_name','loot_value','consumed_cost',
       'net_isk','total_loss','appraised_at','cargo_before','cargo_after','drone_before',
       'drone_after','notes','tags','killmail_ids'
     ];
 
     const rows = runs.map(r => headers.map(h => security.escapeCsvCell(r[h])).join(','));
-    return [headers.join(','), ...rows].join('\n');
+    return {
+      csv: [headers.join(','), ...rows].join('\n'),
+      count: runs.length,
+    };
   }
 
   function importRunsCSV(csvText, characterId) {
@@ -56,7 +54,7 @@ function createRunCsvRepository(getConnection) {
     const insertRun = db.prepare(`
       INSERT INTO runs
         (character_id, started_at, duration, tier, weather, outcome,
-         ship_name, ship_class, system_id, system_name,
+         hull_name, ship_class, system_id, system_name,
          loot_value, consumed_cost, net_isk, total_loss, appraised_at,
          cargo_before, cargo_after, drone_before, drone_after, notes)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -72,7 +70,7 @@ function createRunCsvRepository(getConnection) {
     let imported = 0, skipped = 0;
     const errors = [];
 
-    const transaction = db.transaction(() => {
+    runInTransaction(db, () => {
       for (let i = 1; i < rows.length; i++) {
         try {
           const cols = rows[i];
@@ -104,7 +102,7 @@ function createRunCsvRepository(getConnection) {
             tier: get('tier') || 'Unknown',
             weather: get('weather') || 'Unknown',
             outcome: get('outcome') || 'Survived',
-            ship_name: get('ship_name') || '',
+            hull_name: get('hull_name') || get('ship_name') || '',
             ship_class: get('ship_class') || 'Unknown',
             system_id: optionalNumber('system_id'),
             system_name: get('system_name') || null,
@@ -132,7 +130,7 @@ function createRunCsvRepository(getConnection) {
           const info = insertRun.run(
             run.character_id, run.started_at, run.duration,
             run.tier, run.weather, run.outcome,
-            run.ship_name || null, run.ship_class,
+            run.hull_name || null, run.ship_class,
             run.system_id, run.system_name,
             run.loot_value, run.consumed_cost, run.net_isk, run.total_loss,
             run.appraised_at,
@@ -150,7 +148,6 @@ function createRunCsvRepository(getConnection) {
         }
       }
     });
-    transaction();
     return { imported, skipped, errors };
   }
   return Object.freeze({ exportRunsCSV, importRunsCSV });

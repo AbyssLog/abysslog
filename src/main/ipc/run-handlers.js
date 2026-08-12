@@ -1,5 +1,6 @@
 const fs = require('fs');
 const fitting = require('../../shared/fitting');
+const runPayloads = require('./run-payloads');
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
 
@@ -39,12 +40,16 @@ function registerRunHandlers({
   });
   secureHandle('runs:clear-active', characterId =>
     database.clearActiveRun(security.requireInteger(characterId, 'Character ID')));
-  secureHandle('runs:get-all', filters =>
-    database.getRuns(security.validateRunFilters(
+  secureHandle('runs:get-all', filters => {
+    const validated = security.validateRunFilters(
       filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)
-    )));
-  secureHandle('runs:get-by-id', runId =>
-    database.getRunById(security.requireInteger(runId, 'Run ID')));
+    );
+    return database.getRuns(validated).map(runPayloads.mapRunSummary);
+  });
+  secureHandle('runs:get-by-id', runId => {
+    const id = security.requireInteger(runId, 'Run ID');
+    return runPayloads.mapRunDetail(database.getRunById(id));
+  });
   secureHandle('runs:copy-fitting', runId => {
     const id = security.requireInteger(runId, 'Run ID');
     const run = database.getRunById(id);
@@ -62,8 +67,10 @@ function registerRunHandlers({
   });
   secureHandle('runs:delete', runId =>
     database.deleteRun(security.requireInteger(runId, 'Run ID')));
-  secureHandle('runs:get-inventory-baseline', characterId =>
-    database.getInventoryBaseline(security.requireInteger(characterId, 'Character ID')));
+  secureHandle('runs:get-inventory-baseline', characterId => {
+    const id = security.requireInteger(characterId, 'Character ID');
+    return runPayloads.mapInventoryBaseline(database.getInventoryBaseline(id));
+  });
   secureHandle('runs:clear-inventory-baseline', (characterId, runId) =>
     database.clearInventoryBaseline(
       security.requireInteger(characterId, 'Character ID'),
@@ -88,16 +95,21 @@ function registerRunHandlers({
       filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
     )));
 
-  secureHandle('runs:export-csv', async characterId => {
-    const csv = database.exportRunsCSV(validateOptionalCharacterId(characterId));
+  secureHandle('runs:export-csv', async filters => {
+    const validatedFilters = security.validateRunFilters(
+      filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)
+    );
+    const { csv, count } = database.exportRunsCSV(validatedFilters);
+    const isFiltered = Object.keys(validatedFilters).some(key => key !== 'character_id');
     const { filePath, canceled } = await dialog.showSaveDialog(getMainWindow(), {
-      title: 'Export Runs',
-      defaultPath: 'abysslog-runs-' + new Date().toISOString().split('T')[0] + '.csv',
+      title: isFiltered ? 'Export Filtered History' : 'Export All History',
+      defaultPath: 'abysslog-' + (isFiltered ? 'filtered-' : '') + 'runs-'
+        + new Date().toISOString().split('T')[0] + '.csv',
       filters: [{ name: 'CSV Files', extensions: ['csv'] }],
     });
     if (canceled || !filePath) return { success: false };
     fs.writeFileSync(filePath, csv, { encoding: 'utf8', mode: 0o600 });
-    return { success: true, filePath };
+    return { success: true, filePath, scope: isFiltered ? 'filtered' : 'all', runCount: count };
   });
 
   secureHandle('runs:import-csv', async characterId => {

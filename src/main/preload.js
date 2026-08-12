@@ -71,7 +71,7 @@ contextBridge.exposeInMainWorld('api', {
     getStats: filters => ipcRenderer.invoke('runs:get-stats', filters),
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', runId, data),
     update: (runId, data) => ipcRenderer.invoke('runs:update', runId, data),
-    exportCSV: characterId => ipcRenderer.invoke('runs:export-csv', characterId),
+    exportCSV: filters => ipcRenderer.invoke('runs:export-csv', filters),
     importCSV: characterId => ipcRenderer.invoke('runs:import-csv', characterId),
     getDailyStats: filters => ipcRenderer.invoke('runs:get-daily-stats', filters),
   },

@@ -21,6 +21,9 @@ const rendererScripts = [
   'src/shared/ship-groups.js',
   'src/renderer/inventory-editor.js',
   'src/renderer/run-session-controller.js',
+  'src/renderer/navigation-controller.js',
+  'src/renderer/modal-controller.js',
+  'src/renderer/ui-formatters.js',
   'src/renderer/app.js',
 ];
 
@@ -242,7 +245,7 @@ async function createRendererHarness() {
         state.esiPollCalls++;
         return { solar_system_id: state.esiSystemId };
       },
-      getShip: async () => ({ ship_type_id: 17_918, ship_name: 'Abbie Duba III' }),
+      getShip: async () => ({ ship_type_id: 17_918 }),
       getSystemName: async () => 'Jita',
       getRecentAbyssLoss: async (...args) => {
         state.killmailRequests.push(args);
@@ -547,7 +550,7 @@ test('renderer async workflows execute against the real DOM', async t => {
     await t.test('statistics fits open the shared setup modal and return to Statistics', async () => {
       const fitRun = {
         ...createHistoryRun(88, 'Cruiser'),
-        ship_name: 'Gila',
+        hull_name: 'Gila',
         started_at: Math.floor(Date.UTC(2026, 7, 1) / 1000),
         fitting: [
           { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
@@ -562,7 +565,7 @@ test('renderer async workflows execute against the real DOM', async t => {
       state.stats.byFit = [{
         fit_key: 'abc12345',
         representative_run_id: fitRun.id,
-        ship_name: 'Gila',
+        hull_name: 'Gila',
         ship_class: 'Cruiser',
         weather: 'Exotic',
         total_runs: 2,
@@ -738,7 +741,7 @@ test('renderer async workflows execute against the real DOM', async t => {
       );
 
       assert.equal(state.completedRuns.at(-1).system_id, 32_000_001);
-      assert.equal(state.completedRuns.at(-1).ship_name, 'Gila');
+      assert.equal(state.completedRuns.at(-1).hull_name, 'Gila');
       await waitFor(
         () => document.getElementById('state-awaiting').style.display === 'block',
         'automatic run reset'

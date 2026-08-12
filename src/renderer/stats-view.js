@@ -13,6 +13,7 @@
     formatIsk,
     formatDuration,
     escapeHtml,
+    onDrillThrough = null,
   }) {
     if (!document || !api?.runs || !statistics) {
       throw new Error('Stats view requires document, run APIs, and statistics helpers');
@@ -25,11 +26,54 @@
     ) {
       throw new TypeError('Stats view formatter dependencies must be functions');
     }
+    if (onDrillThrough !== null && typeof onDrillThrough !== 'function') {
+      throw new TypeError('Statistics drill-through callback must be a function');
+    }
 
   let statsRenderGeneration = 0;
   let lastChart = null;
   let chartResizeFrame = null;
   const viewWindow = document.defaultView;
+  let historyRange = { filters: {}, label: null };
+
+  function drillButton(content, { group, value, label, shipClass = '' }) {
+    return '<button type="button" class="stats-drill-link" '
+      + 'data-action="stats-drill-through" data-drill-group="' + escapeHtml(group)
+      + '" data-drill-value="' + escapeHtml(value)
+      + '" data-drill-label="' + escapeHtml(label)
+      + '" data-drill-ship-class="' + escapeHtml(shipClass) + '">'
+      + content + '</button>';
+  }
+
+  function openHistory(element) {
+    if (!onDrillThrough) return undefined;
+    const filters = { ...historyRange.filters };
+    const labels = historyRange.label ? [historyRange.label] : [];
+    const value = element.dataset.drillValue;
+    const label = element.dataset.drillLabel;
+    switch (element.dataset.drillGroup) {
+      case 'tier':
+        filters.tier = value;
+        break;
+      case 'weather':
+        filters.weather = value;
+        break;
+      case 'hull':
+        filters.hull_name = value;
+        if (element.dataset.drillShipClass) {
+          filters.ship_class = element.dataset.drillShipClass;
+        }
+        break;
+      case 'fit':
+        filters.fit_reference_run_id = Number(value);
+        break;
+      default:
+        throw new TypeError('Statistics drill-through group is invalid');
+    }
+    labels.unshift(label);
+    return onDrillThrough({ filters, labels });
+  }
+
 
   function handleStatsRangeChange() {
     const preset = document.getElementById('statsRangePreset').value;
@@ -115,6 +159,13 @@
     filterError.hidden = true;
     document.getElementById('statsRangeSummary').textContent = range.label;
     const filters = createStatsFilters(range, characterId);
+    historyRange = {
+      filters: {
+        ...(range.range_start !== undefined ? { date_from: range.range_start } : {}),
+        ...(range.range_end !== undefined ? { date_to: range.range_end } : {}),
+      },
+      label: range.preset === 'all' ? null : 'Date range: ' + range.label,
+    };
     const [stats, daily] = await Promise.all([
       api.runs.getStats(filters),
       api.runs.getDailyStats(filters)
@@ -184,8 +235,11 @@
         + '<th>Tier</th>' + renderStatColumnHeaders()
         + '</tr></thead><tbody>';
       for (const tier of stats.byTier) {
-        html += '<tr><td><span class="badge tier">' + escapeHtml(tier.tier || '-') + '</span></td>'
-          + renderStatCells(tier) + '</tr>';
+        const tierName = tier.tier || '-';
+        const content = '<span class="badge tier">' + escapeHtml(tierName) + '</span>';
+        html += '<tr><td>' + drillButton(content, {
+          group: 'tier', value: tierName, label: 'Tier: ' + tierName,
+        }) + '</td>' + renderStatCells(tier) + '</tr>';
       }
       html += '</tbody></table></div>';
     }
@@ -196,21 +250,29 @@
         + '<th>Weather</th>' + renderStatColumnHeaders()
         + '</tr></thead><tbody>';
       for (const weather of stats.byWeather) {
-        html += '<tr><td>' + renderWeatherBadges(weather.weather || '-') + '</td>'
+        const weatherName = weather.weather || '-';
+        html += '<tr><td>' + drillButton(renderWeatherBadges(weatherName), {
+          group: 'weather', value: weatherName, label: 'Weather: ' + weatherName,
+        }) + '</td>'
           + renderStatCells(weather) + '</tr>';
       }
       html += '</tbody></table></div>';
     }
 
-    if (stats.byShip?.length) {
-      html += '<div class="section-title">By Ship</div>'
+    if (stats.byHull?.length) {
+      html += '<div class="section-title">By Hull</div>'
         + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
-        + '<th>Ship</th>' + renderStatColumnHeaders()
+        + '<th>Hull</th>' + renderStatColumnHeaders()
         + '</tr></thead><tbody>';
-      for (const ship of stats.byShip) {
-        html += '<tr><td>' + escapeHtml(ship.ship_name)
-          + ' <span class="stats-group-detail">(' + escapeHtml(ship.ship_class) + ')</span></td>'
-          + renderStatCells(ship) + '</tr>';
+      for (const hull of stats.byHull) {
+        const hullContent = escapeHtml(hull.hull_name)
+          + ' <span class="stats-group-detail">(' + escapeHtml(hull.ship_class) + ')</span>';
+        html += '<tr><td>' + drillButton(hullContent, {
+          group: 'hull',
+          value: hull.hull_name,
+          shipClass: hull.ship_class,
+          label: 'Hull: ' + hull.hull_name + ' (' + hull.ship_class + ')',
+        }) + '</td>' + renderStatCells(hull) + '</tr>';
       }
       html += '</tbody></table></div>';
     }
@@ -221,13 +283,16 @@
         + '<th>Fit</th>' + renderStatColumnHeaders()
         + '</tr></thead><tbody>';
       for (const fit of stats.byFit) {
-        const fitLabel = fit.ship_name + ' fit #' + fit.fit_key;
+        const fitLabel = fit.hull_name + ' fit #' + fit.fit_key;
         html += '<tr><td><button type="button" class="analytics-fit-link" '
           + 'data-action="show-ship-setup" data-run-id="'
           + escapeHtml(fit.representative_run_id) + '" data-return-modal="none" '
           + 'aria-label="View ' + escapeHtml(fitLabel) + ' details">'
-          + escapeHtml(fit.ship_name) + ' <span class="analytics-key">#'
-          + escapeHtml(fit.fit_key) + '</span></button></td>'
+          + escapeHtml(fit.hull_name) + ' <span class="analytics-key">#'
+          + escapeHtml(fit.fit_key) + '</span></button> '
+          + drillButton('View runs', {
+            group: 'fit', value: fit.representative_run_id, label: 'Fit: ' + fitLabel,
+          }) + '</td>'
           + renderStatCells(fit) + '</tr>';
       }
       html += '</tbody></table></div>';
@@ -411,6 +476,7 @@
       getSelectedRange: getSelectedStatsRange,
       createFilters: createStatsFilters,
       renderDailyChart,
+      openHistory,
     });
   }
 

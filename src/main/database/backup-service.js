@@ -1,0 +1,333 @@
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { SCHEMA_VERSION } = require('./schema');
+
+const AUTOMATIC_BACKUP_RETENTION = 7;
+
+function backupTimestamp() {
+  return new Date().toISOString().replace(/[-:.]/g, '');
+}
+
+function localDateStamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function createBackupService(lifecycle) {
+  if (!lifecycle?.getConnection || !lifecycle?.getPaths || !lifecycle?.openConnection) {
+    throw new TypeError('Backup service requires a database lifecycle');
+  }
+
+  function removeDatabaseSidecars(filePath) {
+    for (const suffix of ['-shm', '-wal']) {
+      const sidecarPath = `${filePath}${suffix}`;
+      if (fs.existsSync(sidecarPath)) fs.unlinkSync(sidecarPath);
+    }
+  }
+
+  function inspectBackup(filePath) {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      throw new TypeError('Backup path is invalid');
+    }
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size === 0) {
+      throw new Error('The selected backup is not a non-empty file');
+    }
+
+    let backupDb;
+    try {
+      backupDb = lifecycle.openConnection(filePath, { readonly: true, fileMustExist: true });
+      lifecycle.assertConnectionIntegrity(backupDb);
+      const schemaVersion = backupDb.pragma('user_version', { simple: true });
+      if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 0) {
+        throw new Error('The selected backup has an invalid schema version');
+      }
+      if (schemaVersion > SCHEMA_VERSION) {
+        throw new Error('The selected backup was created by a newer version of AbyssLog');
+      }
+
+      const tables = new Set(backupDb.prepare(`
+        SELECT name FROM sqlite_schema WHERE type = 'table'
+      `).all().map(row => row.name));
+      const requiredColumns = {
+        characters: ['id', 'name', 'portrait_url', 'client_id', 'created_at'],
+        settings: ['key', 'value'],
+        runs: [
+          'id', 'character_id', 'started_at', 'duration', 'tier', 'weather',
+          'outcome', 'loot_value', 'consumed_cost', 'net_isk', 'total_loss',
+          'system_id', 'notes', 'created_at',
+        ],
+        run_items: [
+          'id', 'run_id', 'item_name', 'qty', 'type', 'unit_price_buy', 'unit_price_sell',
+        ],
+        run_fitting: [
+          'id', 'run_id', 'type_id', 'type_name', 'qty', 'slot', 'unit_price_sell',
+        ],
+        run_implants: [
+          'id', 'run_id', 'type_id', 'type_name', 'slot', 'unit_price_sell',
+        ],
+      };
+      if (schemaVersion >= 1) {
+        requiredColumns.runs.push(
+          'cargo_before', 'cargo_after', 'drone_before', 'drone_after', 'ship_class',
+          schemaVersion >= 4 ? 'hull_name' : 'ship_name'
+        );
+      }
+      if (schemaVersion >= 2) {
+        requiredColumns.active_run_state = ['character_id', 'snapshot', 'updated_at'];
+      }
+      if (schemaVersion >= 3) {
+        requiredColumns.runs.push('system_name', 'appraised_at');
+        requiredColumns.run_tags = ['run_id', 'tag'];
+        requiredColumns.run_killmails = ['run_id', 'killmail_id'];
+      }
+
+      for (const [table, expectedColumns] of Object.entries(requiredColumns)) {
+        if (!tables.has(table)) {
+          throw new Error('The selected file is not an AbyssLog full backup');
+        }
+        const columns = new Set(
+          backupDb.pragma(`table_info(${table})`).map(column => column.name)
+        );
+        if (expectedColumns.some(column => !columns.has(column))) {
+          throw new Error('The selected file is not an AbyssLog full backup');
+        }
+      }
+      if (backupDb.pragma('foreign_key_check').length > 0) {
+        throw new Error('The selected backup contains inconsistent related data');
+      }
+      return {
+        schemaVersion,
+        characterCount: backupDb.prepare('SELECT COUNT(*) AS count FROM characters').get().count,
+        runCount: backupDb.prepare('SELECT COUNT(*) AS count FROM runs').get().count,
+        size: stat.size,
+      };
+    } finally {
+      if (backupDb?.open) backupDb.close();
+    }
+  }
+
+  function verifyBackup(filePath) {
+    try {
+      inspectBackup(filePath);
+    } finally {
+      // AbyssLog-created copies are standalone and must not retain WAL state.
+      removeDatabaseSidecars(filePath);
+    }
+  }
+
+  function copyDatabaseToBackup(fileName, { replaceExisting = false } = {}) {
+    const { databasePath, backupDirectory } = lifecycle.getPaths();
+    const connection = lifecycle.getConnection();
+    fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+    connection.pragma('wal_checkpoint(FULL)');
+    const destination = path.join(backupDirectory, fileName);
+    if (!replaceExisting && fs.existsSync(destination)) {
+      throw new Error('A backup with this name already exists');
+    }
+
+    const operationId = `${process.pid}-${Date.now()}`;
+    const temporary = path.join(backupDirectory, `.${fileName}.${operationId}.tmp`);
+    const previous = path.join(backupDirectory, `.${fileName}.${operationId}.previous`);
+    let previousMoved = false;
+    let newInstalled = false;
+    try {
+      fs.copyFileSync(databasePath, temporary, fs.constants.COPYFILE_EXCL);
+      if (fs.statSync(temporary).size === 0) throw new Error('Database backup was empty');
+      verifyBackup(temporary);
+      if (replaceExisting && fs.existsSync(destination)) {
+        removeDatabaseSidecars(destination);
+        fs.renameSync(destination, previous);
+        previousMoved = true;
+      }
+      fs.renameSync(temporary, destination);
+      newInstalled = true;
+    } catch (error) {
+      let rollbackError = null;
+      if (previousMoved && !newInstalled && fs.existsSync(previous)) {
+        try {
+          fs.renameSync(previous, destination);
+          previousMoved = false;
+        } catch (failure) {
+          rollbackError = failure;
+        }
+      }
+      if (rollbackError) {
+        const message = error instanceof Error ? error.message : 'Unknown backup error';
+        const rollbackMessage = rollbackError instanceof Error
+          ? rollbackError.message
+          : 'Unknown rollback error';
+        throw new Error(
+          `Backup failed: ${message}. The previous backup could not be restored: ${rollbackMessage}`
+        );
+      }
+      throw error;
+    } finally {
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+      if (newInstalled && fs.existsSync(previous)) fs.unlinkSync(previous);
+    }
+    return destination;
+  }
+
+  function samePath(left, right) {
+    const normalize = value => {
+      const resolved = path.resolve(value);
+      return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    };
+    return normalize(left) === normalize(right);
+  }
+
+  function restoreBackup(sourcePath) {
+    if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
+      throw new TypeError('Backup path is invalid');
+    }
+    const { databasePath } = lifecycle.getPaths();
+    if (samePath(sourcePath, databasePath)) {
+      throw new Error('The active AbyssLog database cannot be selected as its own backup');
+    }
+
+    const inspection = inspectBackup(sourcePath);
+    const operationId = `${process.pid}-${Date.now()}`;
+    const stagedPath = path.join(path.dirname(databasePath), `.abysslog-restore-${operationId}.tmp`);
+    const displacedPath = path.join(
+      path.dirname(databasePath), `.abysslog-before-restore-${operationId}.tmp`
+    );
+    let safetyBackupPath = null;
+    let currentMoved = false;
+    let restoredInstalled = false;
+    let restoredOpened = false;
+
+    try {
+      fs.copyFileSync(sourcePath, stagedPath, fs.constants.COPYFILE_EXCL);
+      verifyBackup(stagedPath);
+      safetyBackupPath = copyDatabaseToBackup(
+        `abysslog-before-restore-${backupTimestamp()}.db`
+      );
+
+      lifecycle.close();
+      removeDatabaseSidecars(databasePath);
+      fs.renameSync(databasePath, displacedPath);
+      currentMoved = true;
+      fs.renameSync(stagedPath, databasePath);
+      restoredInstalled = true;
+
+      lifecycle.init();
+      restoredOpened = true;
+      fs.unlinkSync(displacedPath);
+      currentMoved = false;
+      return { ...inspection, safetyBackupPath };
+    } catch (error) {
+      if (restoredOpened) lifecycle.close();
+      let connectionUnavailable = false;
+      try {
+        lifecycle.getConnection();
+      } catch {
+        connectionUnavailable = true;
+      }
+      if (connectionUnavailable) lifecycle.close();
+
+      let rollbackError = null;
+      if (currentMoved) {
+        try {
+          removeDatabaseSidecars(databasePath);
+          if (restoredInstalled && fs.existsSync(databasePath)) fs.unlinkSync(databasePath);
+          fs.renameSync(displacedPath, databasePath);
+          currentMoved = false;
+          lifecycle.init();
+        } catch (failure) {
+          rollbackError = failure;
+        }
+      } else if (connectionUnavailable && fs.existsSync(databasePath)) {
+        try {
+          lifecycle.init();
+        } catch (failure) {
+          rollbackError = failure;
+        }
+      }
+
+      const message = error instanceof Error ? error.message : 'Unknown restore error';
+      if (rollbackError) {
+        const rollbackMessage = rollbackError instanceof Error
+          ? rollbackError.message
+          : 'Unknown rollback error';
+        throw new Error(
+          `Restore failed: ${message}. Automatic rollback also failed: ${rollbackMessage}. `
+          + `The safety backup is ${safetyBackupPath || 'unavailable'}.`
+        );
+      }
+      throw new Error(`Restore failed and the previous database was preserved: ${message}`);
+    } finally {
+      if (fs.existsSync(stagedPath)) fs.unlinkSync(stagedPath);
+      if (!currentMoved && fs.existsSync(displacedPath)) fs.unlinkSync(displacedPath);
+    }
+  }
+
+  function listBackups() {
+    const { backupDirectory } = lifecycle.getPaths();
+    fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+    return fs.readdirSync(backupDirectory, { withFileTypes: true })
+      .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z|before-restore-\d+T\d+Z)\.db$/.test(entry.name))
+      .map(entry => {
+        const filePath = path.join(backupDirectory, entry.name);
+        const stat = fs.statSync(filePath);
+        return {
+          name: entry.name,
+          filePath,
+          createdAt: stat.mtimeMs,
+          size: stat.size,
+          automatic: entry.name.startsWith('abysslog-auto-'),
+        };
+      })
+      .sort((left, right) => right.createdAt - left.createdAt);
+  }
+
+  function getDataStatus() {
+    const { databasePath, backupDirectory } = lifecycle.getPaths();
+    const backups = listBackups();
+    const latest = backups[0] || null;
+    return {
+      databasePath,
+      backupDirectory,
+      databaseSize: fs.statSync(databasePath).size,
+      schemaVersion: lifecycle.getConnection().pragma('user_version', { simple: true }),
+      latestBackup: latest
+        ? { filePath: latest.filePath, createdAt: latest.createdAt, size: latest.size }
+        : null,
+      automaticBackupRetention: AUTOMATIC_BACKUP_RETENTION,
+    };
+  }
+
+  function pruneAutomaticBackups() {
+    const automatic = listBackups().filter(backup => backup.automatic);
+    for (const backup of automatic.slice(AUTOMATIC_BACKUP_RETENTION)) {
+      fs.unlinkSync(backup.filePath);
+    }
+  }
+
+  function createExitBackup() {
+    const filePath = copyDatabaseToBackup(
+      `abysslog-auto-${localDateStamp()}.db`,
+      { replaceExisting: true }
+    );
+    pruneAutomaticBackups();
+    return { filePath, ...getDataStatus() };
+  }
+
+  function createManualBackup() {
+    const filePath = copyDatabaseToBackup(`abysslog-manual-${backupTimestamp()}.db`);
+    return { filePath, ...getDataStatus() };
+  }
+
+  return Object.freeze({
+    createExitBackup,
+    createManualBackup,
+    getDataStatus,
+    inspectBackup,
+    restoreBackup,
+  });
+}
+
+module.exports = { AUTOMATIC_BACKUP_RETENTION, createBackupService };

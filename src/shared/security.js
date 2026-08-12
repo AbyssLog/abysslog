@@ -385,7 +385,7 @@
       'character_id', 'started_at', 'duration', 'tier', 'weather', 'outcome',
       'loot_value', 'consumed_cost', 'net_isk', 'total_loss', 'system_id', 'system_name',
       'cargo_before', 'cargo_after', 'drone_before', 'drone_after',
-      'ship_name', 'ship_class', 'notes', 'tags', 'killmail_ids', 'appraised_at',
+      'hull_name', 'ship_class', 'notes', 'tags', 'killmail_ids', 'appraised_at',
       'items', 'fitting', 'implants',
     ]));
     return {
@@ -409,7 +409,7 @@
       cargo_after: requireText(value.cargo_after ?? '', 'Post-run cargo', 512 * 1024),
       drone_before: requireText(value.drone_before ?? '', 'Pre-run drone bay', 512 * 1024),
       drone_after: requireText(value.drone_after ?? '', 'Post-run drone bay', 512 * 1024),
-      ship_name: requireText(value.ship_name ?? '', 'Ship name', 256, { multiline: false }),
+      hull_name: requireText(value.hull_name ?? '', 'Hull type', 256, { multiline: false }),
       ship_class: requireEnum(value.ship_class ?? 'Unknown', 'Ship class', SHIP_CLASSES),
       notes: requireText(value.notes ?? '', 'Run notes', 16 * 1024),
       tags: validateTags(value.tags ?? []),
@@ -426,7 +426,7 @@
   function validateActiveRunSnapshot(value) {
     if (!isPlainObject(value)) throw new TypeError('Active run snapshot must be an object');
     assertAllowedKeys(value, 'Active run snapshot', new Set(['version', 'state', 'run']));
-    if (value.version !== 1) throw new TypeError('Active run snapshot version is unsupported');
+    if (value.version !== 2) throw new TypeError('Active run snapshot version is unsupported');
 
     const state = requireEnum(value.state, 'Active run state', ACTIVE_RUN_STATES);
     const run = value.run;
@@ -434,7 +434,7 @@
     assertAllowedKeys(run, 'Active run', new Set([
       'character_id', 'started_at', 'duration', 'tier', 'weather', 'outcome',
       'system_id', 'system_name', 'cargoBefore', 'cargoAfter', 'droneBefore', 'droneAfter',
-      'ship_name', 'ship_class', 'notes', 'tags', 'fitting', 'implants', 'fitCaptured',
+      'hull_name', 'ship_class', 'notes', 'tags', 'fitting', 'implants', 'fitCaptured',
       'killmailItems', 'killmailIds',
     ]));
 
@@ -449,7 +449,7 @@
     }
 
     return {
-      version: 1,
+      version: 2,
       state,
       run: {
         character_id: requireInteger(run.character_id, 'Character ID'),
@@ -471,7 +471,7 @@
         cargoAfter: requireText(run.cargoAfter ?? '', 'Post-run cargo', 512 * 1024),
         droneBefore: requireText(run.droneBefore ?? '', 'Pre-run drone bay', 512 * 1024),
         droneAfter: requireText(run.droneAfter ?? '', 'Post-run drone bay', 512 * 1024),
-        ship_name: requireText(run.ship_name ?? '', 'Ship name', 256, {
+        hull_name: requireText(run.hull_name ?? '', 'Hull type', 256, {
           multiline: false,
         }),
         ship_class: requireEnum(run.ship_class ?? 'Unknown', 'Ship class', SHIP_CLASSES),
@@ -498,9 +498,6 @@
     return {
       ship_item_id: requireInteger(value.ship_item_id, 'Ship item ID'),
       ship_type_id: requireInteger(value.ship_type_id, 'Ship type ID'),
-      ship_name: requireText(value.ship_name ?? '', 'Ship name', 256, {
-        multiline: false,
-      }),
     };
   }
 
@@ -689,7 +686,8 @@
     if (!isPlainObject(value)) throw new TypeError('Run filters must be an object');
     assertAllowedKeys(value, 'Run filters', new Set([
       'character_id', 'tier', 'weather', 'outcome', 'limit',
-      'search', 'date_from', 'date_to', 'ship', 'tag',
+      'search', 'date_from', 'date_to', 'hull', 'hull_name', 'ship_class',
+      'fit_reference_run_id', 'tag',
     ]));
     const filters = {};
     if (value.character_id != null && value.character_id !== '') {
@@ -714,8 +712,19 @@
     ) {
       throw new TypeError('Run date end must be after its start');
     }
-    if (value.ship != null && String(value.ship).trim()) {
-      filters.ship = requireText(value.ship, 'Ship filter', 256, { multiline: false }).trim();
+    if (value.hull != null && String(value.hull).trim()) {
+      filters.hull = requireText(value.hull, 'Hull filter', 256, { multiline: false }).trim();
+    }
+    if (value.hull_name != null && String(value.hull_name).trim()) {
+      filters.hull_name = requireText(
+        value.hull_name, 'Hull type filter', 256, { multiline: false }
+      ).trim();
+    }
+    if (value.ship_class) {
+      filters.ship_class = requireEnum(value.ship_class, 'Hull class filter', SHIP_CLASSES);
+    }
+    if (value.fit_reference_run_id != null) {
+      filters.fit_reference_run_id = requireInteger(value.fit_reference_run_id, 'Fit run ID');
     }
     if (value.tag != null && String(value.tag).trim()) {
       filters.tag = requireTrimmedText(value.tag, 'Tag filter', 48);
@@ -754,7 +763,7 @@
     if (!isPlainObject(value)) throw new TypeError('Run update must be an object');
     assertAllowedKeys(value, 'Run update', new Set([
       'tier', 'weather', 'outcome', 'duration', 'started_at',
-      'total_loss', 'ship_name', 'ship_class', 'system_id', 'system_name',
+      'total_loss', 'hull_name', 'ship_class', 'system_id', 'system_name',
       'notes', 'tags',
     ]));
     return {
@@ -764,9 +773,9 @@
       duration: requireInteger(value.duration, 'Run duration', { min: 0, max: 604_800 }),
       started_at: requireInteger(value.started_at, 'Run start', { min: 0 }),
       total_loss: requireFiniteNumber(value.total_loss ?? 0, 'Total loss', { min: 0 }),
-      ship_name: value.ship_name === undefined
+      hull_name: value.hull_name === undefined
         ? null
-        : requireText(value.ship_name, 'Ship name', 256, { multiline: false }),
+        : requireText(value.hull_name, 'Hull type', 256, { multiline: false }),
       ship_class: value.ship_class === undefined
         ? null
         : requireEnum(value.ship_class, 'Ship class', SHIP_CLASSES),

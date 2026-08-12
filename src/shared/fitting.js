@@ -149,7 +149,7 @@
 
   function createEftExport(run) {
     const grouped = groupSnapshot(run?.fitting, run?.implants);
-    const shipName = cleanLine(grouped.hull?.name || run?.ship_name);
+    const shipName = cleanLine(grouped.hull?.name || run?.hull_name);
     if (!shipName) throw new Error('The captured ship hull is unavailable');
 
     const moduleRacks = [];

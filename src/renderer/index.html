@@ -75,7 +75,7 @@
                 <div class="hud-card-value" id="hudLocationVal">—</div>
               </div>
               <div class="hud-card">
-                <div class="hud-card-label">Ship</div>
+                <div class="hud-card-label">Hull</div>
                 <div class="hud-card-value" id="hudShipVal">—</div>
               </div>
               <div class="hud-card">
@@ -292,16 +292,19 @@
           <input class="field-input" id="historyDateTo" type="date" data-change-action="render-history">
         </div>
         <div>
-          <label class="field-label" for="historyShip">Ship</label>
-          <input class="field-input" id="historyShip" maxlength="256" placeholder="Name or class" data-input-action="history-search">
+          <label class="field-label" for="historyHull">Hull</label>
+          <input class="field-input" id="historyHull" maxlength="256" placeholder="Hull type or class" data-input-action="history-search">
         </div>
         <div>
           <label class="field-label" for="historyTag">Tag</label>
           <input class="field-input" id="historyTag" maxlength="48" placeholder="e.g. testing" data-input-action="history-search">
         </div>
         <button class="btn sm ghost history-refresh" data-action="render-history">Refresh</button>
+        <button class="btn sm" id="historyExportButton" data-action="history-export-csv">Export all history</button>
         <div id="historyResultSummary" class="history-result-summary" role="status" aria-live="polite"></div>
       </div>
+      <div id="historyActiveFilters" class="history-active-filters" role="status" aria-live="polite" hidden></div>
+      <div id="historyExportStatus" role="status" aria-live="polite" hidden></div>
       <div class="stats-filter-error" id="historyFilterError" role="alert" hidden></div>
       <div id="historyContent"></div>
     </div>
@@ -565,8 +568,8 @@
         </select>
       </div>
       <div>
-        <label class="field-label" for="manualShipName">Ship Hull</label>
-        <input class="field-input" id="manualShipName" maxlength="256" placeholder="e.g. Gila">
+        <label class="field-label" for="manualHullName">Hull Type</label>
+        <input class="field-input" id="manualHullName" maxlength="256" placeholder="e.g. Gila">
       </div>
       <div>
         <label class="field-label" for="manualSystemName">System</label>
@@ -684,6 +687,9 @@
 <script src="../shared/ship-groups.js"></script>
 <script src="./inventory-editor.js"></script>
 <script src="./run-session-controller.js"></script>
+<script src="./navigation-controller.js"></script>
+<script src="./modal-controller.js"></script>
+<script src="./ui-formatters.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
