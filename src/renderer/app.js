@@ -10,6 +10,12 @@ const loadoutHelpers = window.AbyssLoadouts;
 const shipGroups = window.AbyssShipGroups;
 const inventoryEditors = window.AbyssInventoryEditor;
 const runSessionHelpers = window.AbyssRunSession;
+const navigationHelpers = window.AbyssNavigation;
+const modalHelpers = window.AbyssModals;
+const formatters = window.AbyssUiFormatters;
+const formatBytes = formatters.formatBytes;
+const fmtIsk = formatters.formatIsk;
+const fmtDuration = formatters.formatDuration;
 
 function dismissGlobalError() {
   const notice = document.getElementById('globalErrorNotice');
@@ -123,21 +129,16 @@ function initializeTrackerLayout() {
 
 
 // ── Navigation ────────────────────────────────────────────────────────────
+const navigationController = navigationHelpers.createNavigationController({
+  document,
+  onShowPage: name => {
+    if (name === 'history') return renderHistory();
+    if (name === 'stats') return renderStats();
+    return undefined;
+  },
+});
 function showPage(name) {
-  document.querySelectorAll('.page').forEach(page => {
-    const isActive = page.id === `page-${name}`;
-    page.classList.toggle('active', isActive);
-    page.setAttribute('aria-hidden', String(!isActive));
-  });
-  document.querySelectorAll('.nav-btn').forEach(button => {
-    const isActive = button.dataset.page === name;
-    button.classList.toggle('active', isActive);
-    if (isActive) button.setAttribute('aria-current', 'page');
-    else button.removeAttribute('aria-current');
-  });
-  if (name === 'history') return renderHistory();
-  if (name === 'stats') return renderStats();
-  return undefined;
+  return navigationController.show(name);
 }
 
 // ── Character Management ──────────────────────────────────────────────────
@@ -360,7 +361,7 @@ async function pollESI(generation, characterId) {
         }).catch(() => {});
       }
     }
-    document.getElementById('hudShipVal').textContent = ship.ship_name || `Ship ${shipTypeId}`;
+    document.getElementById('hudShipVal').textContent = shipHullName;
     document.getElementById('hudEsiVal').textContent = inAbyss ? '⚡ IN ABYSS' : 'Active';
     document.getElementById('hudEsiVal').title = '';
     document.getElementById('statusDot').className = inAbyss ? 'status-dot abyss' : 'status-dot online';
@@ -732,7 +733,7 @@ function activeRunSnapshot() {
     : S.runState === 'in-abyss' ? 'in-abyss' : 'awaiting-cargo';
   const run = S.activeRun;
   return window.AbyssSecurity.validateActiveRunSnapshot({
-    version: 1,
+    version: 2,
     state,
     run: {
       character_id: run.character_id,
@@ -747,7 +748,7 @@ function activeRunSnapshot() {
       cargoAfter: run.cargoAfter || '',
       droneBefore: run.droneBefore || '',
       droneAfter: run.droneAfter || '',
-      ship_name: run.ship_name || '',
+      hull_name: run.hull_name || '',
       ship_class: run.ship_class || 'Unknown',
       notes: run.notes || '',
       tags: run.tags || [],
@@ -780,7 +781,7 @@ async function restoreActiveRun(characterId) {
   S.activeRun = snapshot.run;
   lastSystemId = snapshot.run.system_id;
   lastSystemName = snapshot.run.system_name;
-  lastShipHullName = snapshot.run.ship_name || null;
+  lastShipHullName = snapshot.run.hull_name || null;
   document.getElementById('activeRunNotes').value = snapshot.run.notes || '';
   document.getElementById('activeRunTags').value = (snapshot.run.tags || []).join(', ');
   setInventoryText('cargoBeforeText', snapshot.run.cargoBefore);
@@ -832,7 +833,7 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
     duration: 0,
     tier: tier || 'Unknown',
     weather: weather || 'Unknown',
-    ship_name: lastShipHullName || document.getElementById('hudShipVal').textContent || '',
+    hull_name: lastShipHullName || document.getElementById('hudShipVal').textContent || '',
     ship_class: 'Unknown',
     system_id: lastSystemId,
     system_name: lastSystemName,
@@ -891,7 +892,7 @@ async function captureActiveRunDetails(run, shipTypeId) {
     if (S.activeRun !== run || run.finalizing || run.suspended) return;
 
     if (fitData) {
-      run.ship_name = typeNames[fitData.ship_type_id] || run.ship_name;
+      run.hull_name = typeNames[fitData.ship_type_id] || run.hull_name;
       run.fitting = [
         { type_id: fitData.ship_type_id, type_name: typeNames[fitData.ship_type_id] || `Type ${fitData.ship_type_id}`, qty: 1, slot: 'hull' },
         ...fitData.items.map(i => ({
@@ -1359,7 +1360,7 @@ async function saveCurrentRun() {
     cargo_after: run.cargoAfter || '',
     drone_before: run.droneBefore || '',
     drone_after: run.droneAfter || '',
-    ship_name: run.ship_name || '',
+    hull_name: run.hull_name || '',
     ship_class: run.ship_class || 'Unknown',
     items,
     fitting,
@@ -1471,7 +1472,7 @@ function openManualEntryModal() {
   document.getElementById('manualOutcome').value = 'Survived';
   document.getElementById('manualDuration').value = '';
   document.getElementById('manualShipClass').value = 'Unknown';
-  document.getElementById('manualShipName').value = '';
+  document.getElementById('manualHullName').value = '';
   document.getElementById('manualSystemName').value = '';
   document.getElementById('manualTags').value = '';
   document.getElementById('manualNotes').value = '';
@@ -1513,7 +1514,7 @@ async function openEditRunModal(runId) {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
   document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
-  document.getElementById('manualShipName').value = run.ship_name || '';
+  document.getElementById('manualHullName').value = run.hull_name || '';
   document.getElementById('manualSystemName').value = run.system_name || '';
   document.getElementById('manualTags').value = (run.tags || []).join(', ');
   document.getElementById('manualNotes').value = run.notes || '';
@@ -1657,7 +1658,7 @@ async function submitManualEntry(doAppraise = true) {
   const outcome = document.getElementById('manualOutcome').value;
   const duration = parseDuration(document.getElementById('manualDuration').value);
   const shipClass = document.getElementById('manualShipClass').value;
-  const shipName = document.getElementById('manualShipName').value.trim();
+  const hullName = document.getElementById('manualHullName').value.trim();
   const systemName = document.getElementById('manualSystemName').value.trim();
   const tags = parseRunTags(document.getElementById('manualTags').value);
   const notes = document.getElementById('manualNotes').value;
@@ -1722,7 +1723,7 @@ async function submitManualEntry(doAppraise = true) {
         total_loss: pendingAppraisal
           ? pendingAppraisal.total_loss
           : (editOriginal?.total_loss || 0),
-        ship_name: shipName,
+        hull_name: hullName,
         ship_class: shipClass,
         system_name: systemName,
         notes,
@@ -1788,7 +1789,7 @@ async function submitManualEntry(doAppraise = true) {
       drone_before: droneBefore,
       drone_after: savedDroneAfter,
       system_name: systemName,
-      ship_name: shipName,
+      hull_name: hullName,
       ship_class: shipClass,
       notes,
       tags,
@@ -1998,6 +1999,14 @@ function sortHistory(column) {
   return historyView.sort(column);
 }
 
+function clearHistoryFilters() {
+  return historyView.clearFilters();
+}
+
+function exportHistoryCSV() {
+  return historyView.exportCsv();
+}
+
 function scheduleHistorySearch() {
   clearTimeout(historySearchTimer);
   historySearchTimer = setTimeout(() => {
@@ -2033,7 +2042,7 @@ async function showRunDetail(runId) {
     <div><div class="field-label">Date</div><div class="mono" style="font-size:12px">${d.toLocaleString()}</div></div>
     <div><div class="field-label">Duration</div><div class="mono" style="font-size:12px">${fmtDuration(run.duration)}</div></div>
     <div><div class="field-label">Outcome</div><div><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${esc(run.outcome)}</span></div></div>
-    <div><div class="field-label">Ship Class</div><div>${run.ship_class ? '<span class="badge tier">' + esc(run.ship_class) + '</span>' : '<span style="color:var(--muted)">—</span>'}</div></div>
+    <div><div class="field-label">Hull Class</div><div>${run.ship_class ? '<span class="badge tier">' + esc(run.ship_class) + '</span>' : '<span style="color:var(--muted)">—</span>'}</div></div>
     <div><div class="field-label">${run.outcome === 'Survived' ? 'Net ISK' : 'Total Loss'}</div>
     <div class="mono" style="font-size:14px;color:${run.outcome === 'Survived' ? (run.net_isk >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--red)'}">
       ${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '−' + fmtIsk(run.total_loss)}
@@ -2041,7 +2050,7 @@ async function showRunDetail(runId) {
   </div>`;
 
   const metadataRows = [];
-  if (run.ship_name) metadataRows.push(['Ship', run.ship_name]);
+  if (run.hull_name) metadataRows.push(['Hull', run.hull_name]);
   if (run.system_name || run.system_id) {
     metadataRows.push(['System', run.system_name || String(run.system_id)]);
   }
@@ -2368,7 +2377,7 @@ async function showShipSetup(runId, returnModal = 'runDetailModal') {
   closeButton.setAttribute('aria-label', returnModal ? 'Back to run details' : 'Back to statistics');
   const grouped = window.AbyssFitting.groupSnapshot(run.fitting, run.implants);
   const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
-  const hullName = grouped.hull?.name || run.ship_name || 'Unknown ship';
+  const hullName = grouped.hull?.name || run.hull_name || 'Unknown ship';
   const startedAt = new Date(run.started_at * 1000);
   const runContext = [run.tier, run.weather]
     .filter(value => value && value !== 'Unknown')
@@ -2438,6 +2447,10 @@ const statsView = statsViewHelpers.createStatsView({
   formatIsk: fmtIsk,
   formatDuration: fmtDuration,
   escapeHtml: esc,
+  onDrillThrough: selection => {
+    historyView.applyDrillThrough(selection);
+    return showPage('history');
+  },
 });
 
 function handleStatsRangeChange() {
@@ -2472,12 +2485,7 @@ function loadSettingsPage() {
   renderDiagnosticsStatus();
 }
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+// Backup value rendering uses the shared formatBytes alias.
 
 function renderDataStatus() {
   if (!S.dataStatus) return;
@@ -2639,7 +2647,7 @@ async function removeJaniceKey() {
 }
 
 async function exportCSV() {
-  const result = await window.api.runs.exportCSV(S.activeCharId || null);
+  const result = await window.api.runs.exportCSV({ character_id: S.activeCharId || undefined });
   const el = document.getElementById('csvStatus');
   if (result.success) {
     el.innerHTML = `<div class="alert success">Exported to ${esc(result.filePath)}</div>`;
@@ -2789,22 +2797,9 @@ async function updateRecentRuns() {
   }).join('');
 }
 
-function fmtIsk(n) {
-  if (n == null || isNaN(n)) return '0';
-  const abs = Math.abs(n);
-  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-  if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-  if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return Math.round(n).toLocaleString();
-}
+// Run value rendering uses the shared aliases initialized above.
 
-function fmtDuration(secs) {
-  if (!secs) return '00:00:00';
-  const h = Math.floor(secs / 3600).toString().padStart(2, '0');
-  const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
-  const s = (secs % 60).toString().padStart(2, '0');
-  return `${h}:${m}:${s}`;
-}
+
 
 function esc(str) {
   return window.AbyssSecurity.escapeHtml(str);
@@ -2814,56 +2809,28 @@ function openExternal(url) {
   return window.api.shell.openExternal(url);
 }
 
-const modalReturnFocus = new Map();
-const MODAL_FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  'a[href]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
-
-function getModalFocusableElements(overlay) {
-  return [...overlay.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)]
-    .filter(element => element.getClientRects().length > 0);
-}
+const modalController = modalHelpers.createModalController({
+  document,
+  onRequestClose: (id, close) => {
+    if (id === 'manualEntryModal') return closeManualEntryModal();
+    if (id === 'shipSetupModal') return closeShipSetupModal();
+    return close(id);
+  },
+  onDidClose: id => {
+    if (id === 'runDetailModal') pendingHistoricalReappraisal = null;
+  },
+});
 
 function openModal(id) {
-  const overlay = document.getElementById(id);
-  if (!overlay) return;
-  const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLElement && !overlay.contains(activeElement)) {
-    modalReturnFocus.set(id, activeElement);
-  }
-  overlay.classList.add('open');
-  overlay.setAttribute('aria-hidden', 'false');
-  document.querySelector('.app').inert = true;
-  requestAnimationFrame(() => {
-    const initialFocus = overlay.querySelector('[data-initial-focus]')
-      || getModalFocusableElements(overlay)[0]
-      || overlay.querySelector('.modal');
-    initialFocus?.focus();
-  });
+  return modalController.open(id);
 }
 
 function closeModal(id) {
-  const overlay = document.getElementById(id);
-  if (!overlay) return;
-  overlay.classList.remove('open');
-  overlay.setAttribute('aria-hidden', 'true');
-  const anotherModalIsOpen = document.querySelector('.modal-overlay.open');
-  if (id === 'runDetailModal') pendingHistoricalReappraisal = null;
-  document.querySelector('.app').inert = Boolean(anotherModalIsOpen);
-  const returnFocus = modalReturnFocus.get(id);
-  modalReturnFocus.delete(id);
-  if (!anotherModalIsOpen && returnFocus?.isConnected) returnFocus.focus();
+  return modalController.close(id);
 }
 
 function requestCloseModal(id) {
-  if (id === 'manualEntryModal') closeManualEntryModal();
-  else if (id === 'shipSetupModal') closeShipSetupModal();
-  else closeModal(id);
+  return modalController.requestClose(id);
 }
 
 function getSelectedCapabilities() {
@@ -2906,39 +2873,7 @@ function openAddCharModal() {
   openModal('addCharModal');
 }
 
-document.querySelectorAll('.modal-overlay').forEach(el => {
-  el.addEventListener('click', event => {
-    if (event.target === el) requestCloseModal(el.id);
-  });
-});
-
-document.addEventListener('keydown', event => {
-  const openModals = [...document.querySelectorAll('.modal-overlay.open')];
-  const overlay = openModals.at(-1);
-  if (!overlay) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    requestCloseModal(overlay.id);
-    return;
-  }
-  if (event.key !== 'Tab') return;
-
-  const focusable = getModalFocusableElements(overlay);
-  if (focusable.length === 0) {
-    event.preventDefault();
-    overlay.querySelector('.modal')?.focus();
-    return;
-  }
-  const first = focusable[0];
-  const last = focusable.at(-1);
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
-});
+// Overlay clicks, Escape, and focus trapping are installed by modalController.
 
 const clickActions = {
   'dismiss-global-error': () => dismissGlobalError(),
@@ -2955,6 +2890,8 @@ const clickActions = {
   'retry-killmail': () => retryKillmailLoss(),
   'back-to-appraise': () => backToAppraise(),
   'render-history': () => renderHistory(),
+  'clear-history-filters': () => clearHistoryFilters(),
+  'history-export-csv': () => exportHistoryCSV(),
   'open-add-character': () => openAddCharModal(),
   'toggle-janice-key': element => toggleJaniceKey(element),
   'test-janice-key': () => testJaniceKey(),
@@ -2980,6 +2917,7 @@ const clickActions = {
   'close-manual-entry': () => closeManualEntryModal(),
   'submit-manual-entry': element => submitManualEntry(element.dataset.appraise === 'true'),
   'sort-history': element => sortHistory(element.dataset.sortColumn),
+  'stats-drill-through': element => statsView.openHistory(element),
   'show-run-detail': element => showRunDetail(Number(element.dataset.runId)),
   'show-ship-setup': element => showShipSetup(
     Number(element.dataset.runId),
@@ -3008,6 +2946,8 @@ const actionFailureContexts = Object.freeze({
   'retry-killmail': 'Could not check for the killmail',
   'back-to-appraise': 'Could not return to the appraisal',
   'render-history': 'Could not refresh run history',
+  'clear-history-filters': 'Could not clear run history filters',
+  'history-export-csv': 'Could not export run history',
   'open-add-character': 'Could not open character sign-in',
   'test-janice-key': 'Could not test the Janice API key',
   'remove-janice-key': 'Could not remove the Janice API key',
@@ -3029,6 +2969,7 @@ const actionFailureContexts = Object.freeze({
   'delete-loadout': 'Could not delete the loadout preset',
   'start-sso': 'Could not start EVE sign-in',
   'submit-manual-entry': 'Could not save the manual run',
+  'stats-drill-through': 'Could not open filtered run history',
   'sort-history': 'Could not sort run history',
   'show-run-detail': 'Could not open the run details',
   'show-ship-setup': 'Could not open the captured ship setup',

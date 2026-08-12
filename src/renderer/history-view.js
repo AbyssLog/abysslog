@@ -29,6 +29,7 @@
     let sortColumn = 'started_at';
     let sortDirection = 'desc';
 
+    let drillThrough = null;
     function dateBoundary(value, addDay = false) {
       if (!value) return undefined;
       const date = new Date(value + 'T00:00:00');
@@ -37,13 +38,13 @@
       return Math.floor(date.getTime() / 1000);
     }
 
-    function getFilters(characterId) {
+    function getFilters(characterId = getActiveCharacterId()) {
       const dateFrom = dateBoundary(document.getElementById('historyDateFrom').value);
       const dateTo = dateBoundary(document.getElementById('historyDateTo').value, true);
       if (dateFrom != null && dateTo != null && dateTo <= dateFrom) {
         throw new Error('History end date must not be before its start date');
       }
-      return {
+      const filters = {
         character_id: characterId || undefined,
         tier: document.getElementById('filterTier').value || undefined,
         weather: document.getElementById('filterWeather').value || undefined,
@@ -51,9 +52,104 @@
         search: document.getElementById('historySearch').value.trim() || undefined,
         date_from: dateFrom,
         date_to: dateTo,
-        ship: document.getElementById('historyShip').value.trim() || undefined,
+        hull: document.getElementById('historyHull').value.trim() || undefined,
         tag: document.getElementById('historyTag').value.trim() || undefined,
       };
+      return drillThrough ? { ...filters, ...drillThrough.filters } : filters;
+    }
+
+    const filterInputIds = Object.freeze([
+      'historyDateFrom', 'historyDateTo', 'filterTier', 'filterWeather',
+      'filterOutcome', 'historySearch', 'historyHull', 'historyTag',
+    ]);
+
+    function clearFilterInputs() {
+      for (const id of filterInputIds) {
+        const element = document.getElementById(id);
+        if (element) element.value = '';
+      }
+    }
+
+    function describeFilters(filters) {
+      if (drillThrough?.labels?.length) return drillThrough.labels;
+      const labels = [];
+      if (filters.tier) labels.push('Tier: ' + filters.tier);
+      if (filters.weather) labels.push('Weather: ' + filters.weather);
+      if (filters.outcome) labels.push('Outcome: ' + filters.outcome);
+      if (filters.search) labels.push('Search: ' + filters.search);
+      if (filters.hull) labels.push('Hull: ' + filters.hull);
+      if (filters.hull_name) labels.push('Hull: ' + filters.hull_name);
+      if (filters.ship_class) labels.push('Hull class: ' + filters.ship_class);
+      if (filters.fit_reference_run_id) labels.push('Equivalent fit');
+      if (filters.tag) labels.push('Tag: ' + filters.tag);
+      const dateFrom = document.getElementById('historyDateFrom')?.value;
+      const dateTo = document.getElementById('historyDateTo')?.value;
+      if (dateFrom || dateTo) {
+        labels.push('Date: ' + (dateFrom || 'Any') + ' through ' + (dateTo || 'Any'));
+      }
+      return labels;
+    }
+
+    function hasActiveFilters(filters = getFilters()) {
+      return Object.keys(filters).some(key => key !== 'character_id' && filters[key] != null);
+    }
+
+    function updateFilterUi(filters) {
+      const labels = describeFilters(filters);
+      const container = document.getElementById('historyActiveFilters');
+      if (container) {
+        container.hidden = labels.length === 0;
+        container.innerHTML = labels.length === 0 ? '' :
+          '<span class="history-active-filter-label">Active filters:</span> '
+          + labels.map(label => '<span class="history-filter-chip">'
+            + escapeHtml(label) + '</span>').join(' ')
+          + ' <button type="button" class="btn sm ghost" '
+          + 'data-action="clear-history-filters">Clear filters</button>';
+      }
+      const exportButton = document.getElementById('historyExportButton');
+      if (exportButton) {
+        exportButton.textContent = labels.length
+          ? 'Export filtered history'
+          : 'Export all history';
+      }
+    }
+
+    function applyDrillThrough({ filters, labels = [] }) {
+      if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
+        throw new TypeError('History drill-through filters must be an object');
+      }
+      clearFilterInputs();
+      drillThrough = {
+        filters: { ...filters },
+        labels: Array.isArray(labels) ? labels.map(String) : [],
+      };
+      updateFilterUi(getFilters());
+    }
+
+    function clearFilters() {
+      clearFilterInputs();
+      drillThrough = null;
+      return render();
+    }
+
+    async function exportCsv() {
+      const filters = getFilters();
+      updateFilterUi(filters);
+      const result = await api.runs.exportCSV(filters);
+      const status = document.getElementById('historyExportStatus');
+      if (!status) return result;
+      if (!result.success) {
+        status.hidden = true;
+        status.textContent = '';
+        return result;
+      }
+      const count = Number(result.runCount) || 0;
+      const scope = result.scope === 'filtered' ? 'filtered history' : 'all history';
+      status.hidden = false;
+      status.className = 'alert success history-export-status';
+      status.textContent = 'Exported ' + count + (count === 1 ? ' run' : ' runs')
+        + ' from ' + scope + ' to ' + result.filePath;
+      return result;
     }
 
     function sortRuns(runs) {
@@ -93,7 +189,7 @@
         ['started_at', 'Date'],
         ['tier', 'Tier'],
         ['weather', 'Weather'],
-        ['ship_name', 'Ship'],
+        ['hull_name', 'Hull'],
         ['duration', 'Duration'],
         ['outcome', 'Outcome'],
         ['net_isk', 'Net ISK'],
@@ -121,8 +217,8 @@
 
       for (const run of runs) {
         const date = new Date(run.started_at * 1000);
-        const ship = run.ship_name || run.ship_class || '—';
-        const shipContext = run.ship_name && run.ship_class
+        const ship = run.hull_name || run.ship_class || '—';
+        const shipContext = run.hull_name && run.ship_class
           ? '<div class="history-ship-class">' + escapeHtml(run.ship_class) + '</div>'
           : '';
         html += '<tr>'
@@ -161,6 +257,7 @@
         content.innerHTML = '';
         return;
       }
+      updateFilterUi(filters);
       error.hidden = true;
       const runs = await api.runs.getAll(filters);
       if (generation !== renderGeneration || getActiveCharacterId() !== characterId) return;
@@ -184,7 +281,10 @@
       return render();
     }
 
-    return Object.freeze({ render, sort, getFilters });
+    return Object.freeze({
+      render, sort, getFilters, hasActiveFilters,
+      applyDrillThrough, clearFilters, exportCsv,
+    });
   }
 
   return Object.freeze({ createHistoryView });

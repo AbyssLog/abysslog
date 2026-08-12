@@ -27,6 +27,8 @@ const { registerSupportHandlers } = require('./ipc/support-handlers');
 const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
+const { JANICE_SECRET_KEY, createCredentialService } = require('./credential-service');
+const { createIpcGuard } = require('./ipc-guard');
 const janice = require('./janice');
 const { createUpdateService } = require('./update-service');
 const runTracking = require('../shared/run-tracking');
@@ -41,9 +43,15 @@ const LEGACY_OAUTH_SCOPES = [
   'esi-fittings.read_fittings.v1',
   'esi-clones.read_implants.v1',
 ];
-const SECRET_PREFIX = 'safe:v1:';
-const JANICE_SECRET_KEY = 'secret_janice_api_key';
+// Secret formats and keys are owned by credential-service.js.
 const MAX_IPC_JSON_BYTES = 2 * 1024 * 1024;
+
+const credentialService = createCredentialService({
+  safeStorage,
+  database: db,
+  security,
+  legacyOAuthScopes: LEGACY_OAUTH_SCOPES,
+});
 
 let mainWindow;
 let pendingAuth = null;
@@ -54,6 +62,14 @@ let startupComplete = false;
 let exitBackupAttempted = false;
 let restoreRestartScheduled = false;
 const updateService = createUpdateService();
+const ipcGuard = createIpcGuard({
+  ipcMain,
+  security,
+  getMainWindow: () => mainWindow,
+  isBlocked: () => restoreRestartScheduled,
+  recordFailure: (...args) => recordDiagnosticFailure(...args),
+  maxJsonBytes: MAX_IPC_JSON_BYTES,
+});
 
 function recordDiagnostic(event, details) {
   diagnostics?.info(event, details);
@@ -128,93 +144,12 @@ function base64Url(buffer) {
     .replace(/=+$/g, '');
 }
 
-function isSecureStorageAvailable() {
-  if (!safeStorage.isEncryptionAvailable()) return false;
-  if (
-    process.platform === 'linux'
-    && typeof safeStorage.getSelectedStorageBackend === 'function'
-    && safeStorage.getSelectedStorageBackend() === 'basic_text'
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function getSecureStorageStatus() {
-  let backend = process.platform;
-  if (process.platform === 'linux' && typeof safeStorage.getSelectedStorageBackend === 'function') {
-    backend = safeStorage.getSelectedStorageBackend();
-  }
-  return { available: isSecureStorageAvailable(), backend };
-}
-
-function encryptSecret(value) {
-  if (!isSecureStorageAvailable()) {
-    throw new Error('Secure credential storage is unavailable on this system');
-  }
-  const encrypted = safeStorage.encryptString(security.requireString(value, 'Secret', 64 * 1024));
-  return SECRET_PREFIX + encrypted.toString('base64');
-}
-
-function decryptSecret(stored) {
-  if (!stored || !isSecureStorageAvailable()) return null;
-  try {
-    const encoded = stored.startsWith(SECRET_PREFIX) ? stored.slice(SECRET_PREFIX.length) : stored;
-    return safeStorage.decryptString(Buffer.from(encoded, 'base64'));
-  } catch {
-    return null;
-  }
-}
-
-function tokenKey(characterId) {
-  return `tokens_${security.requireInteger(characterId, 'Character ID')}`;
-}
-
-function saveTokens(characterId, tokens) {
-  if (!security.isPlainObject(tokens)) throw new TypeError('OAuth token response is invalid');
-  const accessToken = security.requireString(tokens.access_token, 'Access token', 16 * 1024);
-  const refreshToken = security.requireString(tokens.refresh_token, 'Refresh token', 16 * 1024);
-  const expiresAt = security.requireInteger(tokens.expires_at, 'Token expiry', {
-    min: Date.now() - 60_000,
-    max: Number.MAX_SAFE_INTEGER,
-  });
-  const scopes = security.validateEsiScopes(tokens.scopes);
-  const safeTokens = {
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    expires_at: expiresAt,
-    scopes,
-  };
-  db.setSetting(tokenKey(characterId), encryptSecret(JSON.stringify(safeTokens)));
-}
-
-function loadTokens(characterId) {
-  const json = decryptSecret(db.getSetting(tokenKey(characterId)));
-  if (!json) return null;
-  try {
-    const tokens = JSON.parse(json);
-    if (!security.isPlainObject(tokens)) return null;
-    const scopes = tokens.scopes == null
-      ? [...LEGACY_OAUTH_SCOPES]
-      : security.validateEsiScopes(tokens.scopes);
-    return {
-      access_token: security.requireString(tokens.access_token, 'Access token', 16 * 1024),
-      refresh_token: security.requireString(tokens.refresh_token, 'Refresh token', 16 * 1024),
-      expires_at: security.requireInteger(tokens.expires_at, 'Token expiry', {
-        min: 0,
-        max: Number.MAX_SAFE_INTEGER,
-      }),
-      scopes,
-    };
-  } catch {
-    return null;
-  }
-}
+// Credential encryption and token persistence are owned by credentialService.
 
 const tokenCoordinator = runTracking.createTokenCoordinator({
-  loadTokens,
-  saveTokens,
-  clearTokens: characterId => db.deleteSetting(tokenKey(characterId)),
+  loadTokens: credentialService.loadTokens,
+  saveTokens: credentialService.saveTokens,
+  clearTokens: credentialService.clearTokens,
   refreshTokens: refreshToken => esi.refreshToken(refreshToken, CLIENT_ID),
   validateAccessToken: token =>
     security.requireString(token, 'Access token', 16 * 1024),
@@ -222,22 +157,7 @@ const tokenCoordinator = runTracking.createTokenCoordinator({
     security.requireInteger(lifetime, 'Token lifetime', { min: 1, max: 86_400 }),
 });
 
-function migrateLegacyJaniceKey() {
-  const legacyKey = db.getSetting('janice_api_key');
-  if (!legacyKey) return;
-  if (db.getSetting(JANICE_SECRET_KEY)) {
-    db.deleteSetting('janice_api_key');
-    return;
-  }
-  if (!isSecureStorageAvailable()) return;
-  db.setSetting(JANICE_SECRET_KEY, encryptSecret(legacyKey));
-  db.deleteSetting('janice_api_key');
-}
-
-function getJaniceApiKey() {
-  return decryptSecret(db.getSetting(JANICE_SECRET_KEY));
-}
-
+// Janice credential migration and access are owned by credentialService.
 function getPublicSettings() {
   const settings = {};
   for (const key of security.PUBLIC_SETTING_KEYS) {
@@ -247,34 +167,7 @@ function getPublicSettings() {
   return settings;
 }
 
-function validateIpcSender(event) {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  return (
-    event.sender === mainWindow.webContents
-    && event.senderFrame === mainWindow.webContents.mainFrame
-    && event.senderFrame.url === mainWindow.webContents.getURL()
-  );
-}
-
-function secureHandle(channel, handler) {
-  ipcMain.handle(channel, async (event, ...args) => {
-    if (!validateIpcSender(event)) {
-      const error = new Error('Unauthorized IPC sender');
-      recordDiagnosticFailure('ipc.rejected', { context: channel }, error);
-      throw error;
-    }
-    if (restoreRestartScheduled) {
-      throw new Error('AbyssLog is restarting after restoring a backup');
-    }
-    try {
-      return await handler(...args);
-    } catch (error) {
-      recordDiagnosticFailure('ipc.failure', { context: channel }, error);
-      throw error;
-    }
-  });
-}
-
+// Sender validation and guarded handler registration are owned by ipcGuard.
 function isTrustedClipboardPermission(window, webContents, permission, requestingUrl, isMainFrame) {
   return (
     permission === 'clipboard-read'
@@ -285,20 +178,6 @@ function isTrustedClipboardPermission(window, webContents, permission, requestin
   );
 }
 
-function validateObjectPayload(value, label, maxBytes = MAX_IPC_JSON_BYTES) {
-  if (!security.isPlainObject(value)) throw new TypeError(`${label} must be an object`);
-  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > maxBytes) {
-    throw new TypeError(`${label} is too large`);
-  }
-  return value;
-}
-
-function validateOptionalCharacterId(value) {
-  return value === null || value === undefined || value === ''
-    ? null
-    : security.requireInteger(value, 'Character ID');
-}
-
 function safeEqual(left, right) {
   const a = Buffer.from(String(left));
   const b = Buffer.from(String(right));
@@ -306,14 +185,14 @@ function safeEqual(left, right) {
 }
 
 function getCharacterCapabilities(characterId) {
-  const tokens = loadTokens(characterId);
+  const tokens = credentialService.loadTokens(characterId);
   return tokens
     ? security.getEsiCapabilitiesForScopes(tokens.scopes)
     : { tracking: false, fitting: false, implants: false, killmails: false };
 }
 
 async function startSso(selectedCapabilities) {
-  if (!isSecureStorageAvailable()) {
+  if (!credentialService.isSecureStorageAvailable()) {
     throw new Error('Secure credential storage is required before adding a character');
   }
 
@@ -386,7 +265,7 @@ async function handleOAuthCallback(callbackUrl) {
     };
 
     db.saveCharacter(character);
-    saveTokens(characterId, tokens);
+    credentialService.saveTokens(characterId, tokens);
     recordDiagnostic('oauth.complete', { source: 'eve-sso' });
     sendAuthEvent('auth:complete', character);
     focusMainWindow();
@@ -557,7 +436,7 @@ if (!gotTheLock) {
     registerAppProtocol();
     recordDiagnostic('startup.phase', { phase: 'database' });
     db.init();
-    migrateLegacyJaniceKey();
+    credentialService.migrateLegacyJaniceKey();
     if (!db.getSetting('janice_api_key')) {
       db.hardenSensitiveStorage();
     }
@@ -619,36 +498,36 @@ function scheduleRestoreRestart() {
 }
 
 registerAuthSettingsHandlers({
-  secureHandle,
+  secureHandle: ipcGuard.secureHandle,
   database: db,
   security,
-  loadTokens,
+  loadTokens: credentialService.loadTokens,
   getCharacterCapabilities,
   startSso,
   getPublicSettings,
-  validateObjectPayload,
-  getSecureStorageStatus,
-  getJaniceApiKey,
+  validateObjectPayload: ipcGuard.validateObjectPayload,
+  getSecureStorageStatus: credentialService.getSecureStorageStatus,
+  getJaniceApiKey: credentialService.getJaniceApiKey,
   janiceSecretKey: JANICE_SECRET_KEY,
-  encryptSecret,
+  encryptSecret: credentialService.encryptSecret,
   recordDiagnostic,
 });
 
 registerExternalServiceHandlers({
-  secureHandle,
+  secureHandle: ipcGuard.secureHandle,
   security,
   withCharacterCapability,
   esi,
   janice,
-  getJaniceApiKey,
+  getJaniceApiKey: credentialService.getJaniceApiKey,
 });
 
 registerRunHandlers({
-  secureHandle,
+  secureHandle: ipcGuard.secureHandle,
   database: db,
   security,
-  validateObjectPayload,
-  validateOptionalCharacterId,
+  validateObjectPayload: ipcGuard.validateObjectPayload,
+  validateOptionalCharacterId: ipcGuard.validateOptionalCharacterId,
   clipboard,
   dialog,
   getMainWindow: () => mainWindow,
@@ -656,7 +535,7 @@ registerRunHandlers({
 });
 
 registerSupportHandlers({
-  secureHandle,
+  secureHandle: ipcGuard.secureHandle,
   database: db,
   security,
   dialog,

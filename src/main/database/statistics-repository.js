@@ -1,4 +1,5 @@
 const fitting = require('../../shared/fitting');
+const { createFitIdentity } = require('../../shared/fit-identity');
 
 function createStatisticsRepository(getConnection) {
   if (typeof getConnection !== 'function') {
@@ -27,19 +28,10 @@ function createStatisticsRepository(getConnection) {
     };
   }
 
-  function fitFingerprint(value) {
-    let hash = 2166136261;
-    for (let index = 0; index < value.length; index++) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0');
-  }
-
   function getFitStats(db, filters) {
     const { where, params } = buildStatsWhere(filters, 'r.');
     const rows = db.prepare([
-      'SELECT r.id, r.ship_name, r.ship_class, r.outcome, r.duration, r.net_isk, r.total_loss,',
+      'SELECT r.id, r.hull_name, r.ship_class, r.outcome, r.duration, r.net_isk, r.total_loss,',
       '  f.type_id, f.type_name, f.qty, f.slot',
       'FROM runs r',
       'JOIN run_fitting f ON f.run_id = r.id',
@@ -51,33 +43,47 @@ function createStatisticsRepository(getConnection) {
       if (!runs.has(row.id)) {
         runs.set(row.id, {
           run_id: row.id,
-          ship_name: row.ship_name || 'Unknown ship',
+          hull_name: row.hull_name || 'Unknown hull',
           ship_class: row.ship_class || 'Unknown',
           outcome: row.outcome,
           duration: row.duration || 0,
           net: row.outcome === 'Survived' ? row.net_isk : -row.total_loss,
-          items: new Map(),
-          hull_name: null,
+          fitting: [],
+          implants: [],
+          capturedHullName: null,
         });
       }
       const run = runs.get(row.id);
       const section = fitting.classifySlot(row.slot);
-      const itemKey = section + ':' + row.type_id;
-      run.items.set(itemKey, (run.items.get(itemKey) || 0) + row.qty);
-      if (section === 'hull') run.hull_name = row.type_name || run.ship_name;
+      run.fitting.push({
+        type_id: row.type_id,
+        type_name: row.type_name,
+        qty: row.qty,
+        slot: row.slot,
+      });
+      if (section === 'hull') run.capturedHullName = row.type_name || run.hull_name;
     }
+    const implantRows = db.prepare([
+      'SELECT r.id, i.type_id, i.type_name, i.slot',
+      'FROM runs r',
+      'JOIN run_implants i ON i.run_id = r.id',
+      where,
+    ].filter(Boolean).join('\n')).all(...params);
+    for (const row of implantRows) {
+      runs.get(row.id)?.implants.push(row);
+    }
+
 
     const fits = new Map();
     for (const run of runs.values()) {
-      const signature = [...run.items.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, quantity]) => key + ':' + quantity)
-        .join('|');
+      const identity = createFitIdentity(run.fitting, run.implants);
+      if (!identity) continue;
+      const signature = identity.signature;
       if (!fits.has(signature)) {
         fits.set(signature, {
-          fit_key: fitFingerprint(signature),
+          fit_key: identity.key,
           representative_run_id: run.run_id,
-          ship_name: run.hull_name || run.ship_name,
+          hull_name: run.capturedHullName || run.hull_name,
           ship_class: run.ship_class,
           total_survival_duration: 0,
           total_runs: 0,
@@ -196,8 +202,8 @@ function createStatisticsRepository(getConnection) {
     const iskPerHour = hourly?.duration > 0 ? hourly.profit / (hourly.duration / 3600) : 0;
     const { where: runWhere, params: runParams } = buildStatsWhere(filters, 'r.');
 
-    const byShip = db.prepare([
-      "SELECT COALESCE(NULLIF(r.ship_name, ''), 'Unknown ship') AS ship_name,",
+    const byHull = db.prepare([
+      "SELECT COALESCE(NULLIF(r.hull_name, ''), 'Unknown ship') AS hull_name,",
       "  COALESCE(NULLIF(r.ship_class, ''), 'Unknown') AS ship_class,",
       '  COUNT(*) AS total_runs,',
       "  SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,",
@@ -205,7 +211,7 @@ function createStatisticsRepository(getConnection) {
       "  AVG(CASE WHEN r.outcome = 'Survived' THEN r.net_isk ELSE -r.total_loss END) AS avg_net_isk",
       'FROM runs r',
       runWhere,
-      "GROUP BY COALESCE(NULLIF(r.ship_name, ''), 'Unknown ship'),",
+      "GROUP BY COALESCE(NULLIF(r.hull_name, ''), 'Unknown ship'),",
       "  COALESCE(NULLIF(r.ship_class, ''), 'Unknown')",
       'ORDER BY total_runs DESC, avg_net_isk DESC',
       'LIMIT 20',
@@ -232,7 +238,7 @@ function createStatisticsRepository(getConnection) {
       overall,
       byTier,
       byWeather,
-      byShip,
+      byHull,
       byFit: getFitStats(db, filters),
       items,
       latestSession: getLatestSession(db, filters),

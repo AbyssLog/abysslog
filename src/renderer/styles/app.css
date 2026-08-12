@@ -455,6 +455,26 @@ input, select, textarea { font-family: var(--font); }
   min-width: 58px; color: var(--text-dim); font-size: 11px; text-align: right;
 }
 .history-table { min-width: 1120px; }
+.history-active-filters {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin: -4px 0 12px; padding: 8px 10px;
+  background: var(--cyan-dim); border: 1px solid rgba(79,195,247,0.28);
+}
+.history-active-filters[hidden] { display: none; }
+.history-active-filter-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; }
+.history-filter-chip {
+  padding: 2px 6px; background: var(--panel); border: 1px solid var(--border-bright);
+  color: var(--cyan); font-size: 10px;
+}
+.history-active-filters .btn { margin-left: auto; }
+.history-export-status { margin: -4px 0 12px; overflow-wrap: anywhere; }
+.stats-drill-link {
+  border: 0; padding: 0; color: inherit; background: none; font: inherit;
+  cursor: pointer; text-align: left;
+}
+.stats-drill-link:hover, .stats-drill-link:focus-visible {
+  color: var(--cyan); text-decoration: underline;
+}
 .history-ship { color: var(--text); font-size: 11px; }
 .history-ship-class { color: var(--text-muted); font-size: 9px; margin-top: 2px; }
 .history-context { min-width: 190px; max-width: 320px; }

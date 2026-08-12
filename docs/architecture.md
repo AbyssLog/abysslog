@@ -22,6 +22,9 @@ network access are blocked.
 ## Source map
 
 - src/renderer/app.js coordinates feature controllers and top-level events.
+- src/renderer/navigation-controller.js owns page selection and navigation ARIA state.
+- src/renderer/modal-controller.js owns dialog lifecycle, focus return, focus trapping, and Escape/overlay dismissal.
+- src/renderer/ui-formatters.js owns shared ISK, duration, and byte formatting.
 - src/renderer/run-session-controller.js owns checkpoint serialization and
   appraisal/finalization generations.
 - src/renderer/stats-view.js owns statistics range controls, session and analytics markup, and charts.
@@ -30,9 +33,15 @@ network access are blocked.
 - src/renderer/inventory-editor.js owns structured cargo and drone editing.
 - src/main/preload.js defines the renderer-to-main contract.
 - src/main/main.js bootstraps Electron and composes main-process services.
+- src/main/ipc-guard.js owns trusted-sender checks, restore blocking, bounded payload validation, and guarded handler registration.
+- src/main/credential-service.js owns safeStorage-backed OAuth and Janice credential persistence.
 - src/main/ipc contains feature registrars for authenticated IPC channels.
 - src/main/database.js is the stable facade for local persistence.
-- src/main/database contains focused run-search/persistence, statistics, and CSV repositories.
+- src/main/database/facade.js composes persistence without owning SQL or Electron lifecycle details.
+- src/main/database/schema.js owns explicitly versioned, idempotent migrations.
+- src/main/database/lifecycle-service.js and backup-service.js own connection and backup lifecycles.
+- src/main/database contains focused character/settings, inventory-baseline, run, fit, statistics, and CSV repositories.
+- src/shared/fit-identity.js defines canonical fit equivalence from hulls, modules, drones, and implants.
 - src/main/esi.js and src/main/janice.js are validated external-service clients.
 - src/main/http-client.js provides bounded HTTP, retries, and rate-limit waits.
 - src/shared contains deterministic logic usable by both Node tests and the
@@ -71,7 +80,7 @@ returns to awaiting-cargo and re-appraises against current prices.
 A run can start manually or after the transition tracker confirms consecutive
 Abyssal observations. The run captures:
 
-- character, timestamp, tier, weather, system, ship display name, notes, and tags;
+- character, timestamp, tier, weather, system, hull type, notes, and tags;
 - pre-run cargo and drone snapshots;
 - optional fitting and implant snapshots when authorized.
 
@@ -132,17 +141,35 @@ The database completes the operation in one transaction:
 This makes a repeated completion request idempotent within the current storage
 model.
 
+## History and statistics
+
+History owns one canonical filter object. Its global free-text search covers run metadata,
+tags, and gained, consumed, or lost item names. Statistics rows drill through by adding
+exact tier, weather, hull/class, or canonical-fit filters while preserving the selected
+statistics date range. Active drill-through filters are shown as removable context, and
+every asynchronous render is guarded by a request generation.
+
+CSV export receives the same canonical filters as the visible History query. The main
+process labels the save dialog and result as filtered history or all history and reports
+the exported row count. Statistics exposes hull summaries as `byHull`; fit rows use a
+representative run only as a drill-through reference, with equivalence calculated from
+the captured hull, modules, drones, and implants.
+
 ## Persistence
 
 SQLite runs in WAL mode with foreign keys and secure deletion enabled.
 
 - characters stores public EVE character identity.
 - settings stores public preferences plus encrypted credential blobs.
-- runs stores run metadata, system name, appraisal timestamp, and raw inventory snapshots. The legacy-named `ship_name` column stores the hull type, not the pilot-assigned ship name.
+- runs stores run metadata, system name, appraisal timestamp, raw inventory snapshots, and canonical `hull_name`. Schema v4 transactionally renames the v1.1.4 `ship_name` column without changing its hull-type values.
 - run_items stores gained, consumed, and lost appraisal rows.
 - run_tags and run_killmails store searchable tags and verified loss provenance.
 - run_fitting and run_implants store optional loss snapshots.
 - active_run_state stores one versioned recovery snapshot per character.
+
+Recovery snapshots use version 2 and `hull_name`. Schema v4 upgrades version 1 snapshots
+inside the same migration transaction. The CSV importer alone continues to accept the
+v1.1.4 `ship_name` header; all runtime payloads and new exports use `hull_name`.
 
 OAuth tokens and the Janice key are encrypted through Electron safeStorage
 before reaching settings. Plaintext fallback storage is rejected.

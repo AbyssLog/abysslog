@@ -102,7 +102,7 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     consumed_cost: 25,
     net_isk: 75,
     total_loss: 0,
-    ship_name: 'Gila',
+    hull_name: 'Gila',
     ship_class: 'Cruiser',
     system_id: 32_000_001,
     system_name: 'Abyssal #32000001',
@@ -130,14 +130,14 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     search: '  mutaplasmid  ',
     date_from: 1_700_000_000,
     date_to: 1_700_086_400,
-    ship: ' Gila ',
+    hull: ' Gila ',
     tag: ' Farm ',
   }), {
     character_id: 123,
     search: 'mutaplasmid',
     date_from: 1_700_000_000,
     date_to: 1_700_086_400,
-    ship: 'Gila',
+    hull: 'Gila',
     tag: 'Farm',
     limit: 5,
   });
@@ -206,7 +206,7 @@ test('run IPC payloads are schema-validated and sanitized', () => {
 
 test('active run recovery snapshots are bounded and state-consistent', () => {
   const snapshot = security.validateActiveRunSnapshot({
-    version: 1,
+    version: 2,
     state: 'in-abyss',
     run: {
       character_id: 123,
@@ -223,7 +223,7 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
       cargoAfter: '',
       droneBefore: 'Vespa II, 5',
       droneAfter: '',
-      ship_name: 'Gila',
+      hull_name: 'Gila',
       ship_class: 'Cruiser',
       fitting: [],
       implants: [],
@@ -269,7 +269,6 @@ test('ESI and OAuth responses are reduced to bounded schemas', () => {
     ignored: '<script>',
   }), {
     ship_item_id: 99,
-    ship_name: 'Reliable Gila',
     ship_type_id: 17_918,
   });
   assert.deepEqual(security.validateEsiAssets([{
@@ -474,6 +473,8 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   const appraisalJs = fs.readFileSync(path.join(projectRoot, 'src/shared/appraisal.js'), 'utf8');
   const historyJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/history-view.js'), 'utf8');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
+  const modalJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/modal-controller.js'), 'utf8');
+  const navigationJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/navigation-controller.js'), 'utf8');
   const esi = fs.readFileSync(path.join(projectRoot, 'src/main/esi.js'), 'utf8');
 
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
@@ -502,9 +503,9 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /appraisalHelpers\.appraiseSurvivedInventory/);
   assert.match(appraisalJs, /diffOptionalInventoryPastes/);
   assert.match(appraisalJs, /mergeInventoryItems\(cargo\.gained,\s*drones\.gained\)/);
-  assert.match(appJs, /MODAL_FOCUSABLE_SELECTOR/);
-  assert.match(appJs, /event\.key === 'Escape'/);
-  assert.match(appJs, /aria-current/);
+  assert.match(modalJs, /FOCUSABLE_SELECTOR/);
+  assert.match(modalJs, /event\.key === 'Escape'/);
+  assert.match(navigationJs, /aria-current/);
   assert.match(appJs, /aria-expanded/);
   assert.match(historyJs, /class="table-sort"/);
   assert.match(appJs, /function runUiTask/);
@@ -554,7 +555,14 @@ test('IPC bridge matches guarded main-process handlers', () => {
   ];
   const handlerSource = handlerSources.join('\n');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
-  const database = fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8');
+  const database = [
+    fs.readFileSync(path.join(projectRoot, 'src/main/database.js'), 'utf8'),
+    ...fs.readdirSync(path.join(projectRoot, 'src/main/database'))
+      .filter(name => name.endsWith('.js'))
+      .map(name => fs.readFileSync(path.join(projectRoot, 'src/main/database', name), 'utf8')),
+  ].join('\n');
+  const ipcGuard = fs.readFileSync(path.join(projectRoot, 'src/main/ipc-guard.js'), 'utf8');
+  const credentials = fs.readFileSync(path.join(projectRoot, 'src/main/credential-service.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
@@ -578,7 +586,8 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(main, /protocol\.handle\(APP_PROTOCOL_SCHEME/);
   assert.match(main, /await window\.loadURL\(APP_RENDERER_URL\)/);
   assert.doesNotMatch(main, /\.loadFile\(/);
-  assert.match(main, /if \(!validateIpcSender\(event\)\)/);
+  assert.match(main, /secureHandle: ipcGuard\.secureHandle/);
+  assert.match(ipcGuard, /if \(!validateSender\(event\)\)/);
   assert.match(main, /createDiagnostics\(\{/);
   assert.match(main, /uncaughtExceptionMonitor/);
   assert.match(main, /render-process-gone/);
@@ -593,7 +602,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'fitting'/);
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
-  assert.match(main, /clearTokens: characterId => db\.deleteSetting\(tokenKey\(characterId\)\)/);
+  assert.match(credentials, /database\.deleteSetting\(tokenKey\(characterId\)\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);
   assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);/);
   assert.match(main, /app\.on\('before-quit'[\s\S]*db\.createExitBackup\(\);[\s\S]*db\.close\(\);/);

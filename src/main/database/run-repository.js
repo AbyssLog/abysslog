@@ -1,4 +1,7 @@
+const { createFitRepository } = require('./fit-repository');
+const { runInTransaction } = require('./transaction');
 function createRunRepository(getDb) {
+  const fitRepository = createFitRepository(getDb);
   function database() {
     const connection = getDb();
     if (!connection) throw new Error('Database is not initialized');
@@ -64,7 +67,7 @@ function createRunRepository(getDb) {
     const {
       character_id, started_at, duration, tier, weather, outcome,
       loot_value, consumed_cost, net_isk, total_loss, system_id, system_name,
-      cargo_before, cargo_after, drone_before, drone_after, ship_name, ship_class, notes,
+      cargo_before, cargo_after, drone_before, drone_after, hull_name, ship_class, notes,
       tags = [], killmail_ids = [], appraised_at = null,
       items = [], fitting = [], implants = []
     } = runData;
@@ -72,7 +75,7 @@ function createRunRepository(getDb) {
     const insertRun = connection.prepare(
       'INSERT INTO runs (character_id, started_at, duration, tier, weather, outcome, '
       + 'loot_value, consumed_cost, net_isk, total_loss, system_id, system_name, '
-      + 'cargo_before, cargo_after, drone_before, drone_after, ship_name, ship_class, '
+      + 'cargo_before, cargo_after, drone_before, drone_after, hull_name, ship_class, '
       + 'notes, appraised_at) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
@@ -92,14 +95,14 @@ function createRunRepository(getDb) {
       + 'VALUES (?, ?, ?, ?, ?)'
     );
 
-    const transaction = connection.transaction(() => {
+    return runInTransaction(connection, () => {
       const info = insertRun.run(
         character_id, started_at, duration, tier, weather, outcome,
         loot_value || 0, consumed_cost || 0, net_isk || 0, total_loss || 0,
         system_id, system_name || null,
         cargo_before || null, cargo_after || null,
         drone_before || null, drone_after || null,
-        ship_name || null, ship_class || null, notes || null, appraised_at
+        hull_name || null, ship_class || null, notes || null, appraised_at
       );
       const runId = info.lastInsertRowid;
 
@@ -137,9 +140,8 @@ function createRunRepository(getDb) {
       return runId;
     });
 
-    return transaction();
-  }
 
+  }
   function saveActiveRun(snapshot) {
     database().prepare(
       'INSERT INTO active_run_state (character_id, snapshot, updated_at) '
@@ -170,14 +172,14 @@ function createRunRepository(getDb) {
 
   function completeActiveRun(runData) {
     const connection = database();
-    return connection.transaction(() => {
+    return runInTransaction(connection, () => {
       const existing = connection.prepare(
         'SELECT id FROM runs WHERE character_id = ? AND started_at = ? LIMIT 1'
       ).get(runData.character_id, runData.started_at);
       const runId = existing ? existing.id : saveRun(runData);
       clearActiveRun(runData.character_id);
       return runId;
-    })();
+    });
   }
 
   function getRuns(filters = {}) {
@@ -209,11 +211,19 @@ function createRunRepository(getDb) {
       query += ' AND r.started_at < ?';
       params.push(filters.date_to);
     }
-    if (filters.ship) {
-      const shipLike = escapeLike(filters.ship);
-      query += " AND (r.ship_name LIKE ? ESCAPE '\\' COLLATE NOCASE "
+    if (filters.hull) {
+      const hullLike = escapeLike(filters.hull);
+      query += " AND (r.hull_name LIKE ? ESCAPE '\\' COLLATE NOCASE "
         + "OR r.ship_class LIKE ? ESCAPE '\\' COLLATE NOCASE)";
-      params.push(shipLike, shipLike);
+      params.push(hullLike, hullLike);
+    }
+    if (filters.hull_name) {
+      query += ' AND r.hull_name = ? COLLATE NOCASE';
+      params.push(filters.hull_name);
+    }
+    if (filters.ship_class) {
+      query += ' AND r.ship_class = ?';
+      params.push(filters.ship_class);
     }
     if (filters.tag) {
       query += ' AND EXISTS (SELECT 1 FROM run_tags selected_tag '
@@ -224,7 +234,7 @@ function createRunRepository(getDb) {
       const searchLike = escapeLike(filters.search);
       const searchClauses = [
         "COALESCE(r.notes, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
-        "COALESCE(r.ship_name, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
+        "COALESCE(r.hull_name, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "COALESCE(r.ship_class, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "COALESCE(r.system_name, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "c.name LIKE ? ESCAPE '\\' COLLATE NOCASE",
@@ -252,12 +262,17 @@ function createRunRepository(getDb) {
     }
 
     query += ' ORDER BY r.started_at DESC, r.id DESC';
-    if (filters.limit) {
+    if (filters.limit && !filters.fit_reference_run_id) {
       query += ' LIMIT ?';
       params.push(filters.limit);
     }
 
-    return attachRunMetadata(database().prepare(query).all(...params), filters);
+    let runs = database().prepare(query).all(...params);
+    if (filters.fit_reference_run_id) {
+      runs = fitRepository.filterEquivalentRuns(runs, filters.fit_reference_run_id);
+      if (filters.limit) runs = runs.slice(0, filters.limit);
+    }
+    return attachRunMetadata(runs, filters);
   }
 
   function getRunById(runId) {
@@ -322,7 +337,7 @@ function createRunRepository(getDb) {
     duration,
     started_at,
     total_loss,
-    ship_name,
+    hull_name,
     ship_class,
     system_id,
     system_name,
@@ -332,7 +347,7 @@ function createRunRepository(getDb) {
     const result = database().prepare(
       'UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?, '
       + 'started_at = ?, total_loss = ?, '
-      + 'ship_name = COALESCE(?, ship_name), ship_class = COALESCE(?, ship_class), '
+      + 'hull_name = COALESCE(?, hull_name), ship_class = COALESCE(?, ship_class), '
       + 'system_id = COALESCE(?, system_id), system_name = COALESCE(?, system_name), '
       + 'notes = COALESCE(?, notes) WHERE id = ?'
     ).run(
@@ -342,7 +357,7 @@ function createRunRepository(getDb) {
       duration,
       started_at,
       total_loss || 0,
-      ship_name,
+      hull_name,
       ship_class,
       system_id,
       system_name,
@@ -403,7 +418,8 @@ function createRunRepository(getDb) {
   }
 
   function updateAppraisal(runId, appraisal) {
-    database().transaction(() => applyAppraisalUpdate(runId, appraisal))();
+    const connection = database();
+    runInTransaction(connection, () => applyAppraisalUpdate(runId, appraisal));
     return true;
   }
 
@@ -413,11 +429,12 @@ function createRunRepository(getDb) {
     if (hasCargo === hasAppraisal) {
       throw new TypeError('Run update requires exactly one cargo or appraisal update');
     }
-    database().transaction(() => {
+    const connection = database();
+    runInTransaction(connection, () => {
       applyMetaUpdate(runId, meta);
       if (hasAppraisal) applyAppraisalUpdate(runId, appraisal);
       else applyCargoUpdate(runId, cargo);
-    })();
+    });
     return true;
   }
 

@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { parseCsv } = require('../src/shared/csv');
+const { buildCharacter } = require('./support/builders');
 
 const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'abysslog-db-test-'));
 const originalLoad = Module._load;
@@ -72,7 +73,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   database.hardenSensitiveStorage();
 
   const exitStatus = database.createExitBackup();
-  assert.equal(exitStatus.schemaVersion, 3);
+  assert.equal(exitStatus.schemaVersion, 4);
   const migratedRun = database.getRuns({ character_id: 8999 })[0];
   assert.equal(migratedRun.notes, 'Created by the original schema');
   assert.equal(migratedRun.cargo_before, null);
@@ -130,7 +131,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     tier: 'T4',
     weather: 'Electrical',
     outcome: 'Survived',
-    ship_name: 'Gila',
+    hull_name: 'Gila',
     ship_class: 'Cruiser',
     loot_value: 125,
     consumed_cost: 25,
@@ -149,7 +150,9 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   };
   database.saveRun(sourceRun);
 
-  const csv = database.exportRunsCSV(9001);
+  const exported = database.exportRunsCSV({ character_id: 9001 });
+  const csv = exported.csv;
+  assert.equal(exported.count, 1);
   const parsed = parseCsv(csv);
   assert.equal(parsed[0].includes('character_id'), true);
   assert.equal(parsed[1][parsed[0].indexOf('cargo_before')], `'${
@@ -175,7 +178,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     'tier',
     'weather',
     'outcome',
-    'ship_name',
+    'hull_name',
     'ship_class',
     'system_id',
     'system_name',
@@ -195,7 +198,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
   assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
-    schemaVersion: 3,
+    schemaVersion: 4,
     characterCount: 4,
     runCount: 3,
     size: fs.statSync(manualStatus.filePath).size,
@@ -248,7 +251,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   );
 
   const restoreResult = database.restoreBackup(manualStatus.filePath);
-  assert.equal(restoreResult.schemaVersion, 3);
+  assert.equal(restoreResult.schemaVersion, 4);
   assert.equal(restoreResult.characterCount, 4);
   assert.equal(restoreResult.runCount, 3);
   assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
@@ -303,7 +306,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     cargo_after: 'Triglavian Survey Database, 2',
     drone_before: activeSnapshot.run.droneBefore,
     drone_after: activeSnapshot.run.droneBefore,
-    ship_name: 'Gila',
+    hull_name: 'Gila',
     ship_class: 'Cruiser',
     items: [],
     fitting: [],
@@ -400,7 +403,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
     cargo_after: 'Triglavian Survey Database, 1',
     drone_before: 'Vespa II, 5',
     drone_after: 'Vespa II, 5',
-    ship_name: 'Gila',
+    hull_name: 'Gila',
     ship_class: 'Cruiser',
     items: [{
       item_name: 'Triglavian Survey Database',
@@ -419,7 +422,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
     duration: 700,
     started_at: 1_710_000_100,
     total_loss: 0,
-    ship_name: null,
+    hull_name: null,
     ship_class: 'Cruiser',
   };
   const changedAppraisal = {
@@ -502,7 +505,7 @@ test('history search finds rich metadata and all item names', () => {
     tier: 'T5',
     weather: 'Gamma',
     outcome: 'Survived',
-    ship_name: 'Ishtar',
+    hull_name: 'Ishtar',
     ship_class: 'Cruiser',
     system_id: 32_000_456,
     system_name: 'Abyssal #32000456',
@@ -576,7 +579,7 @@ test('statistics include death losses and apply consistent date ranges', () => {
     duration: 100,
     tier: 'T4',
     weather: 'Electrical',
-    ship_name: 'Gila',
+    hull_name: 'Gila',
     ship_class: 'Cruiser',
     loot_value: 0,
     consumed_cost: 0,
@@ -631,9 +634,9 @@ test('statistics include death losses and apply consistent date ranges', () => {
   assert.equal(stats.byTier[0].avg_duration, 100);
   assert.equal(stats.byWeather[0].avg_net_isk, 25);
   assert.equal(stats.byWeather[0].avg_duration, 100);
-  assert.equal(stats.byShip[0].ship_name, 'Gila');
-  assert.equal(stats.byShip[0].total_runs, 2);
-  assert.equal(stats.byShip[0].avg_duration, 100);
+  assert.equal(stats.byHull[0].hull_name, 'Gila');
+  assert.equal(stats.byHull[0].total_runs, 2);
+  assert.equal(stats.byHull[0].avg_duration, 100);
   assert.equal(stats.byFit[0].total_runs, 2);
   assert.equal(stats.byFit[0].avg_duration, 100);
   assert.equal(Number(stats.byFit[0].representative_run_id), Number(representativeFitRunId));
@@ -753,13 +756,13 @@ test('cleared inventory baselines stay cleared until a newer survived run', () =
   assert.equal(database.getInventoryBaseline(9040).id, secondRunId);
 });
 
-test('fit statistics merge custom ship names and equivalent slot layouts', () => {
-  database.saveCharacter({
+test('fit statistics merge equivalent module layouts and captured hulls', () => {
+  database.saveCharacter(buildCharacter({
     id: 9012,
     name: 'Fit Pilot',
     portrait_url: '',
     client_id: 'fit-client',
-  });
+  }));
   const baseRun = {
     character_id: 9012,
     started_at: 1_735_732_800,
@@ -779,9 +782,9 @@ test('fit statistics merge custom ship names and equivalent slot layouts', () =>
     items: [],
     implants: [{ type_id: 22_101, type_name: 'Mid-grade Crystal Alpha', slot: 1 }],
   };
-  database.saveRun({
+  const firstRunId = database.saveRun({
     ...baseRun,
-    ship_name: 'First Custom Name',
+    hull_name: 'Gila',
     fitting: [
       { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
       { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 4, slot: 'HiSlot0' },
@@ -792,7 +795,7 @@ test('fit statistics merge custom ship names and equivalent slot layouts', () =>
     ...baseRun,
     started_at: baseRun.started_at + 900,
     weather: 'Gamma',
-    ship_name: 'Second Custom Name',
+    hull_name: 'Gila',
     fitting: [
       { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
       { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 2, slot: 'HiSlot1' },
@@ -800,11 +803,56 @@ test('fit statistics merge custom ship names and equivalent slot layouts', () =>
       { type_id: 21_638, type_name: 'Vespa II', qty: 5, slot: 'DroneBay' },
     ],
   });
+  database.saveRun({
+    ...baseRun,
+    started_at: baseRun.started_at + 1800,
+    weather: 'Dark',
+    hull_name: 'Gila',
+    implants: [{ type_id: 22_201, type_name: 'Mid-grade Asklepian Alpha', slot: 1 }],
+    fitting: [
+      { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
+      { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 4, slot: 'HiSlot0' },
+      { type_id: 21_638, type_name: 'Vespa II', qty: 5, slot: 'DroneBay' },
+    ],
+  });
+
+
 
   const fits = database.getStats({ character_id: 9012 }).byFit;
-  assert.equal(fits.length, 1);
+  assert.equal(fits.length, 2);
   assert.equal(fits[0].total_runs, 2);
   assert.equal(fits[0].avg_duration, 600);
-  assert.equal(fits[0].ship_name, 'Gila');
+  assert.equal(fits[0].hull_name, 'Gila');
   assert.equal(Number(fits[0].representative_run_id), Number(latestRunId));
+  assert.deepEqual(
+    database.getRuns({ character_id: 9012, fit_reference_run_id: latestRunId }).map(run => run.id),
+    [latestRunId, firstRunId]
+  );
+});
+
+test('CSV import accepts the v1.1.4 ship_name header while new exports use hull_name', () => {
+  database.saveCharacter({
+    id: 9013,
+    name: 'Legacy CSV Pilot',
+    portrait_url: '',
+    client_id: 'legacy-csv-client',
+  });
+  const legacyCsv = [
+    'started_at,tier,weather,outcome,ship_name,ship_class',
+    '1735732800,T4,Electrical,Survived,Gila,Cruiser',
+  ].join('\n');
+
+  assert.deepEqual(database.importRunsCSV(legacyCsv, 9013), {
+    imported: 1,
+    skipped: 0,
+    errors: [],
+  });
+  const run = database.getRuns({ character_id: 9013 })[0];
+  assert.equal(run.hull_name, 'Gila');
+  assert.equal('ship_name' in run, false);
+
+  const exported = database.exportRunsCSV({ character_id: 9013 });
+  const headers = parseCsv(exported.csv)[0];
+  assert.equal(headers.includes('hull_name'), true);
+  assert.equal(headers.includes('ship_name'), false);
 });

@@ -12,7 +12,7 @@ const run = {
   started_at: Date.parse('2026-07-28T10:30:00Z') / 1000,
   tier: 'T5',
   weather: 'Exotic',
-  ship_name: 'Gila',
+  hull_name: 'Gila',
   fitting: [
     { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull' },
     { type_id: 33_201, type_name: 'Rapid Light Missile Launcher II', qty: 1, slot: 'HiSlot1' },
@@ -86,7 +86,7 @@ test('EFT export requires a captured hull and sanitizes generated lines', () => 
   );
 
   const result = fitting.createEftExport({
-    ship_name: 'Gila\nInjected',
+    hull_name: 'Gila\nInjected',
     tier: 'T4\nBad',
     weather: 'Dark',
     fitting: [],

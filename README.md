@@ -16,6 +16,8 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Loadout presets** - save, edit, and apply reusable cargo and drone inventories using item names and quantities only
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
 - **Run history search** — search notes, tags, systems, ships, and specific loot, consumed, or lost item names; combine text with date, tier, weather, outcome, ship, and tag filters
+- **Statistics drill-through** - open History from tier, weather, hull, or captured-fit rows with the exact filter and date range visible and easy to clear
+- **Filtered CSV export** - export the active History results, with the dialog and completion message distinguishing filtered history from all history
 - **Statistics** — survival rate, death-adjusted profit/hour, latest automatic session summary, and breakdowns by tier, weather, ship, captured fit, and item
 - **Statistics ranges** - view all time, rolling last hour, today, recent-day, current-month, or custom-date results
 - **Multi-character** — add multiple characters, switch between them
