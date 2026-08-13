@@ -25,7 +25,11 @@ function createFitIdentity(fittingItems, implants) {
   }
   for (const implant of grouped.implants) entries.push(itemIdentity(implant));
   const signature = entries.sort().join('|');
-  return Object.freeze({ signature, key: fingerprint(signature) });
+  return Object.freeze({
+    signature,
+    key: fingerprint(signature),
+    hull_name: grouped.hull.name,
+  });
 }
 
 module.exports = { createFitIdentity };

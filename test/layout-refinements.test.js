@@ -10,6 +10,10 @@ const html = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'index.ht
 const styles = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'styles', 'app.css'), 'utf8');
 const appJs = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
 const editorJs = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'inventory-editor.js'), 'utf8');
+const runDetailsJs = fs.readFileSync(
+  path.join(projectRoot, 'src', 'renderer', 'run-details-controller.js'),
+  'utf8'
+);
 
 test('empty survived post-run drone snapshots display the pre-run bay as unchanged', () => {
   assert.deepEqual(
@@ -29,17 +33,18 @@ test('empty survived post-run drone snapshots display the pre-run bay as unchang
 test('tracker places Run Setup after Recent Runs and history uses balanced inventory cards', () => {
   assert.match(appJs, /function initializeTrackerLayout\(\)/);
   assert.match(appJs, /recentRunsPanel\.after\(runSetup\)/);
-  assert.equal((appJs.match(/class="run-detail-inventory-card"/g) || []).length, 6);
+  assert.equal((runDetailsJs.match(/class="run-detail-inventory-card"/g) || []).length, 6);
   assert.match(styles, /\.run-detail-inventory-card \{[^}]*display: flex/s);
   assert.match(styles, /\.inventory-unchanged-badge/);
 });
 
 test('unchanged drone fallback remains visual until edited and clipboard wording is explicit', () => {
-  assert.match(appJs, /data-inventory-fallback="unchanged"/);
-  assert.match(appJs, /dataset\.inventoryFallback === 'unchanged'/);
+  assert.match(runDetailsJs, /data-inventory-fallback="unchanged"/);
+  assert.match(runDetailsJs, /dataset\.inventoryFallback === 'unchanged'/);
   assert.match(appJs, /delete element\.dataset\.inventoryFallback/);
   assert.match(editorJs, /'Paste Clipboard'/);
   assert.doesNotMatch(editorJs, /'Paste from EVE'/);
+  assert.match(runDetailsJs, /Implants are included as cargo/);
 });
 
 test('Statistics precedes History in the primary navigation', () => {
@@ -47,6 +52,13 @@ test('Statistics precedes History in the primary navigation', () => {
   const history = html.indexOf('data-page="history"');
   assert.ok(statistics >= 0);
   assert.ok(history > statistics);
+});
+
+test('History is the single run CSV export location', () => {
+  assert.match(html, /data-action="history-export-csv"/);
+  assert.doesNotMatch(html, /data-action="export-csv"/);
+  assert.match(html, /Export run history from the History tab/);
+  assert.match(html, /data-action="import-csv"/);
 });
 
 test('statistics tables use one fixed seven-column grid and uniform weather badges', () => {

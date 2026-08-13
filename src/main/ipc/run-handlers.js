@@ -65,6 +65,14 @@ function registerRunHandlers({
       omittedItemCount: exported.omittedItemCount,
     };
   });
+  secureHandle('fits:set-display-name', (fitIdentityId, displayName) => {
+    const id = security.requireInteger(fitIdentityId, 'Fit identity ID');
+    const name = displayName == null
+      ? null
+      : security.requireTrimmedText(displayName, 'Fit display name', 80);
+    return database.setFitDisplayName(id, name);
+  });
+
   secureHandle('runs:delete', runId =>
     database.deleteRun(security.requireInteger(runId, 'Run ID')));
   secureHandle('runs:get-inventory-baseline', characterId => {

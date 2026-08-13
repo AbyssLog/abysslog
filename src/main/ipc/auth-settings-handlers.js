@@ -14,8 +14,8 @@ function registerAuthSettingsHandlers({
   validateObjectPayload,
   getSecureStorageStatus,
   getJaniceApiKey,
-  janiceSecretKey,
-  encryptSecret,
+  saveJaniceApiKey,
+  deleteJaniceApiKey,
   recordDiagnostic,
 }) {
   secureHandle('auth:get-characters', () => database.getCharacters());
@@ -57,17 +57,8 @@ function registerAuthSettingsHandlers({
 
   secureHandle('secrets:status', () => getSecureStorageStatus());
   secureHandle('secrets:has-janice-key', () => Boolean(getJaniceApiKey()));
-  secureHandle('secrets:set-janice-key', apiKey => {
-    const key = security.requireTrimmedText(apiKey, 'Janice API key', 4096);
-    database.setSetting(janiceSecretKey, encryptSecret(key));
-    database.deleteSetting('janice_api_key');
-    return true;
-  });
-  secureHandle('secrets:delete-janice-key', () => {
-    database.deleteSetting(janiceSecretKey);
-    database.deleteSetting('janice_api_key');
-    return true;
-  });
+  secureHandle('secrets:set-janice-key', apiKey => saveJaniceApiKey(apiKey));
+  secureHandle('secrets:delete-janice-key', () => deleteJaniceApiKey());
 }
 
 module.exports = { registerAuthSettingsHandlers };

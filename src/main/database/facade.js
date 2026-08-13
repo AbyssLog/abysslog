@@ -1,5 +1,6 @@
 const { createBackupService } = require('./backup-service');
 const { createCharacterSettingsRepository } = require('./character-settings-repository');
+const { createCredentialRepository } = require('./credential-repository');
 const { createDatabaseLifecycle } = require('./lifecycle-service');
 const { createInventoryBaselineRepository } = require('./inventory-baseline-repository');
 const { createRunCsvRepository } = require('./run-csv-repository');
@@ -10,6 +11,7 @@ const lifecycle = createDatabaseLifecycle();
 const getConnection = () => lifecycle.getConnection();
 
 const characterSettings = createCharacterSettingsRepository(getConnection);
+const credentials = createCredentialRepository(getConnection);
 const inventoryBaselines = createInventoryBaselineRepository(getConnection, characterSettings);
 const runRepository = createRunRepository(getConnection);
 const statisticsRepository = createStatisticsRepository(getConnection);
@@ -38,6 +40,10 @@ module.exports = Object.freeze({
   getSetting: characterSettings.getSetting,
   setSetting: characterSettings.setSetting,
   deleteSetting: characterSettings.deleteSetting,
+  getCredential: credentials.getCredential,
+  setCredential: credentials.setCredential,
+  deleteCredential: credentials.deleteCredential,
+  listCredentialsNeedingNormalization: credentials.listCredentialsNeedingNormalization,
   getInventoryBaseline: inventoryBaselines.getInventoryBaseline,
   clearInventoryBaseline: inventoryBaselines.clearInventoryBaseline,
   saveRun: runRepository.saveRun,
@@ -45,6 +51,7 @@ module.exports = Object.freeze({
   getActiveRun: runRepository.getActiveRun,
   clearActiveRun: runRepository.clearActiveRun,
   completeActiveRun: runRepository.completeActiveRun,
+  setFitDisplayName: runRepository.setFitDisplayName,
   updateAppraisal: runRepository.updateAppraisal,
   updateRun: runRepository.updateRun,
   getRuns: runRepository.getRuns,

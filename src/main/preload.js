@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld('api', {
     getById: runId => ipcRenderer.invoke('runs:get-by-id', runId),
     copyFitting: runId => ipcRenderer.invoke('runs:copy-fitting', runId),
     delete: runId => ipcRenderer.invoke('runs:delete', runId),
+    setFitDisplayName: (fitIdentityId, displayName) =>
+      ipcRenderer.invoke('fits:set-display-name', fitIdentityId, displayName),
     getInventoryBaseline: characterId =>
       ipcRenderer.invoke('runs:get-inventory-baseline', characterId),
     clearInventoryBaseline: (characterId, runId) =>

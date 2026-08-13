@@ -476,6 +476,12 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   const modalJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/modal-controller.js'), 'utf8');
   const navigationJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/navigation-controller.js'), 'utf8');
   const esi = fs.readFileSync(path.join(projectRoot, 'src/main/esi.js'), 'utf8');
+  const loadoutControllerJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/loadout-controller.js'), 'utf8');
+  const supportSettingsJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/support-settings-controller.js'), 'utf8');
+  const uiTaskJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/ui-task-controller.js'), 'utf8');
+  const runDetailsJs = fs.readFileSync(
+    path.join(projectRoot, 'src/renderer/run-details-controller.js'), 'utf8'
+  );
 
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
   const scriptDirective = csp.split(';').map(part => part.trim()).find(part => part.startsWith('script-src'));
@@ -493,14 +499,14 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(appJs, /restoreInventoryBaseline/);
   assert.match(appJs, /window\.api\.runs\.getInventoryBaseline/);
   assert.match(appJs, /window\.api\.runs\.clearInventoryBaseline/);
-  assert.match(appJs, /window\.api\.loadouts\.save/);
-  assert.match(appJs, /createPresetFromInventoryText/);
+  assert.match(loadoutControllerJs, /api\.loadouts\.save/);
+  assert.match(loadoutControllerJs, /createPresetFromInventoryText/);
   assert.match(html, /src="\.\.\/shared\/appraisal\.js"/);
   assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
   assert.match(appJs, /editOriginal\?\.total_loss\s*\|\|\s*0/);
   assert.match(appJs, /drone_before:\s*droneBefore/);
-  assert.match(appJs, /appraisalHelpers\.appraiseSurvivedInventory/);
+  assert.match(runDetailsJs, /appraisalHelpers\.appraiseSurvivedInventory/);
   assert.match(appraisalJs, /diffOptionalInventoryPastes/);
   assert.match(appraisalJs, /mergeInventoryItems\(cargo\.gained,\s*drones\.gained\)/);
   assert.match(modalJs, /FOCUSABLE_SELECTOR/);
@@ -508,11 +514,11 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(navigationJs, /aria-current/);
   assert.match(appJs, /aria-expanded/);
   assert.match(historyJs, /class="table-sort"/);
-  assert.match(appJs, /function runUiTask/);
-  assert.match(appJs, /Promise\.resolve\(\)\s*\.then\(operation\)/);
+  assert.match(uiTaskJs, /function runUiTask/);
+  assert.match(uiTaskJs, /Promise\.resolve\(\)\s*\.then\(operation\)/);
   assert.match(appJs, /window\.addEventListener\('unhandledrejection'/);
   assert.match(appJs, /'unhandled-rejection'/);
-  assert.match(appJs, /window\.api\.diagnostics\.copySummary/);
+  assert.match(supportSettingsJs, /api\.diagnostics\.copySummary/);
   assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
   assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
   assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
@@ -602,9 +608,9 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'fitting'/);
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'killmails'/);
   assert.match(main, /tokens\.scopes = transaction\.scopes/);
-  assert.match(credentials, /database\.deleteSetting\(tokenKey\(characterId\)\)/);
+  assert.match(credentials, /database\.deleteCredential\(OAUTH_CREDENTIAL_KIND, safeCharacterId\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);
-  assert.match(main, /if \(!db\.getSetting\('janice_api_key'\)\) \{[\s\S]*db\.hardenSensitiveStorage\(\);/);
+  assert.match(main, /credentialService\.normalizeMigratedCredentials\(\);[\s\S]*db\.hardenSensitiveStorage\(\);/);
   assert.match(main, /app\.on\('before-quit'[\s\S]*db\.createExitBackup\(\);[\s\S]*db\.close\(\);/);
   assert.match(database, /function createExitBackup\(\)[\s\S]*replaceExisting: true/);
   assert.doesNotMatch(main, /finishStartup|runs:get-recent-isk-per-hour/);

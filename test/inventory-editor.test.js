@@ -87,7 +87,9 @@ test('tracker and historical details use responsive, purpose-built layouts', () 
   const projectRoot = path.join(__dirname, '..');
   const html = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'styles', 'app.css'), 'utf8');
-  const appJs = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+  const runDetailsJs = fs.readFileSync(
+    path.join(projectRoot, 'src', 'renderer', 'run-details-controller.js'), 'utf8'
+  );
 
   assert.match(html, /class="tracker-workspace"/);
   assert.match(html, /class="tracker-sidebar" aria-label="Run overview"/);
@@ -95,8 +97,8 @@ test('tracker and historical details use responsive, purpose-built layouts', () 
   assert.match(styles, /.run-detail-actions {[^}]*position: sticky/s);
   assert.match(styles, /@media \(max-width: 1080px\)/);
   assert.match(styles, /\.tracker-grid \{ grid-template-columns: 1fr; \}/);
-  assert.match(appJs, /class="run-detail-summary"/);
-  assert.match(appJs, /class="run-detail-appraisals"/);
-  assert.match(appJs, /class="run-detail-inventory-grid"/);
-  assert.match(appJs, /class="run-detail-actions"/);
+  assert.match(runDetailsJs, /class="run-detail-summary"/);
+  assert.match(runDetailsJs, /class="run-detail-appraisals"/);
+  assert.match(runDetailsJs, /class="run-detail-inventory-grid"/);
+  assert.match(runDetailsJs, /class="run-detail-actions"/);
 });

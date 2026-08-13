@@ -687,7 +687,7 @@
     assertAllowedKeys(value, 'Run filters', new Set([
       'character_id', 'tier', 'weather', 'outcome', 'limit',
       'search', 'date_from', 'date_to', 'hull', 'hull_name', 'ship_class',
-      'fit_reference_run_id', 'tag',
+      'fit_identity_id', 'tag',
     ]));
     const filters = {};
     if (value.character_id != null && value.character_id !== '') {
@@ -723,8 +723,8 @@
     if (value.ship_class) {
       filters.ship_class = requireEnum(value.ship_class, 'Hull class filter', SHIP_CLASSES);
     }
-    if (value.fit_reference_run_id != null) {
-      filters.fit_reference_run_id = requireInteger(value.fit_reference_run_id, 'Fit run ID');
+    if (value.fit_identity_id != null) {
+      filters.fit_identity_id = requireInteger(value.fit_identity_id, 'Fit identity ID');
     }
     if (value.tag != null && String(value.tag).trim()) {
       filters.tag = requireTrimmedText(value.tag, 'Tag filter', 48);

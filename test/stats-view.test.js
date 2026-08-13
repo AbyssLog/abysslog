@@ -90,7 +90,9 @@ test('statistics fit rows link to the captured fit and implants dialog', async (
     byTier: [],
     byWeather: [],
     byFit: [{
+      fit_identity_id: 7,
       fit_key: 'abc12345',
+      display_name: 'Gamma Runner',
       representative_run_id: 42,
       hull_name: 'Gila',
       total_runs: 3,
@@ -107,7 +109,10 @@ test('statistics fit rows link to the captured fit and implants dialog', async (
   assert.match(html, /class="analytics-fit-link"/);
   assert.match(html, /data-action="show-ship-setup"/);
   assert.match(html, /data-run-id="42" data-return-modal="none"/);
-  assert.match(html, /View Gila fit #abc12345 details/);
+  assert.match(html, /View Gamma Runner details/);
+  assert.match(html, /data-drill-group="fit" data-drill-value="7"/);
+  assert.match(html, /data-fit-identity-id="7"/);
+  assert.match(html, />Rename<\/button>/);
   assert.doesNotMatch(html, /<th>Weather<\/th>/);
   assert.doesNotMatch(html, /weather-badge-group/);
 });
@@ -125,6 +130,7 @@ test('statistics grouped tables share metric columns and combine ship metadata',
     byWeather: [{ weather: 'Exotic', ...metrics }],
     byHull: [{ hull_name: 'Gila', ship_class: 'Cruiser', ...metrics }],
     byFit: [{
+      fit_identity_id: 7,
       fit_key: 'abc12345',
       representative_run_id: 42,
       hull_name: 'Gila',
@@ -199,8 +205,20 @@ test('statistics drill-through preserves the selected date range and exact group
     },
   });
 
+  view.openHistory({
+    dataset: {
+      drillGroup: 'fit',
+      drillValue: '7',
+      drillLabel: 'Fit: Gamma Runner',
+      drillShipClass: '',
+    },
+  });
+
   assert.deepEqual(drillCalls, [{
     filters: { date_from: 100, date_to: 200, tier: 'T5' },
     labels: ['Tier: T5', 'Date range: Last 30 days'],
+  }, {
+    filters: { date_from: 100, date_to: 200, fit_identity_id: 7 },
+    labels: ['Fit: Gamma Runner', 'Date range: Last 30 days'],
   }]);
 });

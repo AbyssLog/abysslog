@@ -1,11 +1,12 @@
 const SECRET_PREFIX = 'safe:v1:';
-const JANICE_SECRET_KEY = 'secret_janice_api_key';
+const OAUTH_CREDENTIAL_KIND = 'oauth';
+const JANICE_CREDENTIAL_KIND = 'janice';
 
 function createCredentialService({
   safeStorage,
   database,
   security,
-  legacyOAuthScopes = [],
+  migratedOAuthScopes = [],
   platform = process.platform,
 }) {
   if (!safeStorage || !database || !security) {
@@ -43,6 +44,17 @@ function createCredentialService({
   }
 
   function decryptSecret(stored) {
+    if (!stored || !stored.startsWith(SECRET_PREFIX) || !isSecureStorageAvailable()) return null;
+    try {
+      return safeStorage.decryptString(
+        Buffer.from(stored.slice(SECRET_PREFIX.length), 'base64')
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function decryptMigratedSecret(stored) {
     if (!stored || !isSecureStorageAvailable()) return null;
     try {
       const encoded = stored.startsWith(SECRET_PREFIX)
@@ -54,78 +66,106 @@ function createCredentialService({
     }
   }
 
-  function tokenKey(characterId) {
-    return `tokens_${security.requireInteger(characterId, 'Character ID')}`;
-  }
-
-  function saveTokens(characterId, tokens) {
+  function normalizeTokens(tokens, { allowExpired = false } = {}) {
     if (!security.isPlainObject(tokens)) throw new TypeError('OAuth token response is invalid');
-    const safeTokens = {
+    return {
       access_token: security.requireString(tokens.access_token, 'Access token', 16 * 1024),
       refresh_token: security.requireString(tokens.refresh_token, 'Refresh token', 16 * 1024),
       expires_at: security.requireInteger(tokens.expires_at, 'Token expiry', {
-        min: Date.now() - 60_000,
+        min: allowExpired ? 0 : Date.now() - 60_000,
         max: Number.MAX_SAFE_INTEGER,
       }),
-      scopes: security.validateEsiScopes(tokens.scopes),
+      scopes: tokens.scopes == null
+        ? [...migratedOAuthScopes]
+        : security.validateEsiScopes(tokens.scopes),
     };
-    database.setSetting(tokenKey(characterId), encryptSecret(JSON.stringify(safeTokens)));
+  }
+
+  function saveTokens(characterId, tokens) {
+    const safeCharacterId = security.requireInteger(characterId, 'Character ID');
+    const safeTokens = normalizeTokens(tokens);
+    database.setCredential(
+      OAUTH_CREDENTIAL_KIND,
+      safeCharacterId,
+      encryptSecret(JSON.stringify(safeTokens))
+    );
   }
 
   function loadTokens(characterId) {
-    const json = decryptSecret(database.getSetting(tokenKey(characterId)));
+    const safeCharacterId = security.requireInteger(characterId, 'Character ID');
+    const json = decryptSecret(database.getCredential(OAUTH_CREDENTIAL_KIND, safeCharacterId));
     if (!json) return null;
     try {
-      const tokens = JSON.parse(json);
-      if (!security.isPlainObject(tokens)) return null;
-      return {
-        access_token: security.requireString(tokens.access_token, 'Access token', 16 * 1024),
-        refresh_token: security.requireString(tokens.refresh_token, 'Refresh token', 16 * 1024),
-        expires_at: security.requireInteger(tokens.expires_at, 'Token expiry', {
-          min: 0,
-          max: Number.MAX_SAFE_INTEGER,
-        }),
-        scopes: tokens.scopes == null
-          ? [...legacyOAuthScopes]
-          : security.validateEsiScopes(tokens.scopes),
-      };
+      return normalizeTokens(JSON.parse(json), { allowExpired: true });
     } catch {
       return null;
     }
   }
 
   function clearTokens(characterId) {
-    return database.deleteSetting(tokenKey(characterId));
+    const safeCharacterId = security.requireInteger(characterId, 'Character ID');
+    return database.deleteCredential(OAUTH_CREDENTIAL_KIND, safeCharacterId);
   }
 
-  function migrateLegacyJaniceKey() {
-    const legacyKey = database.getSetting('janice_api_key');
-    if (!legacyKey) return;
-    if (database.getSetting(JANICE_SECRET_KEY)) {
-      database.deleteSetting('janice_api_key');
-      return;
-    }
-    if (!isSecureStorageAvailable()) return;
-    database.setSetting(JANICE_SECRET_KEY, encryptSecret(legacyKey));
-    database.deleteSetting('janice_api_key');
+  function saveJaniceApiKey(apiKey) {
+    const key = security.requireTrimmedText(apiKey, 'Janice API key', 4096);
+    return database.setCredential(JANICE_CREDENTIAL_KIND, null, encryptSecret(key));
+  }
+
+  function deleteJaniceApiKey() {
+    return database.deleteCredential(JANICE_CREDENTIAL_KIND, null);
   }
 
   function getJaniceApiKey() {
-    return decryptSecret(database.getSetting(JANICE_SECRET_KEY));
+    return decryptSecret(database.getCredential(JANICE_CREDENTIAL_KIND, null));
+  }
+
+  function normalizeMigratedCredentials() {
+    if (!isSecureStorageAvailable()) return false;
+
+    const migrated = database.listCredentialsNeedingNormalization();
+    for (const record of migrated) {
+      const plaintext = decryptMigratedSecret(record.ciphertext);
+      if (!plaintext) continue;
+      try {
+        if (record.kind === OAUTH_CREDENTIAL_KIND) {
+          const tokens = normalizeTokens(JSON.parse(plaintext), { allowExpired: true });
+          database.setCredential(
+            OAUTH_CREDENTIAL_KIND,
+            record.character_id,
+            encryptSecret(JSON.stringify(tokens))
+          );
+        } else if (record.kind === JANICE_CREDENTIAL_KIND) {
+          database.setCredential(
+            JANICE_CREDENTIAL_KIND,
+            null,
+            encryptSecret(plaintext)
+          );
+        }
+      } catch {
+        // Preserve unreadable v4 ciphertext for manual recovery from the pre-migration backup.
+      }
+    }
+    return true;
   }
 
   return Object.freeze({
     clearTokens,
-    decryptSecret,
+    deleteJaniceApiKey,
     encryptSecret,
     getJaniceApiKey,
     getSecureStorageStatus,
     isSecureStorageAvailable,
     loadTokens,
-    migrateLegacyJaniceKey,
+    normalizeMigratedCredentials,
+    saveJaniceApiKey,
     saveTokens,
-    tokenKey,
   });
 }
 
-module.exports = { JANICE_SECRET_KEY, SECRET_PREFIX, createCredentialService };
+module.exports = {
+  JANICE_CREDENTIAL_KIND,
+  OAUTH_CREDENTIAL_KIND,
+  SECRET_PREFIX,
+  createCredentialService,
+};

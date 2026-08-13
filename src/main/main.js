@@ -27,7 +27,7 @@ const { registerSupportHandlers } = require('./ipc/support-handlers');
 const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
-const { JANICE_SECRET_KEY, createCredentialService } = require('./credential-service');
+const { createCredentialService } = require('./credential-service');
 const { createIpcGuard } = require('./ipc-guard');
 const janice = require('./janice');
 const { createUpdateService } = require('./update-service');
@@ -36,7 +36,7 @@ const security = require('../shared/security');
 
 const CLIENT_ID = 'c74d7418579645ebbad0665c93e47900';
 const OAUTH_REDIRECT_URI = 'eveauth-abysslog://callback';
-const LEGACY_OAUTH_SCOPES = [
+const MIGRATED_V4_OAUTH_SCOPES = [
   'esi-location.read_location.v1',
   'esi-location.read_ship_type.v1',
   'esi-location.read_online.v1',
@@ -50,7 +50,7 @@ const credentialService = createCredentialService({
   safeStorage,
   database: db,
   security,
-  legacyOAuthScopes: LEGACY_OAUTH_SCOPES,
+  migratedOAuthScopes: MIGRATED_V4_OAUTH_SCOPES,
 });
 
 let mainWindow;
@@ -436,10 +436,8 @@ if (!gotTheLock) {
     registerAppProtocol();
     recordDiagnostic('startup.phase', { phase: 'database' });
     db.init();
-    credentialService.migrateLegacyJaniceKey();
-    if (!db.getSetting('janice_api_key')) {
-      db.hardenSensitiveStorage();
-    }
+    credentialService.normalizeMigratedCredentials();
+    db.hardenSensitiveStorage();
     recordDiagnostic('startup.phase', { phase: 'window' });
     await createWindow();
     recordDiagnostic('startup.complete', { source: 'main' });
@@ -467,10 +465,8 @@ app.on('before-quit', () => {
   if (startupComplete && !exitBackupAttempted) {
     exitBackupAttempted = true;
     try {
-      if (!db.getSetting('janice_api_key')) {
-        db.createExitBackup();
-        recordDiagnostic('backup.verified', { source: 'clean-exit' });
-      }
+      db.createExitBackup();
+      recordDiagnostic('backup.verified', { source: 'clean-exit' });
     } catch (error) {
       recordDiagnosticFailure('backup.failure', { source: 'clean-exit' }, error);
     }
@@ -508,8 +504,8 @@ registerAuthSettingsHandlers({
   validateObjectPayload: ipcGuard.validateObjectPayload,
   getSecureStorageStatus: credentialService.getSecureStorageStatus,
   getJaniceApiKey: credentialService.getJaniceApiKey,
-  janiceSecretKey: JANICE_SECRET_KEY,
-  encryptSecret: credentialService.encryptSecret,
+  saveJaniceApiKey: credentialService.saveJaniceApiKey,
+  deleteJaniceApiKey: credentialService.deleteJaniceApiKey,
   recordDiagnostic,
 });
 

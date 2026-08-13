@@ -24,6 +24,11 @@ const rendererScripts = [
   'src/renderer/navigation-controller.js',
   'src/renderer/modal-controller.js',
   'src/renderer/ui-formatters.js',
+  'src/renderer/loadout-controller.js',
+  'src/renderer/ui-task-controller.js',
+  'src/renderer/support-settings-controller.js',
+  'src/renderer/run-details-controller.js',
+  'src/renderer/fit-name-controller.js',
   'src/renderer/app.js',
 ];
 
