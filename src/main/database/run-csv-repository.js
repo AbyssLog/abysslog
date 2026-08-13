@@ -47,7 +47,7 @@ function createRunCsvRepository(getConnection, listRuns) {
     const headers = rows[0].map((header, index) =>
       index === 0 ? header.replace(/^\uFEFF/, '') : header);
     const idx = (name) => headers.indexOf(name);
-    for (const required of ['started_at', 'tier', 'weather', 'outcome']) {
+    for (const required of ['started_at', 'tier', 'weather', 'outcome', 'hull_name']) {
       if (idx(required) === -1) throw new TypeError(`CSV is missing required column: ${required}`);
     }
 
@@ -102,7 +102,7 @@ function createRunCsvRepository(getConnection, listRuns) {
             tier: get('tier') || 'Unknown',
             weather: get('weather') || 'Unknown',
             outcome: get('outcome') || 'Survived',
-            hull_name: get('hull_name') || get('ship_name') || '',
+            hull_name: get('hull_name') || '',
             ship_class: get('ship_class') || 'Unknown',
             system_id: optionalNumber('system_id'),
             system_name: get('system_name') || null,

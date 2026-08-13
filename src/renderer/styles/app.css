@@ -517,6 +517,17 @@ input, select, textarea { font-family: var(--font); }
   cursor: pointer; text-align: left;
 }
 .analytics-fit-link:hover, .analytics-fit-link:focus-visible { text-decoration: underline; }
+.stats-fit-name-button {
+  border: 0; padding: 0; background: none; color: var(--text-muted);
+  font: inherit; font-size: 10px; cursor: pointer;
+}
+.stats-fit-name-button:hover, .stats-fit-name-button:focus-visible {
+  color: var(--cyan); text-decoration: underline;
+}
+.modal-button-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 16px;
+}
+.modal-button-row .spacer { flex: 1; }
 .item-analytics-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 12px; margin-bottom: 16px;

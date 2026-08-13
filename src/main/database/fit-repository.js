@@ -1,55 +1,61 @@
 const { createFitIdentity } = require('../../shared/fit-identity');
 
-const QUERY_CHUNK_SIZE = 500;
-
 function createFitRepository(getConnection) {
+  if (typeof getConnection !== 'function') {
+    throw new TypeError('Fit repository requires a connection provider');
+  }
+
   function database() {
     const connection = getConnection();
     if (!connection) throw new Error('Database is not initialized');
     return connection;
   }
 
-  function loadSetups(runIds) {
-    const ids = [...new Set(runIds.map(Number).filter(Number.isSafeInteger))];
-    const setups = new Map(ids.map(runId => [runId, { fitting: [], implants: [] }]));
+  function ensureIdentity(fitting, implants) {
+    const identity = createFitIdentity(fitting, implants);
+    if (!identity) return null;
     const connection = database();
-
-    for (let offset = 0; offset < ids.length; offset += QUERY_CHUNK_SIZE) {
-      const chunk = ids.slice(offset, offset + QUERY_CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(',');
-      for (const row of connection.prepare(
-        'SELECT run_id, type_id, type_name, qty, slot '
-          + `FROM run_fitting WHERE run_id IN (${placeholders})`
-      ).all(...chunk)) {
-        setups.get(Number(row.run_id))?.fitting.push(row);
-      }
-      for (const row of connection.prepare(
-        'SELECT run_id, type_id, type_name, slot '
-          + `FROM run_implants WHERE run_id IN (${placeholders})`
-      ).all(...chunk)) {
-        setups.get(Number(row.run_id))?.implants.push(row);
-      }
-    }
-    return setups;
+    connection.prepare(`
+      INSERT INTO fit_identities (signature, signature_hash, hull_name)
+      VALUES (?, ?, ?)
+      ON CONFLICT(signature) DO UPDATE SET
+        signature_hash = excluded.signature_hash,
+        hull_name = excluded.hull_name,
+        updated_at = strftime('%s','now')
+    `).run(identity.signature, identity.key, identity.hull_name);
+    return connection.prepare(`
+      SELECT id, signature_hash AS fit_key, hull_name, display_name
+      FROM fit_identities WHERE signature = ?
+    `).get(identity.signature);
   }
 
   function getIdentity(runId) {
-    const setup = loadSetups([runId]).get(Number(runId));
-    return setup ? createFitIdentity(setup.fitting, setup.implants) : null;
+    return database().prepare(`
+      SELECT fi.id, fi.signature, fi.signature_hash AS fit_key,
+        fi.hull_name, fi.display_name
+      FROM runs r
+      JOIN fit_identities fi ON fi.id = r.fit_identity_id
+      WHERE r.id = ?
+    `).get(runId) || null;
   }
 
-  function filterEquivalentRuns(runs, referenceRunId) {
-    const reference = getIdentity(referenceRunId);
-    if (!reference) return [];
-    const setups = loadSetups(runs.map(run => run.id));
-    return runs.filter(run => {
-      const setup = setups.get(Number(run.id));
-      const identity = setup ? createFitIdentity(setup.fitting, setup.implants) : null;
-      return identity?.signature === reference.signature;
-    });
+  function setDisplayName(fitIdentityId, displayName) {
+    const normalized = displayName == null || String(displayName).trim() === ''
+      ? null
+      : String(displayName).trim();
+    const result = database().prepare(`
+      UPDATE fit_identities
+      SET display_name = ?, updated_at = strftime('%s','now')
+      WHERE id = ?
+    `).run(normalized, fitIdentityId);
+    if (result.changes !== 1) throw new Error('Fit identity not found');
+    return database().prepare(`
+      SELECT id, signature_hash AS fit_key, hull_name, display_name
+      FROM fit_identities WHERE id = ?
+    `).get(fitIdentityId);
   }
 
-  return Object.freeze({ filterEquivalentRuns, getIdentity });
+  return Object.freeze({ ensureIdentity, getIdentity, setDisplayName });
 }
 
 module.exports = { createFitRepository };

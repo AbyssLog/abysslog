@@ -33,6 +33,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   const Database = require('better-sqlite3');
   const previousDatabase = new Database(path.join(userDataDirectory, 'abysslog.db'));
   previousDatabase.exec(`
+    PRAGMA foreign_keys = ON;
     CREATE TABLE characters (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
@@ -40,6 +41,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
       client_id TEXT,
       created_at INTEGER DEFAULT (strftime('%s','now'))
     );
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       character_id INTEGER NOT NULL,
@@ -53,29 +55,102 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
       net_isk REAL DEFAULT 0,
       total_loss REAL DEFAULT 0,
       system_id INTEGER,
+      system_name TEXT,
+      appraised_at INTEGER,
+      cargo_before TEXT,
+      cargo_after TEXT,
+      drone_before TEXT,
+      drone_after TEXT,
+      hull_name TEXT,
+      ship_class TEXT,
       notes TEXT,
       created_at INTEGER DEFAULT (strftime('%s','now')),
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+    CREATE TABLE run_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL,
+      item_name TEXT NOT NULL,
+      qty INTEGER NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('gained','consumed','lost')),
+      unit_price_buy REAL DEFAULT 0,
+      unit_price_sell REAL DEFAULT 0,
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE run_fitting (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL,
+      type_id INTEGER NOT NULL,
+      type_name TEXT NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      slot TEXT,
+      unit_price_sell REAL DEFAULT 0,
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE run_implants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL,
+      type_id INTEGER NOT NULL,
+      type_name TEXT NOT NULL,
+      slot INTEGER,
+      unit_price_sell REAL DEFAULT 0,
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE run_tags (
+      run_id INTEGER NOT NULL,
+      tag TEXT NOT NULL COLLATE NOCASE,
+      PRIMARY KEY (run_id, tag),
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE run_killmails (
+      run_id INTEGER NOT NULL,
+      killmail_id INTEGER NOT NULL,
+      PRIMARY KEY (run_id, killmail_id),
+      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE active_run_state (
+      character_id INTEGER PRIMARY KEY,
+      snapshot TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
     );
     INSERT INTO characters (id, name, portrait_url, client_id)
     VALUES (8999, 'Legacy Pilot', '', 'legacy-client');
     INSERT INTO runs (
       character_id, started_at, duration, tier, weather, outcome,
-      loot_value, consumed_cost, net_isk, total_loss, notes
+      loot_value, consumed_cost, net_isk, total_loss, hull_name, notes
     ) VALUES (
       8999, 1600000000, 780, 'T3', 'Dark', 'Survived',
-      90, 20, 70, 0, 'Created by the original schema'
+      90, 20, 70, 0, 'Gila', 'Created by the v1.1.5 schema'
     );
+    PRAGMA user_version = 4;
   `);
   previousDatabase.close();
 
   database.init();
   database.hardenSensitiveStorage();
 
+  const migrationBackupDirectory = path.join(userDataDirectory, 'backups');
+  const migrationBackupNames = fs.readdirSync(migrationBackupDirectory)
+    .filter(name => name.startsWith('abysslog-before-migration-v4-to-v5-') && name.endsWith('.db'));
+  assert.equal(migrationBackupNames.length, 1);
+  const migrationBackup = new Database(
+    path.join(migrationBackupDirectory, migrationBackupNames[0]),
+    { readonly: true, fileMustExist: true }
+  );
+  assert.equal(migrationBackup.pragma('user_version', { simple: true }), 4);
+  assert.equal(migrationBackup.pragma('application_id', { simple: true }), 0);
+  assert.equal(migrationBackup.pragma('quick_check', { simple: true }), 'ok');
+  assert.equal(
+    migrationBackup.prepare('SELECT notes FROM runs WHERE character_id = 8999').get().notes,
+    'Created by the v1.1.5 schema'
+  );
+  migrationBackup.close();
+
   const exitStatus = database.createExitBackup();
-  assert.equal(exitStatus.schemaVersion, 4);
+  assert.equal(exitStatus.schemaVersion, 5);
   const migratedRun = database.getRuns({ character_id: 8999 })[0];
-  assert.equal(migratedRun.notes, 'Created by the original schema');
+  assert.equal(migratedRun.notes, 'Created by the v1.1.5 schema');
   assert.equal(migratedRun.cargo_before, null);
   assert.equal(migratedRun.drone_after, null);
   assert.equal(migratedRun.ship_class, null);
@@ -198,7 +273,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
   assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
-    schemaVersion: 4,
+    schemaVersion: 5,
     characterCount: 4,
     runCount: 3,
     size: fs.statSync(manualStatus.filePath).size,
@@ -228,6 +303,16 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
     /newer version of AbyssLog/
   );
 
+  const foreignRestorePath = path.join(userDataDirectory, 'foreign-restore.db');
+  fs.copyFileSync(manualStatus.filePath, foreignRestorePath);
+  const foreignDatabase = new Database(foreignRestorePath);
+  foreignDatabase.pragma('application_id = 1234');
+  foreignDatabase.close();
+  assert.throws(
+    () => database.inspectBackup(foreignRestorePath),
+    /valid AbyssLog database identity/
+  );
+
   const lookalikeRestorePath = path.join(userDataDirectory, 'lookalike-restore.db');
   const lookalikeDatabase = new Database(lookalikeRestorePath);
   lookalikeDatabase.exec(`
@@ -243,7 +328,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   lookalikeDatabase.close();
   assert.throws(
     () => database.inspectBackup(lookalikeRestorePath),
-    /not an AbyssLog full backup/
+    /opened in AbyssLog 1\.1\.5/
   );
   assert.throws(
     () => database.restoreBackup(database.getDataStatus().databasePath),
@@ -251,7 +336,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   );
 
   const restoreResult = database.restoreBackup(manualStatus.filePath);
-  assert.equal(restoreResult.schemaVersion, 4);
+  assert.equal(restoreResult.schemaVersion, 5);
   assert.equal(restoreResult.characterCount, 4);
   assert.equal(restoreResult.runCount, 3);
   assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
@@ -266,7 +351,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   );
 
   const activeSnapshot = {
-    version: 1,
+    version: 2,
     state: 'in-abyss',
     run: {
       character_id: 9003,
@@ -280,7 +365,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
       cargoAfter: '',
       droneBefore: 'Vespa II, 5',
       droneAfter: '',
-      ship_name: 'Gila',
+      hull_name: 'Gila',
       ship_class: 'Cruiser',
       fitting: [],
       implants: [],
@@ -321,7 +406,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
       unit_price_buy: 0,
       unit_price_sell: 0,
     }],
-  }), /constraint/i);
+  }), /invalid|constraint/i);
   assert.deepEqual(database.getActiveRun(9003), activeSnapshot);
   assert.equal(database.getRuns({ character_id: 9003 }).length, 0);
 
@@ -330,6 +415,13 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(database.getRunById(completedId).net_isk, 400);
   assert.equal(database.completeActiveRun(completedRun), completedId);
   assert.equal(database.getRuns({ character_id: 9003 }).length, 1);
+
+  const v4RestoreResult = database.restoreBackup(
+    path.join(migrationBackupDirectory, migrationBackupNames[0])
+  );
+  assert.equal(v4RestoreResult.schemaVersion, 4);
+  assert.equal(database.getDataStatus().schemaVersion, 5);
+  assert.equal(database.getRuns({ character_id: 8999 })[0].notes, 'Created by the v1.1.5 schema');
 });
 
 test('character deletion rolls back credentials and settings when the database delete fails', () => {
@@ -344,7 +436,7 @@ test('character deletion rolls back credentials and settings when the database d
     portrait_url: '',
     client_id: 'rollback-client',
   });
-  database.setSetting(`tokens_${characterId}`, 'encrypted-token');
+  database.setCredential('oauth', characterId, 'encrypted-token');
   database.setSetting(`inventory_baseline_cleared_run_${characterId}`, '42');
 
   const installTrigger = new Database(databasePath);
@@ -364,7 +456,7 @@ test('character deletion rolls back credentials and settings when the database d
       /simulated character deletion failure/
     );
     assert.ok(database.getCharacters().some(character => character.id === characterId));
-    assert.equal(database.getSetting(`tokens_${characterId}`), 'encrypted-token');
+    assert.equal(database.getCredential('oauth', characterId), 'encrypted-token');
     assert.equal(
       database.getSetting(`inventory_baseline_cleared_run_${characterId}`),
       '42'
@@ -377,7 +469,7 @@ test('character deletion rolls back credentials and settings when the database d
 
   assert.equal(database.deleteCharacter(characterId), true);
   assert.equal(database.getCharacters().some(character => character.id === characterId), false);
-  assert.equal(database.getSetting(`tokens_${characterId}`), null);
+  assert.equal(database.getCredential('oauth', characterId), null);
   assert.equal(database.getSetting(`inventory_baseline_cleared_run_${characterId}`), null);
 });
 
@@ -444,7 +536,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
 
   assert.throws(
     () => database.updateRun(runId, { meta: changedMeta, cargo: null, appraisal: changedAppraisal }),
-    /constraint/i
+    /invalid|constraint/i
   );
   const rolledBack = database.getRunById(runId);
   assert.equal(rolledBack.tier, 'T3');
@@ -824,25 +916,41 @@ test('fit statistics merge equivalent module layouts and captured hulls', () => 
   assert.equal(fits[0].avg_duration, 600);
   assert.equal(fits[0].hull_name, 'Gila');
   assert.equal(Number(fits[0].representative_run_id), Number(latestRunId));
+  const renamed = database.setFitDisplayName(fits[0].fit_identity_id, 'Gamma Gila');
+  assert.equal(renamed.display_name, 'Gamma Gila');
+  const namedFit = database.getStats({ character_id: 9012 }).byFit
+    .find(fit => fit.fit_identity_id === fits[0].fit_identity_id);
+  assert.equal(namedFit.display_name, 'Gamma Gila');
+  assert.ok(database.getRuns({ fit_identity_id: fits[0].fit_identity_id })
+    .every(run => run.fit_display_name === 'Gamma Gila'));
+
   assert.deepEqual(
-    database.getRuns({ character_id: 9012, fit_reference_run_id: latestRunId }).map(run => run.id),
+    database.getRuns({ character_id: 9012, fit_identity_id: fits[0].fit_identity_id }).map(run => run.id),
     [latestRunId, firstRunId]
   );
 });
 
-test('CSV import accepts the v1.1.4 ship_name header while new exports use hull_name', () => {
+test('CSV import requires the v1.1.5 hull_name contract', () => {
   database.saveCharacter({
     id: 9013,
-    name: 'Legacy CSV Pilot',
+    name: 'CSV Pilot',
     portrait_url: '',
-    client_id: 'legacy-csv-client',
+    client_id: 'csv-client',
   });
   const legacyCsv = [
     'started_at,tier,weather,outcome,ship_name,ship_class',
     '1735732800,T4,Electrical,Survived,Gila,Cruiser',
   ].join('\n');
+  assert.throws(
+    () => database.importRunsCSV(legacyCsv, 9013),
+    /missing required column: hull_name/
+  );
 
-  assert.deepEqual(database.importRunsCSV(legacyCsv, 9013), {
+  const csv = [
+    'started_at,tier,weather,outcome,hull_name,ship_class',
+    '1735732800,T4,Electrical,Survived,Gila,Cruiser',
+  ].join('\n');
+  assert.deepEqual(database.importRunsCSV(csv, 9013), {
     imported: 1,
     skipped: 0,
     errors: [],
@@ -851,8 +959,7 @@ test('CSV import accepts the v1.1.4 ship_name header while new exports use hull_
   assert.equal(run.hull_name, 'Gila');
   assert.equal('ship_name' in run, false);
 
-  const exported = database.exportRunsCSV({ character_id: 9013 });
-  const headers = parseCsv(exported.csv)[0];
+  const headers = parseCsv(database.exportRunsCSV({ character_id: 9013 }).csv)[0];
   assert.equal(headers.includes('hull_name'), true);
   assert.equal(headers.includes('ship_name'), false);
 });

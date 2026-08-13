@@ -1,7 +1,6 @@
 const { runInTransaction } = require('./transaction');
 
 const STORAGE_HARDENING_KEY = 'security_storage_hardened_v1';
-const CHARACTER_TOKEN_PREFIX = 'tokens_';
 
 function createCharacterSettingsRepository(getConnection) {
   if (typeof getConnection !== 'function') {
@@ -50,7 +49,6 @@ function createCharacterSettingsRepository(getConnection) {
   function deleteCharacter(characterId, additionalSettingKeys = []) {
     const connection = database();
     runInTransaction(connection, () => {
-      deleteSetting(`${CHARACTER_TOKEN_PREFIX}${characterId}`);
       for (const key of additionalSettingKeys) deleteSetting(key);
       connection.prepare('DELETE FROM characters WHERE id = ?').run(characterId);
     });

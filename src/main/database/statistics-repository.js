@@ -1,5 +1,3 @@
-const fitting = require('../../shared/fitting');
-const { createFitIdentity } = require('../../shared/fit-identity');
 
 function createStatisticsRepository(getConnection) {
   if (typeof getConnection !== 'function') {
@@ -30,88 +28,22 @@ function createStatisticsRepository(getConnection) {
 
   function getFitStats(db, filters) {
     const { where, params } = buildStatsWhere(filters, 'r.');
-    const rows = db.prepare([
-      'SELECT r.id, r.hull_name, r.ship_class, r.outcome, r.duration, r.net_isk, r.total_loss,',
-      '  f.type_id, f.type_name, f.qty, f.slot',
+    return db.prepare([
+      'SELECT fi.id AS fit_identity_id, fi.signature_hash AS fit_key,',
+      '  MAX(r.id) AS representative_run_id, fi.hull_name, fi.display_name,',
+      "  COALESCE(NULLIF(MAX(r.ship_class), ''), 'Unknown') AS ship_class,",
+      '  COUNT(*) AS total_runs,',
+      "  SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,",
+      "  AVG(CASE WHEN r.outcome = 'Survived' THEN r.duration END) AS avg_duration,",
+      "  AVG(CASE WHEN r.outcome = 'Survived' THEN r.net_isk ELSE -r.total_loss END)",
+      '    AS avg_net_isk',
       'FROM runs r',
-      'JOIN run_fitting f ON f.run_id = r.id',
+      'JOIN fit_identities fi ON fi.id = r.fit_identity_id',
       where,
-      'ORDER BY r.started_at DESC, r.id DESC, f.slot, f.type_id',
+      'GROUP BY fi.id, fi.signature_hash, fi.hull_name, fi.display_name',
+      'ORDER BY total_runs DESC, avg_net_isk DESC',
+      'LIMIT 20',
     ].filter(Boolean).join('\n')).all(...params);
-    const runs = new Map();
-    for (const row of rows) {
-      if (!runs.has(row.id)) {
-        runs.set(row.id, {
-          run_id: row.id,
-          hull_name: row.hull_name || 'Unknown hull',
-          ship_class: row.ship_class || 'Unknown',
-          outcome: row.outcome,
-          duration: row.duration || 0,
-          net: row.outcome === 'Survived' ? row.net_isk : -row.total_loss,
-          fitting: [],
-          implants: [],
-          capturedHullName: null,
-        });
-      }
-      const run = runs.get(row.id);
-      const section = fitting.classifySlot(row.slot);
-      run.fitting.push({
-        type_id: row.type_id,
-        type_name: row.type_name,
-        qty: row.qty,
-        slot: row.slot,
-      });
-      if (section === 'hull') run.capturedHullName = row.type_name || run.hull_name;
-    }
-    const implantRows = db.prepare([
-      'SELECT r.id, i.type_id, i.type_name, i.slot',
-      'FROM runs r',
-      'JOIN run_implants i ON i.run_id = r.id',
-      where,
-    ].filter(Boolean).join('\n')).all(...params);
-    for (const row of implantRows) {
-      runs.get(row.id)?.implants.push(row);
-    }
-
-
-    const fits = new Map();
-    for (const run of runs.values()) {
-      const identity = createFitIdentity(run.fitting, run.implants);
-      if (!identity) continue;
-      const signature = identity.signature;
-      if (!fits.has(signature)) {
-        fits.set(signature, {
-          fit_key: identity.key,
-          representative_run_id: run.run_id,
-          hull_name: run.capturedHullName || run.hull_name,
-          ship_class: run.ship_class,
-          total_survival_duration: 0,
-          total_runs: 0,
-          survived: 0,
-          total_net_isk: 0,
-        });
-      }
-      const fit = fits.get(signature);
-      fit.total_runs++;
-      if (run.outcome === 'Survived') {
-        fit.survived++;
-        fit.total_survival_duration += run.duration;
-      }
-      fit.total_net_isk += run.net || 0;
-    }
-    return [...fits.values()]
-      .map(fit => {
-        const { total_survival_duration: survivalDuration, ...summary } = fit;
-        return {
-          ...summary,
-          avg_duration: fit.survived > 0 ? survivalDuration / fit.survived : 0,
-          avg_net_isk: fit.total_runs > 0 ? fit.total_net_isk / fit.total_runs : 0,
-        };
-      })
-      .sort((left, right) =>
-        right.total_runs - left.total_runs
-        || right.avg_net_isk - left.avg_net_isk)
-      .slice(0, 20);
   }
 
   function getLatestSession(db, filters) {

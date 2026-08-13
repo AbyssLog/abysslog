@@ -26,12 +26,9 @@ function registerSupportHandlers({
 }) {
   secureHandle('data:get-status', () => ({
     ...database.getDataStatus(),
-    automaticBackupsEnabled: !database.getSetting('janice_api_key'),
+    automaticBackupsEnabled: true,
   }));
   secureHandle('data:create-backup', () => {
-    if (database.getSetting('janice_api_key')) {
-      throw new Error('Backup is unavailable until the legacy API key can be migrated securely');
-    }
     const result = database.createManualBackup();
     recordDiagnostic('backup.created', { source: 'manual' });
     return result;

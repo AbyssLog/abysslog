@@ -24,6 +24,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
 - **Run journal & provenance** — save notes, tags, system names, appraisal time, and verified killmail IDs with each run
 - **Consistent ship identity** — run records use the hull type (for example, Gila), not the pilot-assigned ship name
+- **Friendly fit names** - optionally name a canonical captured fit so equivalent historical snapshots share a label without changing the captured setup or equivalence rules
 
 ---
 
@@ -95,7 +96,7 @@ boundaries around the main composition root, database facade, renderer
 coordinator, and stylesheet, then runs the full test suite. Use
 `npm run test:coverage` when reviewing coverage.
 
-Dependency lifecycle scripts are disabled by default in `.npmrc`. `npm run setup` is the explicit, reviewable step that downloads the Electron runtime.
+Dependency lifecycle scripts are disabled by default in `.npmrc`. `npm run setup` is the explicit, reviewable step that downloads the Electron runtime. It retries transient network/download failures up to three times and stops immediately for deterministic installer errors.
 
 ---
 
@@ -137,9 +138,11 @@ Run history is stored in a local SQLite database at:
 - **macOS:** `~/Library/Application Support/abysslog/abysslog.db`
 - **Linux:** `~/.config/abysslog/abysslog.db`
 
-OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` before they are written to the local database. AbyssLog disables sign-in and credential storage when a secure OS-backed provider is unavailable; credentials are never persisted with the insecure plaintext/basic-text fallback.
+OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` and stored in a dedicated credentials table. Public preferences remain in settings. AbyssLog disables sign-in and credential storage when a secure OS-backed provider is unavailable; credentials are never persisted with the insecure plaintext/basic-text fallback.
 
 On each clean exit, AbyssLog writes a verified full-database backup and retains the latest seven automatic backups. Unexpected termination leaves the previous verified backup in place. Use **Settings → Data & Recovery** to create a manual backup, open the backup folder, or restore a full `.db` backup. Restore validates the selected database, preserves the current database as a retained before-restore backup, replaces the live data, and restarts AbyssLog.
+
+The v1.1.6 data model accepts the v1.1.5/schema-v4 baseline and current schema-v5 databases or backups. Before the first v4-to-v5 migration, AbyssLog creates and verifies a retained `before-migration-v4-to-v5` backup, then applies the migration transactionally. Older databases and backups must first be opened with AbyssLog v1.1.5; pre-v4 compatibility paths are intentionally not retained.
 
 A full restore replaces rather than merges the current database. Credentials encrypted by a different operating-system installation or user profile may no longer decrypt after a restore; reconnect affected EVE characters and re-enter the Janice API key.
 

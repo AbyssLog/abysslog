@@ -415,10 +415,9 @@
         </div>
         <div id="backupActionStatus" role="status" aria-live="polite" style="display:none;margin-top:10px"></div>
         <p style="color:var(--text-dim);font-size:12px;margin:18px 0 12px;line-height:1.7">
-          CSV is intended for interchange and external analysis. Imports support quoted multiline cargo fields and skip runs already recorded for the same character and start time.
+          Export run history from the History tab. CSV imports support quoted multiline cargo fields and skip runs already recorded for the same character and start time.
         </p>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn sm" data-action="export-csv">↓ Export Runs to CSV</button>
           <button class="btn sm ghost" data-action="import-csv">↑ Import Runs from CSV</button>
         </div>
         <div id="csvStatus" role="status" aria-live="polite" style="display:none;margin-top:10px"></div>
@@ -674,6 +673,27 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="fitNameModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="fitNameModalTitle">
+  <div class="modal" tabindex="-1" style="max-width:480px">
+    <div class="modal-title">
+      <span id="fitNameModalTitle">Friendly Fit Name</span>
+      <button class="modal-close" data-action="close-modal" data-modal="fitNameModal" aria-label="Close fit name dialog">&times;</button>
+    </div>
+    <p class="settings-help" id="fitNameHelp">
+      This name is shared by equivalent fits. It does not change captured setups or equivalence.
+    </p>
+    <label class="field-label" for="fitNameInput">Display name</label>
+    <input class="field-input" id="fitNameInput" maxlength="80" autocomplete="off">
+    <input type="hidden" id="fitNameIdentityId" aria-label="Fit identity">
+    <div class="modal-button-row">
+      <button type="button" class="btn danger sm" data-action="clear-fit-name" id="clearFitNameButton">Clear name</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost sm" data-action="close-modal" data-modal="fitNameModal">Cancel</button>
+      <button type="button" class="btn primary sm" data-action="save-fit-name">Save name</button>
+    </div>
+  </div>
+</div>
+
 <script src="../shared/fitting.js"></script>
 <script src="../shared/security.js"></script>
 <script src="../shared/run-tracking.js"></script>
@@ -690,6 +710,11 @@
 <script src="./navigation-controller.js"></script>
 <script src="./modal-controller.js"></script>
 <script src="./ui-formatters.js"></script>
+<script src="./loadout-controller.js"></script>
+<script src="./ui-task-controller.js"></script>
+<script src="./support-settings-controller.js"></script>
+<script src="./run-details-controller.js"></script>
+<script src="./fit-name-controller.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

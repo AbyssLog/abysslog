@@ -65,7 +65,7 @@
         }
         break;
       case 'fit':
-        filters.fit_reference_run_id = Number(value);
+        filters.fit_identity_id = Number(value);
         break;
       default:
         throw new TypeError('Statistics drill-through group is invalid');
@@ -283,16 +283,26 @@
         + '<th>Fit</th>' + renderStatColumnHeaders()
         + '</tr></thead><tbody>';
       for (const fit of stats.byFit) {
-        const fitLabel = fit.hull_name + ' fit #' + fit.fit_key;
+        const fallbackName = fit.hull_name + ' fit #' + fit.fit_key;
+        const fitLabel = fit.display_name || fallbackName;
+        const detail = fit.display_name
+          ? fit.hull_name + ' #' + fit.fit_key
+          : '#' + fit.fit_key;
         html += '<tr><td><button type="button" class="analytics-fit-link" '
           + 'data-action="show-ship-setup" data-run-id="'
           + escapeHtml(fit.representative_run_id) + '" data-return-modal="none" '
           + 'aria-label="View ' + escapeHtml(fitLabel) + ' details">'
-          + escapeHtml(fit.hull_name) + ' <span class="analytics-key">#'
-          + escapeHtml(fit.fit_key) + '</span></button> '
+          + escapeHtml(fitLabel) + ' <span class="analytics-key">'
+          + escapeHtml(detail) + '</span></button> '
           + drillButton('View runs', {
-            group: 'fit', value: fit.representative_run_id, label: 'Fit: ' + fitLabel,
-          }) + '</td>'
+            group: 'fit', value: fit.fit_identity_id, label: 'Fit: ' + fitLabel,
+          })
+          + ' <button type="button" class="stats-fit-name-button" '
+          + 'data-action="edit-fit-name" data-fit-identity-id="'
+          + escapeHtml(fit.fit_identity_id) + '" data-fit-display-name="'
+          + escapeHtml(fit.display_name || '') + '" data-fit-hull-name="'
+          + escapeHtml(fit.hull_name) + '">'
+          + (fit.display_name ? 'Rename' : 'Name fit') + '</button></td>'
           + renderStatCells(fit) + '</tr>';
       }
       html += '</tbody></table></div>';

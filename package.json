@@ -1,6 +1,6 @@
 {
   "name": "abysslog",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "EVE Online Abyssal Deadspace run tracker",
   "author": "Erinys",
   "license": "MIT",
@@ -14,7 +14,7 @@
   "homepage": "https://github.com/AbyssLog/abysslog#readme",
   "main": "src/main/main.js",
   "scripts": {
-    "setup": "node node_modules/electron/install.js",
+    "setup": "node scripts/setup-electron.js",
     "check": "npm run check:architecture && npm test",
     "check:architecture": "node scripts/check-architecture.js",
     "test": "node --test",

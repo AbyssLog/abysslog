@@ -76,8 +76,8 @@ function createRunRepository(getDb) {
       'INSERT INTO runs (character_id, started_at, duration, tier, weather, outcome, '
       + 'loot_value, consumed_cost, net_isk, total_loss, system_id, system_name, '
       + 'cargo_before, cargo_after, drone_before, drone_after, hull_name, ship_class, '
-      + 'notes, appraised_at) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      + 'fit_identity_id, notes, appraised_at) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     const insertItem = connection.prepare(
       'INSERT INTO run_items '
@@ -96,13 +96,15 @@ function createRunRepository(getDb) {
     );
 
     return runInTransaction(connection, () => {
+      const fitIdentity = fitRepository.ensureIdentity(fitting, implants);
       const info = insertRun.run(
         character_id, started_at, duration, tier, weather, outcome,
         loot_value || 0, consumed_cost || 0, net_isk || 0, total_loss || 0,
         system_id, system_name || null,
         cargo_before || null, cargo_after || null,
         drone_before || null, drone_after || null,
-        hull_name || null, ship_class || null, notes || null, appraised_at
+        hull_name || null, ship_class || null, fitIdentity?.id || null,
+        notes || null, appraised_at
       );
       const runId = info.lastInsertRowid;
 
@@ -183,8 +185,10 @@ function createRunRepository(getDb) {
   }
 
   function getRuns(filters = {}) {
-    let query = 'SELECT r.*, c.name AS character_name FROM runs r '
-      + 'JOIN characters c ON r.character_id = c.id WHERE 1=1';
+    let query = 'SELECT r.*, c.name AS character_name, '
+      + 'fi.signature_hash AS fit_key, fi.display_name AS fit_display_name '
+      + 'FROM runs r JOIN characters c ON r.character_id = c.id '
+      + 'LEFT JOIN fit_identities fi ON fi.id = r.fit_identity_id WHERE 1=1';
     const params = [];
 
     if (filters.character_id) {
@@ -225,6 +229,10 @@ function createRunRepository(getDb) {
       query += ' AND r.ship_class = ?';
       params.push(filters.ship_class);
     }
+    if (filters.fit_identity_id != null) {
+      query += ' AND r.fit_identity_id = ?';
+      params.push(filters.fit_identity_id);
+    }
     if (filters.tag) {
       query += ' AND EXISTS (SELECT 1 FROM run_tags selected_tag '
         + 'WHERE selected_tag.run_id = r.id AND selected_tag.tag = ? COLLATE NOCASE)';
@@ -237,6 +245,7 @@ function createRunRepository(getDb) {
         "COALESCE(r.hull_name, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "COALESCE(r.ship_class, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "COALESCE(r.system_name, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
+        "COALESCE(fi.display_name, '') LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "c.name LIKE ? ESCAPE '\\' COLLATE NOCASE",
         "CAST(COALESCE(r.system_id, '') AS TEXT) LIKE ? ESCAPE '\\'",
         'EXISTS (SELECT 1 FROM run_tags search_tag WHERE search_tag.run_id = r.id '
@@ -257,29 +266,28 @@ function createRunRepository(getDb) {
         searchLike,
         searchLike,
         searchLike,
+        searchLike,
         searchLike
       );
     }
 
     query += ' ORDER BY r.started_at DESC, r.id DESC';
-    if (filters.limit && !filters.fit_reference_run_id) {
+    if (filters.limit) {
       query += ' LIMIT ?';
       params.push(filters.limit);
     }
 
-    let runs = database().prepare(query).all(...params);
-    if (filters.fit_reference_run_id) {
-      runs = fitRepository.filterEquivalentRuns(runs, filters.fit_reference_run_id);
-      if (filters.limit) runs = runs.slice(0, filters.limit);
-    }
+    const runs = database().prepare(query).all(...params);
     return attachRunMetadata(runs, filters);
   }
 
   function getRunById(runId) {
     const connection = database();
     const run = connection.prepare(
-      'SELECT r.*, c.name AS character_name FROM runs r '
-      + 'JOIN characters c ON r.character_id = c.id WHERE r.id = ?'
+      'SELECT r.*, c.name AS character_name, '
+      + 'fi.signature_hash AS fit_key, fi.display_name AS fit_display_name '
+      + 'FROM runs r JOIN characters c ON r.character_id = c.id '
+      + 'LEFT JOIN fit_identities fi ON fi.id = r.fit_identity_id WHERE r.id = ?'
     ).get(runId);
     if (!run) return null;
 
@@ -305,6 +313,10 @@ function createRunRepository(getDb) {
   function deleteRun(runId) {
     database().prepare('DELETE FROM runs WHERE id = ?').run(runId);
     return true;
+  }
+
+  function setFitDisplayName(fitIdentityId, displayName) {
+    return fitRepository.setDisplayName(fitIdentityId, displayName);
   }
 
   function requireUpdatedRun(result) {
@@ -447,6 +459,7 @@ function createRunRepository(getDb) {
     getRuns,
     saveActiveRun,
     saveRun,
+    setFitDisplayName,
     updateAppraisal,
     updateRun,
   };

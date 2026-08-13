@@ -8,55 +8,30 @@ const statsViewHelpers = window.AbyssStatsView;
 const historyViewHelpers = window.AbyssHistoryView;
 const loadoutHelpers = window.AbyssLoadouts;
 const shipGroups = window.AbyssShipGroups;
+const loadoutControllerHelpers = window.AbyssLoadoutController;
 const inventoryEditors = window.AbyssInventoryEditor;
 const runSessionHelpers = window.AbyssRunSession;
 const navigationHelpers = window.AbyssNavigation;
 const modalHelpers = window.AbyssModals;
 const formatters = window.AbyssUiFormatters;
+const fitNameHelpers = window.AbyssFitNames;
+const supportSettingsHelpers = window.AbyssSupportSettings;
+const uiTaskHelpers = window.AbyssUiTasks;
+const runDetailsHelpers = window.AbyssRunDetails;
 const formatBytes = formatters.formatBytes;
 const fmtIsk = formatters.formatIsk;
 const fmtDuration = formatters.formatDuration;
 
-function dismissGlobalError() {
-  const notice = document.getElementById('globalErrorNotice');
-  if (notice) notice.hidden = true;
-}
-
-function recordRendererDiagnostic(category) {
-  try {
-    const request = window.api?.diagnostics?.recordRendererError(category);
-    if (request && typeof request.catch === 'function') request.catch(() => {});
-  } catch {
-    // Diagnostics must never create a second application error.
-  }
-}
-
-function reportUiError(context, error, diagnosticCategory = 'ui-error') {
-  recordRendererDiagnostic(diagnosticCategory);
-  console.error(`${context}:`, error);
-  const notice = document.getElementById('globalErrorNotice');
-  const message = document.getElementById('globalErrorMessage');
-  if (!notice || !message) return;
-  message.textContent = uiErrors?.formatUiError(context, error)
-    || `${context}.`;
-  notice.hidden = false;
-}
-
-function runUiTask(context, operation, onFailure) {
-  return Promise.resolve()
-    .then(operation)
-    .catch(error => {
-      if (typeof onFailure === 'function') {
-        try {
-          onFailure();
-        } catch (recoveryError) {
-          recordRendererDiagnostic('recovery-error');
-          console.error('UI recovery failed:', recoveryError);
-        }
-      }
-      reportUiError(context, error);
-    });
-}
+const {
+  dismissGlobalError,
+  recordRendererDiagnostic,
+  reportUiError,
+  runUiTask,
+} = uiTaskHelpers.createUiTaskController({
+  document,
+  diagnostics: window.api?.diagnostics,
+  formatError: uiErrors.formatUiError,
+});
 
 const S = {
   characters: [],
@@ -77,6 +52,88 @@ const S = {
   pollGeneration: 0,
   pollFailureCount: 0,
 };
+const supportSettings = supportSettingsHelpers.createSupportSettingsController({
+  document,
+  api: window.api,
+  state: S,
+  formatBytes,
+  formatIsk: fmtIsk,
+  renderCharList,
+  refreshSavedRunViews,
+  startPolling: startESIPoll,
+  confirmAction: message => confirm(message),
+});
+const {
+  copyDiagnostics,
+  createFullBackup,
+  importCSV,
+  load: loadSettingsPage,
+  openBackupFolder,
+  openDiagnosticsFolder,
+  removeJaniceKey,
+  restoreFullBackup,
+  save: saveSettings,
+  testJaniceKey,
+  toggleJaniceKey,
+} = supportSettings;
+
+const loadoutController = loadoutControllerHelpers.createLoadoutController({
+  document,
+  api: window.api,
+  state: S,
+  loadouts: loadoutHelpers,
+  openModal,
+  confirmAction: message => confirm(message),
+  setInventoryText,
+  applyInventory: ({ cargoText, droneText }) => {
+    setInventoryText('cargoBeforeText', cargoText);
+    setInventoryText('droneBeforeText', droneText);
+    inventoryBaselineRunId = null;
+    hideInventoryBaselineStatus();
+    updatePasteHint('cargoBeforeText', 'preCargoHint');
+    updatePasteHint('droneBeforeText', 'preDroneHint');
+    if (droneText) setCollapsibleState('preDroneBody', 'preDroneArrow', true);
+    updateFilamentInference();
+  },
+});
+const {
+  applyPreset: applyLoadoutPreset,
+  deletePreset: deleteLoadoutPreset,
+  handleEditorSelection: handleLoadoutEditorSelection,
+  openManager: openLoadoutManager,
+  renderPresetSelect: renderLoadoutPresetSelect,
+  savePreset: saveLoadoutPreset,
+  startNewPreset: startNewLoadoutPreset,
+  updateControls: updateLoadoutControls,
+} = loadoutController;
+
+
+const runDetailsController = runDetailsHelpers.createRunDetailsController({
+  document,
+  api: window.api,
+  state: S,
+  fitting: window.AbyssFitting,
+  appraisalHelpers,
+  inventoryEditors,
+  fmtIsk,
+  fmtDuration,
+  esc,
+  openModal,
+  closeModal,
+  refreshSavedRunViews,
+  confirmAction: message => confirm(message),
+});
+const {
+  closeShipSetupModal,
+  copyRunFitting,
+  deleteRun,
+  discardHistoricalReappraisal,
+  invalidateHistoricalReappraisalPreview,
+  reappraiseRun,
+  saveHistoricalReappraisal,
+  showRunDetail,
+  showShipSetup,
+} = runDetailsController;
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -562,144 +619,6 @@ async function clearInventoryBaseline() {
   hideInventoryBaselineStatus();
   clearFilamentInference();
   document.getElementById('loadoutApplyStatus').hidden = true;
-}
-
-let loadoutEditId = null;
-
-function findLoadoutPreset(id) {
-  return S.loadoutPresets.find(preset => preset.id === id) || null;
-}
-
-function populateLoadoutSelect(select, emptyLabel, selectedId = '') {
-  select.replaceChildren();
-  const emptyOption = document.createElement('option');
-  emptyOption.value = '';
-  emptyOption.textContent = emptyLabel;
-  select.append(emptyOption);
-  for (const preset of S.loadoutPresets) {
-    const option = document.createElement('option');
-    option.value = preset.id;
-    option.textContent = preset.name;
-    select.append(option);
-  }
-  select.value = findLoadoutPreset(selectedId) ? selectedId : '';
-}
-
-function renderLoadoutPresetSelect(preferredId = null) {
-  const select = document.getElementById('loadoutPresetSelect');
-  const selectedId = preferredId ?? select.value;
-  populateLoadoutSelect(select, '-- No presets saved --', selectedId);
-  updateLoadoutControls();
-}
-
-function updateLoadoutControls() {
-  const select = document.getElementById('loadoutPresetSelect');
-  const apply = document.getElementById('applyLoadoutBtn');
-  if (!select || !apply) return;
-  apply.disabled = S.runState !== 'awaiting' || !findLoadoutPreset(select.value);
-}
-
-function setLoadoutEditorStatus(message = '', type = '') {
-  const status = document.getElementById('loadoutEditorStatus');
-  status.textContent = message;
-  status.className = type ? `alert ${type}` : '';
-  status.hidden = !message;
-}
-
-function renderLoadoutManagerSelect(preferredId = '') {
-  const select = document.getElementById('loadoutManagerSelect');
-  populateLoadoutSelect(select, '-- New preset --', preferredId);
-}
-
-function showLoadoutEditorPreset(preset) {
-  loadoutEditId = preset?.id || null;
-  document.getElementById('loadoutManagerSelect').value = loadoutEditId || '';
-  document.getElementById('loadoutNameInput').value = preset?.name || '';
-  setInventoryText('loadoutCargoText', preset
-    ? loadoutHelpers.formatInventoryItems(preset.cargo)
-    : document.getElementById('cargoBeforeText').value);
-  setInventoryText('loadoutDroneText', preset
-    ? loadoutHelpers.formatInventoryItems(preset.drone)
-    : document.getElementById('droneBeforeText').value);
-  document.getElementById('deleteLoadoutBtn').hidden = !preset;
-  setLoadoutEditorStatus();
-}
-
-function startNewLoadoutPreset() {
-  renderLoadoutManagerSelect('');
-  showLoadoutEditorPreset(null);
-  document.getElementById('loadoutNameInput').focus();
-}
-
-function openLoadoutManager() {
-  const selectedId = document.getElementById('loadoutPresetSelect').value;
-  renderLoadoutManagerSelect(selectedId);
-  showLoadoutEditorPreset(findLoadoutPreset(selectedId));
-  openModal('loadoutModal');
-}
-
-function handleLoadoutEditorSelection() {
-  const selectedId = document.getElementById('loadoutManagerSelect').value;
-  showLoadoutEditorPreset(findLoadoutPreset(selectedId));
-}
-
-async function saveLoadoutPreset() {
-  try {
-    const id = loadoutEditId || `preset-${globalThis.crypto.randomUUID()}`;
-    const preset = loadoutHelpers.createPresetFromInventoryText({
-      id,
-      name: document.getElementById('loadoutNameInput').value,
-      cargoText: document.getElementById('loadoutCargoText').value,
-      droneText: document.getElementById('loadoutDroneText').value,
-    });
-    const nextPresets = S.loadoutPresets.filter(existing => existing.id !== id);
-    nextPresets.push(preset);
-    S.loadoutPresets = await window.api.loadouts.save(nextPresets);
-    renderLoadoutPresetSelect(id);
-    renderLoadoutManagerSelect(id);
-    showLoadoutEditorPreset(findLoadoutPreset(id));
-    setLoadoutEditorStatus(`Saved ${preset.name}.`, 'success');
-  } catch (error) {
-    setLoadoutEditorStatus(error?.message || 'The loadout preset could not be saved.', 'err');
-  }
-}
-
-async function deleteLoadoutPreset() {
-  const preset = findLoadoutPreset(loadoutEditId);
-  if (!preset || !confirm(`Delete the ${preset.name} loadout preset?`)) return;
-  try {
-    S.loadoutPresets = await window.api.loadouts.save(
-      S.loadoutPresets.filter(existing => existing.id !== preset.id)
-    );
-    renderLoadoutPresetSelect();
-    startNewLoadoutPreset();
-    setLoadoutEditorStatus(`Deleted ${preset.name}.`, 'success');
-  } catch (error) {
-    setLoadoutEditorStatus(error?.message || 'The loadout preset could not be deleted.', 'err');
-  }
-}
-
-function applyLoadoutPreset() {
-  if (S.runState !== 'awaiting' || S.activeRun) {
-    throw new Error('A loadout preset can only be applied before a run starts');
-  }
-  const preset = findLoadoutPreset(document.getElementById('loadoutPresetSelect').value);
-  if (!preset) throw new Error('Choose a loadout preset first');
-
-  const cargoText = loadoutHelpers.formatInventoryItems(preset.cargo);
-  const droneText = loadoutHelpers.formatInventoryItems(preset.drone);
-  setInventoryText('cargoBeforeText', cargoText);
-  setInventoryText('droneBeforeText', droneText);
-  inventoryBaselineRunId = null;
-  hideInventoryBaselineStatus();
-  updatePasteHint('cargoBeforeText', 'preCargoHint');
-  updatePasteHint('droneBeforeText', 'preDroneHint');
-  if (droneText) setCollapsibleState('preDroneBody', 'preDroneArrow', true);
-  updateFilamentInference();
-
-  const status = document.getElementById('loadoutApplyStatus');
-  status.textContent = `Applied ${preset.name} to the pre-run cargo hold and drone bay.`;
-  status.hidden = false;
 }
 
 function parseRunTags(value) {
@@ -2013,431 +1932,6 @@ function scheduleHistorySearch() {
     void runUiTask('Could not search run history', () => renderHistory());
   }, 250);
 }
-let pendingHistoricalReappraisal = null;
-
-async function showRunDetail(runId) {
-  pendingHistoricalReappraisal = null;
-  const run = await window.api.runs.getById(runId);
-  if (!run) return;
-
-  const d = new Date(run.started_at * 1000);
-  document.getElementById('runDetailTitle').textContent = `${run.tier} ${run.weather} — ${d.toLocaleDateString()}`;
-
-  const gained = run.items.filter(i => i.type === 'gained');
-  const consumed = run.items.filter(i => i.type === 'consumed');
-  const lost = run.items.filter(i => i.type === 'lost');
-  const droneAfterSnapshot = inventoryEditors.resolveDroneAfterSnapshot(
-    run.drone_before, run.drone_after, run.outcome
-  );
-  const displayUnchangedDroneBay = droneAfterSnapshot.usesFallback;
-  const displayedDroneAfter = droneAfterSnapshot.text;
-  const unchangedDroneAttribute = displayUnchangedDroneBay
-    ? ' data-inventory-fallback="unchanged"'
-    : '';
-  const unchangedDroneBadge = displayUnchangedDroneBay
-    ? '<span class="inventory-unchanged-badge">Unchanged</span>'
-    : '';
-
-  let html = `<div class="run-detail-summary">
-    <div><div class="field-label">Date</div><div class="mono" style="font-size:12px">${d.toLocaleString()}</div></div>
-    <div><div class="field-label">Duration</div><div class="mono" style="font-size:12px">${fmtDuration(run.duration)}</div></div>
-    <div><div class="field-label">Outcome</div><div><span class="badge ${run.outcome === 'Survived' ? 'survived' : 'died'}">${esc(run.outcome)}</span></div></div>
-    <div><div class="field-label">Hull Class</div><div>${run.ship_class ? '<span class="badge tier">' + esc(run.ship_class) + '</span>' : '<span style="color:var(--muted)">—</span>'}</div></div>
-    <div><div class="field-label">${run.outcome === 'Survived' ? 'Net ISK' : 'Total Loss'}</div>
-    <div class="mono" style="font-size:14px;color:${run.outcome === 'Survived' ? (run.net_isk >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--red)'}">
-      ${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '−' + fmtIsk(run.total_loss)}
-    </div></div>
-  </div>`;
-
-  const metadataRows = [];
-  if (run.hull_name) metadataRows.push(['Hull', run.hull_name]);
-  if (run.system_name || run.system_id) {
-    metadataRows.push(['System', run.system_name || String(run.system_id)]);
-  }
-  if (run.appraised_at) {
-    metadataRows.push(['Appraised', new Date(run.appraised_at * 1000).toLocaleString()]);
-  }
-  if (run.killmail_ids?.length) {
-    metadataRows.push(['Killmail IDs', run.killmail_ids.join(', ')]);
-  }
-  if (metadataRows.length || run.tags?.length || run.notes) {
-    html += '<section class="run-detail-metadata"><div class="run-detail-metadata-grid">';
-    for (const [label, value] of metadataRows) {
-      html += '<div><div class="field-label">' + esc(label)
-        + '</div><div>' + esc(value) + '</div></div>';
-    }
-    html += '</div>';
-    if (run.tags?.length) {
-      html += '<div class="run-detail-tags">'
-        + run.tags.map(tag => '<span class="history-tag">' + esc(tag) + '</span>').join(' ')
-        + '</div>';
-    }
-    if (run.notes) {
-      html += '<div class="run-detail-notes"><div class="field-label">Notes</div>'
-        + '<div>' + esc(run.notes) + '</div></div>';
-    }
-    html += '</section>';
-  }
-  if (run.fitting.length || run.implants.length) {
-    const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
-    const counts = [];
-    if (summary.fittedItemCount > 0) {
-      counts.push(`${summary.fittedItemCount} fitted item${summary.fittedItemCount === 1 ? '' : 's'}`);
-    }
-    if (summary.droneCount > 0) {
-      counts.push(`${summary.droneCount} drone${summary.droneCount === 1 ? '' : 's'}`);
-    }
-    if (summary.implantCount > 0) {
-      counts.push(`${summary.implantCount} implant${summary.implantCount === 1 ? '' : 's'}`);
-    }
-    html += `<div class="fit-summary-card">
-      <div>
-        <div class="fit-summary-title">Ship setup captured at run start</div>
-        <div class="fit-summary-counts">${esc(counts.join(' · ') || 'Ship hull captured')}</div>
-      </div>
-      <button class="btn sm ghost" data-action="show-ship-setup" data-run-id="${esc(run.id)}">View fit &amp; implants</button>
-    </div>`;
-  }
-
-  html += '<div class="run-detail-appraisals">';
-  if (gained.length) {
-    html += itemTableHtml('Loot Gained', gained, 'gained', 'unit_price_buy');
-  }
-  if (consumed.length) {
-    html += itemTableHtml('Items Consumed', consumed, 'consumed', 'unit_price_sell');
-  }
-  if (lost.length) {
-    html += itemTableHtml('Items Lost', lost, 'consumed', 'unit_price_sell');
-  }
-  html += '</div>';
-
-  // Cargo paste section — always shown, editable for re-appraisal
-  html += `<div class="section-title run-detail-inventory-title">Inventory Snapshots</div>`;
-
-  if (run.outcome === 'Survived') {
-    html += `<div class="run-detail-inventory-grid">
-      <div class="run-detail-inventory-card">
-        <label class="field-label" for="detailCargoBefore">Pre-Run Cargo</label>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:80px;font-size:11px" data-inventory-editor>${esc(run.cargo_before || '')}</textarea>
-      </div>
-      <div class="run-detail-inventory-card">
-        <label class="field-label" for="detailCargoAfter">Post-Run Cargo</label>
-        <textarea class="field-textarea" id="detailCargoAfter" style="min-height:80px;font-size:11px" data-inventory-editor data-inventory-compare="detailCargoBefore">${esc(run.cargo_after || '')}</textarea>
-      </div>
-      <div class="run-detail-inventory-card">
-        <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay</label>
-        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:60px;font-size:11px" data-inventory-editor>${esc(run.drone_before || '')}</textarea>
-      </div>
-      <div class="run-detail-inventory-card">
-        <label class="field-label" for="detailDroneAfter">Post-Run Drone Bay ${unchangedDroneBadge}</label>
-        <textarea class="field-textarea" id="detailDroneAfter" style="min-height:60px;font-size:11px" data-inventory-editor data-inventory-compare="detailDroneBefore"${unchangedDroneAttribute}>${esc(displayedDroneAfter)}</textarea>
-      </div>
-    </div>
-    <div class="run-detail-reappraisal-status" id="reappraise-status-${run.id}" role="status" aria-live="polite"></div>
-    <div class="run-detail-actions">
-      <button class="btn gold sm" data-action="reappraise-run" data-run-id="${esc(run.id)}"><span id="reappraise-spinner-${esc(run.id)}" style="display:none" class="spinner"></span> Re-Appraise Loot</button>
-      <button class="btn green sm" id="reappraise-save-${esc(run.id)}" data-action="save-reappraisal" data-run-id="${esc(run.id)}" hidden>Save Changes</button>
-      <button class="btn sm ghost" id="reappraise-discard-${esc(run.id)}" data-action="discard-reappraisal" data-run-id="${esc(run.id)}" hidden>Discard</button>
-      <button class="btn sm ghost" data-action="edit-run" data-run-id="${esc(run.id)}">✎ Edit Run</button>
-      <button class="btn sm red" data-action="delete-run" data-run-id="${esc(run.id)}">Delete Run</button>
-    </div>`;
-  } else {
-    // Died — only pre-run cargo, no post-run
-    html += `<div class="run-detail-inventory-grid">
-      <div class="run-detail-inventory-card">
-        <label class="field-label" for="detailCargoBefore">Pre-Run Cargo (at time of death)</label>
-        <textarea class="field-textarea" id="detailCargoBefore" style="min-height:90px;font-size:11px" readonly data-inventory-editor>${esc(run.cargo_before || '')}</textarea>
-      </div>
-      <div class="run-detail-inventory-card">
-        <label class="field-label" for="detailDroneBefore">Pre-Run Drone Bay (at time of death)</label>
-        <textarea class="field-textarea" id="detailDroneBefore" style="min-height:90px;font-size:11px" readonly data-inventory-editor>${esc(run.drone_before || '')}</textarea>
-      </div>
-    </div>
-    <div class="run-detail-actions">
-      <button class="btn sm ghost" data-action="edit-run" data-run-id="${esc(run.id)}">✎ Edit Run</button>
-      <button class="btn sm red" data-action="delete-run" data-run-id="${esc(run.id)}">Delete Run</button>
-    </div>`;
-  }
-
-  document.getElementById('runDetailContent').innerHTML = html;
-  inventoryEditors.initialize(document.getElementById('runDetailContent'));
-  openModal('runDetailModal');
-}
-
-function setReappraisalStatus(runId, message = '', type = '') {
-  const status = document.getElementById(`reappraise-status-${runId}`);
-  if (!status) return null;
-  status.replaceChildren();
-  if (message) {
-    const alert = document.createElement('div');
-    alert.className = `alert ${type}`;
-    alert.textContent = message;
-    status.append(alert);
-  }
-  return status;
-}
-
-
-function setReappraisalActionsVisible(runId, visible) {
-  const saveButton = document.getElementById(`reappraise-save-${runId}`);
-  const discardButton = document.getElementById(`reappraise-discard-${runId}`);
-  if (saveButton) saveButton.hidden = !visible;
-  if (discardButton) discardButton.hidden = !visible;
-}
-
-const HISTORICAL_REAPPRAISAL_FIELDS = new Set([
-  'detailCargoBefore',
-  'detailCargoAfter',
-  'detailDroneBefore',
-  'detailDroneAfter',
-]);
-
-function invalidateHistoricalReappraisalPreview(element) {
-  const pending = pendingHistoricalReappraisal;
-  if (!pending || !HISTORICAL_REAPPRAISAL_FIELDS.has(element.id)) return;
-  pendingHistoricalReappraisal = null;
-  setReappraisalActionsVisible(pending.runId, false);
-  setReappraisalStatus(
-    pending.runId,
-    'Inventory changed after the preview. Re-appraise again before saving.',
-    'warn'
-  );
-}
-
-async function reappraiseRun(runId) {
-  const statusId = `reappraise-status-${runId}`;
-  const spinnerId = `reappraise-spinner-${runId}`;
-  const statusEl = document.getElementById(statusId);
-  const spinner = document.getElementById(spinnerId);
-  const actionButton = spinner?.closest('button');
-  const cargoBeforeEl = document.getElementById('detailCargoBefore');
-  const cargoAfterEl = document.getElementById('detailCargoAfter');
-  if (!statusEl || !spinner || !cargoBeforeEl || !cargoAfterEl) return;
-
-  if (!S.hasJaniceKey) {
-    setReappraisalStatus(runId, 'Janice API key not set. Go to Settings.', 'err');
-    return;
-  }
-
-  const cargoBefore = cargoBeforeEl.value;
-  const cargoAfter = cargoAfterEl.value;
-  const droneBefore = document.getElementById('detailDroneBefore')?.value || '';
-  const droneAfterEl = document.getElementById('detailDroneAfter');
-  const droneAfter = droneAfterEl?.dataset.inventoryFallback === 'unchanged'
-    ? ''
-    : droneAfterEl?.value || '';
-
-  if (!cargoAfter.trim()) {
-    setReappraisalStatus(runId, 'Post-run cargo is empty - paste it first.', 'warn');
-    return;
-  }
-
-  pendingHistoricalReappraisal = null;
-  setReappraisalActionsVisible(runId, false);
-  spinner.style.display = 'inline-block';
-  if (actionButton) actionButton.disabled = true;
-  statusEl.replaceChildren();
-
-  try {
-    const preview = await appraisalHelpers.appraiseSurvivedInventory({
-      cargoBefore,
-      cargoAfter,
-      droneBefore,
-      droneAfter,
-      appraise: (appraisalItems, pricing) =>
-        window.api.janice.appraise(appraisalItems, pricing),
-    });
-    const appraisal = {
-      loot_value: preview.loot_value,
-      consumed_cost: preview.consumed_cost,
-      net_isk: preview.net_isk,
-      cargo_before: cargoBefore,
-      cargo_after: cargoAfter,
-      drone_before: droneBefore,
-      drone_after: droneAfter,
-      items: preview.items,
-      appraised_at: Math.floor(Date.now() / 1000),
-    };
-    pendingHistoricalReappraisal = { runId, appraisal };
-    setReappraisalActionsVisible(runId, true);
-    setReappraisalStatus(
-      runId,
-      `Preview: ${fmtIsk(preview.loot_value)} loot, ${fmtIsk(preview.consumed_cost)} consumed, ${fmtIsk(preview.net_isk)} net. Save or discard these changes.`,
-      'success'
-    );
-  } catch (error) {
-    setReappraisalStatus(
-      runId,
-      `Re-appraisal failed: ${error?.message || 'Unknown error'}`,
-      'err'
-    );
-  } finally {
-    const currentSpinner = document.getElementById(spinnerId);
-    if (currentSpinner) currentSpinner.style.display = 'none';
-    const currentButton = currentSpinner?.closest('button');
-    if (currentButton) currentButton.disabled = false;
-  }
-}
-
-
-async function saveHistoricalReappraisal(runId) {
-  const pending = pendingHistoricalReappraisal;
-  if (!pending || pending.runId !== runId) {
-    setReappraisalStatus(runId, 'Re-appraise the run before saving changes.', 'warn');
-    return;
-  }
-
-  const saveButton = document.getElementById(`reappraise-save-${runId}`);
-  const discardButton = document.getElementById(`reappraise-discard-${runId}`);
-  if (saveButton) saveButton.disabled = true;
-  if (discardButton) discardButton.disabled = true;
-  setReappraisalStatus(runId, 'Saving re-appraisal changes...', '');
-
-  try {
-    await window.api.runs.updateAppraisal(runId, pending.appraisal);
-    pendingHistoricalReappraisal = null;
-    await refreshSavedRunViews();
-
-    const detailIsOpen = document.getElementById('runDetailModal')?.classList.contains('open')
-      && document.getElementById(`reappraise-status-${runId}`);
-    if (detailIsOpen) {
-      await showRunDetail(runId);
-      setReappraisalStatus(
-        runId,
-        `Re-appraisal saved - Net ISK updated to ${fmtIsk(pending.appraisal.net_isk)}`,
-        'success'
-      );
-    }
-  } catch (error) {
-    setReappraisalStatus(
-      runId,
-      `Could not save re-appraisal: ${error?.message || 'Unknown error'}`,
-      'err'
-    );
-  } finally {
-    const currentSaveButton = document.getElementById(`reappraise-save-${runId}`);
-    const currentDiscardButton = document.getElementById(`reappraise-discard-${runId}`);
-    if (currentSaveButton) currentSaveButton.disabled = false;
-    if (currentDiscardButton) currentDiscardButton.disabled = false;
-  }
-}
-
-async function discardHistoricalReappraisal(runId) {
-  if (!pendingHistoricalReappraisal || pendingHistoricalReappraisal.runId !== runId) {
-    setReappraisalStatus(runId, 'There are no re-appraisal changes to discard.', 'warn');
-    return;
-  }
-
-  pendingHistoricalReappraisal = null;
-  const detailIsOpen = document.getElementById('runDetailModal')?.classList.contains('open')
-    && document.getElementById(`reappraise-status-${runId}`);
-  if (detailIsOpen) {
-    await showRunDetail(runId);
-    setReappraisalStatus(runId, 'Re-appraisal changes discarded.', 'success');
-  }
-}
-
-function itemTableHtml(title, items, priceClass, priceField) {
-  let html = `<div class="appraisal-section"><div class="appraisal-header">${title}</div>
-    <table class="item-table"><thead><tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Total</th></tr></thead><tbody>`;
-  for (const item of items) {
-    const unit = item[priceField] || 0;
-    const total = unit * item.qty;
-    html += `<tr>
-      <td class="name">${esc(item.item_name)}</td>
-      <td class="qty">${item.qty.toLocaleString()}</td>
-      <td class="price ${unit === 0 ? 'zero' : priceClass}">${unit === 0 ? 'no orders' : fmtIsk(unit)}</td>
-      <td class="price ${total === 0 ? 'zero' : priceClass}">${total === 0 ? '—' : fmtIsk(total)}</td>
-    </tr>`;
-  }
-  html += `</tbody></table></div>`;
-  return html;
-}
-
-function shipSetupSectionHtml(title, items) {
-  if (!items.length) return '';
-  let html = `<div class="ship-setup-section">
-    <div class="ship-setup-section-title">${esc(title)}</div>`;
-  for (const item of items) {
-    html += `<div class="ship-setup-row">
-      <span class="ship-setup-item">${esc(item.name)}</span>
-      <span class="ship-setup-qty">×${item.qty.toLocaleString()}</span>
-    </div>`;
-  }
-  return `${html}</div>`;
-}
-
-async function showShipSetup(runId, returnModal = 'runDetailModal') {
-  const run = await window.api.runs.getById(runId);
-  if (!run) return;
-
-  const setupModal = document.getElementById('shipSetupModal');
-  setupModal.dataset.returnModal = returnModal;
-  const closeButton = setupModal.querySelector('[data-action="close-ship-setup"]');
-  closeButton.setAttribute('aria-label', returnModal ? 'Back to run details' : 'Back to statistics');
-  const grouped = window.AbyssFitting.groupSnapshot(run.fitting, run.implants);
-  const summary = window.AbyssFitting.summarizeSnapshot(run.fitting, run.implants);
-  const hullName = grouped.hull?.name || run.hull_name || 'Unknown ship';
-  const startedAt = new Date(run.started_at * 1000);
-  const runContext = [run.tier, run.weather]
-    .filter(value => value && value !== 'Unknown')
-    .join(' ');
-
-  document.getElementById('shipSetupTitle').textContent = 'Fit & Implants';
-  let html = `<div class="ship-setup-meta">
-    <div class="ship-setup-hull">${esc(hullName)}</div>
-    <div class="ship-setup-context">${esc(
-      ['Captured at run start', runContext, startedAt.toLocaleString()]
-        .filter(Boolean)
-        .join(' · ')
-    )}</div>
-  </div>`;
-
-  for (const section of window.AbyssFitting.DISPLAY_SECTIONS) {
-    html += shipSetupSectionHtml(section.label, grouped.sections[section.id]);
-  }
-  html += shipSetupSectionHtml('Implants', grouped.implants);
-
-  if (summary.unclassifiedCount > 0) {
-    html += `<div class="alert warn">${summary.unclassifiedCount} unclassified fitted item${summary.unclassifiedCount === 1 ? '' : 's'} will not be included in the EVE clipboard export.</div>`;
-  }
-  html += `<div class="field-note">
-    Implants are included as cargo in the copied fitting. Loaded charges and other cargo may not be included.
-  </div>
-  <div id="copyFittingStatus" role="status" aria-live="polite" style="margin-top:10px"></div>
-  <div class="ship-setup-actions">
-    <button class="btn gold" data-action="copy-run-fitting" data-run-id="${esc(run.id)}">Copy to Clipboard</button>
-    <button class="btn sm ghost" data-action="close-ship-setup">${returnModal ? 'Back to run details' : 'Back to statistics'}</button>
-  </div>`;
-
-  document.getElementById('shipSetupContent').innerHTML = html;
-  closeModal('runDetailModal');
-  openModal('shipSetupModal');
-}
-
-function closeShipSetupModal() {
-  const returnModal = document.getElementById('shipSetupModal').dataset.returnModal;
-  closeModal('shipSetupModal');
-  if (returnModal) openModal(returnModal);
-}
-
-async function copyRunFitting(runId) {
-  const status = document.getElementById('copyFittingStatus');
-  if (status) status.innerHTML = '';
-  const result = await window.api.runs.copyFitting(runId);
-  if (!status) return;
-  status.innerHTML = result.omittedItemCount > 0
-    ? `<div class="alert warn">Fitting copied. Implants are included as cargo; ${result.omittedItemCount} unclassified item${result.omittedItemCount === 1 ? ' was' : 's were'} omitted.</div>`
-    : '<div class="alert success">Fitting copied. Implants are included as cargo.</div>';
-}
-
-async function deleteRun(runId) {
-  if (!confirm('Delete this run? This cannot be undone.')) return;
-  await window.api.runs.delete(runId);
-  closeModal('runDetailModal');
-  await refreshSavedRunViews();
-}
-
 // ── Stats ─────────────────────────────────────────────────────────────────
 const statsView = statsViewHelpers.createStatsView({
   document,
@@ -2462,245 +1956,6 @@ function renderStats() {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────
-function loadSettingsPage() {
-  const keyInput = document.getElementById('janiceKeyInput');
-  keyInput.value = '';
-  keyInput.disabled = !S.secureStorage.available;
-  keyInput.placeholder = S.hasJaniceKey
-    ? 'Saved securely — enter a replacement'
-    : 'Your Janice API key...';
-  document.getElementById('removeJaniceKeyBtn').style.display = S.hasJaniceKey ? 'inline-flex' : 'none';
-
-  const storageStatus = document.getElementById('secureStorageStatus');
-  storageStatus.textContent = S.secureStorage.available
-    ? `Credentials are protected by the operating system (${S.secureStorage.backend}).`
-    : 'Secure credential storage is unavailable. Sign-in and API-key storage are disabled.';
-  storageStatus.style.color = S.secureStorage.available ? 'var(--text-dim)' : 'var(--red)';
-
-  if (S.settings.esi_poll_interval) document.getElementById('pollIntervalInput').value = S.settings.esi_poll_interval;
-  if (S.settings.default_tier) document.getElementById('defaultTierInput').value = S.settings.default_tier;
-  if (S.settings.default_weather) document.getElementById('defaultWeatherInput').value = S.settings.default_weather;
-  renderCharList();
-  renderDataStatus();
-  renderDiagnosticsStatus();
-}
-
-// Backup value rendering uses the shared formatBytes alias.
-
-function renderDataStatus() {
-  if (!S.dataStatus) return;
-  const summary = document.getElementById('backupSummary');
-  const location = document.getElementById('backupLocation');
-  const createButton = document.getElementById('createBackupBtn');
-
-  if (!S.dataStatus.automaticBackupsEnabled) {
-    summary.textContent = 'Automatic backups are paused until secure credential storage is available.';
-  } else if (S.dataStatus.latestBackup) {
-    const backupDate = new Date(S.dataStatus.latestBackup.createdAt);
-    summary.textContent = `Latest full backup: ${backupDate.toLocaleString()} (${formatBytes(S.dataStatus.latestBackup.size)}).`;
-  } else {
-    summary.textContent = 'No full database backup has been created yet.';
-  }
-  location.textContent = `Backup folder: ${S.dataStatus.backupDirectory}`;
-  createButton.disabled = !S.dataStatus.automaticBackupsEnabled;
-}
-
-function renderDiagnosticsStatus() {
-  if (!S.diagnosticsStatus) return;
-  const summary = document.getElementById('diagnosticsSummary');
-  const location = document.getElementById('diagnosticsLocation');
-  const openButton = document.getElementById('openDiagnosticsFolderBtn');
-  const copyButton = document.getElementById('copyDiagnosticsBtn');
-  if (!S.diagnosticsStatus.available) {
-    summary.textContent = 'Local diagnostics are unavailable in this session.';
-    summary.style.color = 'var(--red)';
-    location.textContent = '';
-    openButton.disabled = true;
-    copyButton.disabled = true;
-    return;
-  }
-  summary.style.color = 'var(--text-dim)';
-  summary.textContent =
-    `Local diagnostics are retained for ${S.diagnosticsStatus.retentionDays} days, up to ${S.diagnosticsStatus.maxFiles} files of ${formatBytes(S.diagnosticsStatus.maxFileBytes)} each.`;
-  location.textContent = `Diagnostics folder: ${S.diagnosticsStatus.directory}`;
-  openButton.disabled = false;
-  copyButton.disabled = false;
-}
-
-async function createFullBackup() {
-  const status = document.getElementById('backupActionStatus');
-  status.textContent = 'Creating backup...';
-  status.className = 'alert';
-  status.style.display = 'block';
-  try {
-    await window.api.data.createBackup();
-    S.dataStatus = await window.api.data.getStatus();
-    renderDataStatus();
-    status.textContent = 'Full database backup created successfully.';
-    status.className = 'alert success';
-  } catch (error) {
-    status.textContent = `Backup failed: ${error.message}`;
-    status.className = 'alert err';
-  }
-}
-
-async function restoreFullBackup() {
-  const status = document.getElementById('backupActionStatus');
-  const restoreButton = document.querySelector('[data-action="restore-full-backup"]');
-  restoreButton.disabled = true;
-  status.textContent = 'Select a full backup to restore...';
-  status.className = 'alert';
-  status.style.display = 'block';
-
-  try {
-    const result = await window.api.data.restoreBackup();
-    if (!result.success) {
-      status.textContent = 'Restore cancelled. No data was changed.';
-      status.className = 'alert';
-      restoreButton.disabled = false;
-      return;
-    }
-
-    status.textContent = 'Backup restored successfully. AbyssLog is restarting...';
-    status.className = 'alert success';
-  } catch (error) {
-    status.textContent = `Restore failed: ${error.message}`;
-    status.className = 'alert err';
-    restoreButton.disabled = false;
-  }
-}
-
-async function openBackupFolder() {
-  const status = document.getElementById('backupActionStatus');
-  try {
-    await window.api.data.openBackupFolder();
-  } catch (error) {
-    status.textContent = `Could not open backup folder: ${error.message}`;
-    status.className = 'alert err';
-    status.style.display = 'block';
-  }
-}
-
-async function openDiagnosticsFolder() {
-  const status = document.getElementById('diagnosticsActionStatus');
-  await window.api.diagnostics.openFolder();
-  status.textContent = 'Diagnostics folder opened.';
-  status.className = 'alert success';
-  status.style.display = 'block';
-}
-
-async function copyDiagnostics() {
-  const status = document.getElementById('diagnosticsActionStatus');
-  await window.api.diagnostics.copySummary();
-  status.textContent = 'Diagnostics copied to clipboard.';
-  status.className = 'alert success';
-  status.style.display = 'block';
-}
-
-async function testJaniceKey() {
-  const apiKey = document.getElementById('janiceKeyInput').value.trim();
-  const resultEl = document.getElementById('janiceTestResult');
-  if (!apiKey && !S.hasJaniceKey) {
-    resultEl.textContent = 'Enter an API key first.';
-    resultEl.className = 'alert err';
-    resultEl.style.display = 'block';
-    return;
-  }
-  resultEl.textContent = 'Testing...';
-  resultEl.className = 'alert';
-  resultEl.style.display = 'block';
-  try {
-    const result = apiKey
-      ? await window.api.janice.testKey(apiKey)
-      : await window.api.janice.appraise([{ name: 'Tritanium', qty: 1 }], 'buy');
-    if (result && result.items && result.items.length > 0) {
-      const price = result.items[0].effectivePrices.buyPrice;
-      resultEl.textContent = `✓ API key valid — Tritanium buy price: ${fmtIsk(price)} ISK`;
-      resultEl.className = 'alert success';
-    } else {
-      resultEl.textContent = 'Key accepted but no price data returned.';
-      resultEl.className = 'alert warn';
-    }
-  } catch(e) {
-    resultEl.textContent = `✗ Test failed: ${e.message}`;
-    resultEl.className = 'alert err';
-  }
-}
-
-function toggleJaniceKey(btn) {
-  const input = document.getElementById('janiceKeyInput');
-  const show = input.type === 'password';
-  input.type = show ? 'text' : 'password';
-  btn.textContent = show ? 'Hide' : 'Show';
-  btn.setAttribute('aria-pressed', String(show));
-}
-
-async function removeJaniceKey() {
-  if (!confirm('Remove the saved Janice API key?')) return;
-  await window.api.secrets.deleteJaniceKey();
-  S.hasJaniceKey = false;
-  loadSettingsPage();
-  const resultEl = document.getElementById('janiceTestResult');
-  resultEl.textContent = 'Saved API key removed.';
-  resultEl.className = 'alert success';
-  resultEl.style.display = 'block';
-}
-
-async function exportCSV() {
-  const result = await window.api.runs.exportCSV({ character_id: S.activeCharId || undefined });
-  const el = document.getElementById('csvStatus');
-  if (result.success) {
-    el.innerHTML = `<div class="alert success">Exported to ${esc(result.filePath)}</div>`;
-  } else {
-    el.innerHTML = '';
-  }
-  el.style.display = 'block';
-}
-
-async function importCSV() {
-  const result = await window.api.runs.importCSV(S.activeCharId || null);
-  const el = document.getElementById('csvStatus');
-  if (!result.success) { el.style.display = 'none'; return; }
-  let msg = `<div class="alert success">Imported ${result.imported} run${result.imported !== 1 ? 's' : ''}`;
-  if (result.skipped) msg += `, ${result.skipped} skipped (duplicates)`;
-  msg += '.</div>';
-  if (result.errors && result.errors.length) {
-    msg += `<div class="alert warn" style="margin-top:6px">${result.errors.slice(0,3).map(esc).join('<br>')}</div>`;
-  }
-  el.innerHTML = msg;
-  el.style.display = 'block';
-  await refreshSavedRunViews();
-}
-
-async function saveSettings() {
-  const previousPollInterval = S.settings.esi_poll_interval;
-  const apiKey = document.getElementById('janiceKeyInput').value.trim();
-  const updates = {
-    esi_poll_interval: document.getElementById('pollIntervalInput').value,
-    default_tier: document.getElementById('defaultTierInput').value,
-    default_weather: document.getElementById('defaultWeatherInput').value,
-  };
-  if (apiKey) {
-    await window.api.secrets.setJaniceKey(apiKey);
-    S.hasJaniceKey = true;
-  }
-  for (const [key, value] of Object.entries(updates)) {
-    await window.api.settings.set(key, value);
-  }
-  S.settings = { ...S.settings, ...updates };
-  if (
-    String(previousPollInterval || '') !== String(updates.esi_poll_interval || '')
-    && S.activeCharId
-    && S.capabilities.tracking
-  ) {
-    startESIPoll();
-  }
-  loadSettingsPage();
-  const msg = document.getElementById('settingsSaved');
-  msg.style.display = 'block';
-  setTimeout(() => msg.style.display = 'none', 2500);
-}
-
 function renderCharList() {
   const el = document.getElementById('charList');
   if (!S.characters.length) {
@@ -2817,7 +2072,7 @@ const modalController = modalHelpers.createModalController({
     return close(id);
   },
   onDidClose: id => {
-    if (id === 'runDetailModal') pendingHistoricalReappraisal = null;
+    if (id === 'runDetailModal') runDetailsController.clearPendingReappraisal();
   },
 });
 
@@ -2832,6 +2087,16 @@ function closeModal(id) {
 function requestCloseModal(id) {
   return modalController.requestClose(id);
 }
+const fitNameController = fitNameHelpers.createFitNameController({
+  document,
+  api: window.api,
+  openModal,
+  closeModal,
+  onSaved: async () => {
+    await Promise.all([renderStats(), renderHistory()]);
+  },
+});
+
 
 function getSelectedCapabilities() {
   return [
@@ -2899,7 +2164,6 @@ const clickActions = {
   'open-external': element => openExternal(element.dataset.url),
   'check-for-updates': () => checkForUpdates(),
   'save-settings': () => saveSettings(),
-  'export-csv': () => exportCSV(),
   'import-csv': () => importCSV(),
   'create-full-backup': () => createFullBackup(),
   'restore-full-backup': () => restoreFullBackup(),
@@ -2923,6 +2187,9 @@ const clickActions = {
     Number(element.dataset.runId),
     element.dataset.returnModal === 'none' ? '' : 'runDetailModal'
   ),
+  'edit-fit-name': element => fitNameController.open(element),
+  'save-fit-name': () => fitNameController.save(),
+  'clear-fit-name': () => fitNameController.clear(),
   'copy-run-fitting': element => copyRunFitting(Number(element.dataset.runId)),
   'close-ship-setup': () => closeShipSetupModal(),
   'reappraise-run': element => reappraiseRun(Number(element.dataset.runId)),
@@ -2954,7 +2221,6 @@ const actionFailureContexts = Object.freeze({
   'open-external': 'Could not open the external link',
   'check-for-updates': 'Could not check for updates',
   'save-settings': 'Could not save settings',
-  'export-csv': 'Could not export run history',
   'import-csv': 'Could not import run history',
   'create-full-backup': 'Could not create a backup',
   'restore-full-backup': 'Could not restore a backup',
@@ -2974,6 +2240,9 @@ const actionFailureContexts = Object.freeze({
   'show-run-detail': 'Could not open the run details',
   'show-ship-setup': 'Could not open the captured ship setup',
   'copy-run-fitting': 'Could not copy the fitting',
+  'edit-fit-name': 'Could not open fit name editor',
+  'save-fit-name': 'Could not save fit name',
+  'clear-fit-name': 'Could not clear fit name',
   'reappraise-run': 'Could not re-appraise the run',
   'edit-run': 'Could not edit the run',
   'delete-run': 'Could not delete the run',

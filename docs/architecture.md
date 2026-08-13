@@ -27,6 +27,11 @@ network access are blocked.
 - src/renderer/ui-formatters.js owns shared ISK, duration, and byte formatting.
 - src/renderer/run-session-controller.js owns checkpoint serialization and
   appraisal/finalization generations.
+- src/renderer/ui-task-controller.js owns UI error reporting, diagnostics, and recovery wrappers.
+- src/renderer/support-settings-controller.js owns settings, backup/restore, CSV, diagnostics, and Janice-key interactions.
+- src/renderer/loadout-controller.js owns loadout preset selection, editing, persistence, and application.
+- src/renderer/run-details-controller.js owns historical details, re-appraisal, captured setup, clipboard export, and deletion.
+- src/renderer/fit-name-controller.js owns canonical-fit display-name editing.
 - src/renderer/stats-view.js owns statistics range controls, session and analytics markup, and charts.
 - src/renderer/history-view.js owns history filter mapping, sorting, result generations, and match context.
 - src/renderer/styles/app.css owns the application stylesheet.
@@ -34,7 +39,8 @@ network access are blocked.
 - src/main/preload.js defines the renderer-to-main contract.
 - src/main/main.js bootstraps Electron and composes main-process services.
 - src/main/ipc-guard.js owns trusted-sender checks, restore blocking, bounded payload validation, and guarded handler registration.
-- src/main/credential-service.js owns safeStorage-backed OAuth and Janice credential persistence.
+- src/main/credential-service.js owns safeStorage encryption, credential validation, and one-time v4 credential normalization.
+- src/main/database/credential-repository.js exclusively owns dedicated credential-table persistence and format markers.
 - src/main/ipc contains feature registrars for authenticated IPC channels.
 - src/main/database.js is the stable facade for local persistence.
 - src/main/database/facade.js composes persistence without owning SQL or Electron lifecycle details.
@@ -53,14 +59,15 @@ network access are blocked.
    protocol before the application becomes ready.
 2. The main process acquires the single-instance lock.
 3. Diagnostics and the SQLite connection are initialized.
-4. Schema migrations and legacy secret migration run before the window opens.
-5. The BrowserWindow is created with sandboxing, context isolation, and Node
+4. Schema migration runs before the window opens. A v4 database receives a verified pre-migration copy before the transactional v5 migration.
+5. Credentials marked as migrated-v4 format are normalized once through safeStorage before use.
+6. The BrowserWindow is created with sandboxing, context isolation, and Node
    integration disabled.
-6. The renderer loads settings, characters, secure-storage status, backup
+7. The renderer loads settings, characters, secure-storage status, backup
    status, diagnostics status, and loadout presets concurrently.
-7. The selected character is restored, followed by its active run checkpoint or
+8. The selected character is restored, followed by its active run checkpoint or
    most recent survived inventory baseline.
-8. ESI polling starts only if that character granted the tracking capability.
+9. ESI polling starts only if that character granted the tracking capability.
 
 ## Run state machine
 
@@ -151,37 +158,34 @@ every asynchronous render is guarded by a request generation.
 
 CSV export receives the same canonical filters as the visible History query. The main
 process labels the save dialog and result as filtered history or all history and reports
-the exported row count. Statistics exposes hull summaries as `byHull`; fit rows use a
-representative run only as a drill-through reference, with equivalence calculated from
-the captured hull, modules, drones, and implants.
+the exported row count. Statistics exposes hull summaries as `byHull`; each fit row references a persisted canonical fit identity. Equivalence is calculated only from the captured hull, modules, drones, and implants. A user-defined display name belongs to that identity, is exposed separately from captured snapshots, and never participates in equivalence.
 
 ## Persistence
 
 SQLite runs in WAL mode with foreign keys and secure deletion enabled.
 
 - characters stores public EVE character identity.
-- settings stores public preferences plus encrypted credential blobs.
-- runs stores run metadata, system name, appraisal timestamp, raw inventory snapshots, and canonical `hull_name`. Schema v4 transactionally renames the v1.1.4 `ship_name` column without changing its hull-type values.
+- settings stores public preferences only.
+- credentials stores safeStorage ciphertext for OAuth tokens and the Janice key. Rows migrated from v4 are marked format 0 until normalized once; all current writes use format 1.
+- runs stores run metadata, system name, appraisal timestamp, raw inventory snapshots, canonical `hull_name`, and an optional canonical-fit identity reference.
+- fit_identities stores the canonical captured-setup signature, compact key, captured hull type, and optional user display name.
 - run_items stores gained, consumed, and lost appraisal rows.
 - run_tags and run_killmails store searchable tags and verified loss provenance.
 - run_fitting and run_implants store optional loss snapshots.
 - active_run_state stores one versioned recovery snapshot per character.
 
-Recovery snapshots use version 2 and `hull_name`. Schema v4 upgrades version 1 snapshots
-inside the same migration transaction. The CSV importer alone continues to accept the
-v1.1.4 `ship_name` header; all runtime payloads and new exports use `hull_name`.
+Recovery snapshots use version 2 and canonical `hull_name`. CSV import, runtime payloads, and exports require `hull_name`; `ship_name` compatibility is not retained.
 
-OAuth tokens and the Janice key are encrypted through Electron safeStorage
-before reaching settings. Plaintext fallback storage is rejected.
+Schema v5 accepts only the v1.1.5 schema-v4 baseline. The v4-to-v5 migration creates credential and fit-identity tables, moves encrypted credentials out of settings, backfills canonical fit identities, adds validation constraints/triggers and indexes, and writes the AbyssLog SQLite application ID. Older schemas are rejected without mutation. Plaintext credential storage is rejected.
 
 ## Backup and restore
 
 Clean exit creates a verified daily full-database backup and retains seven
 automatic backups. Manual backups use unique timestamps.
 
-Restore stages and validates a private copy, creates a before-restore safety
-backup, swaps the live database, runs migrations against the restored copy, and
-rolls back if opening or migration fails.
+Before a v4-to-v5 migration, the lifecycle service closes and checkpoints the database, creates a retained byte-for-byte copy, and verifies its integrity and schema version. Migration and all backfills then run in one transaction.
+
+Restore accepts v4 and v5 AbyssLog backups only. It stages and validates a private copy, creates a before-restore safety backup, swaps the live database, runs the transactional migration when required, and rolls back if opening or migration fails.
 
 ## Change rules
 
@@ -190,6 +194,8 @@ rolls back if opening or migration fails.
 - Treat character switches, cancellation, and finalization as cancellation
   boundaries for every asynchronous renderer workflow.
 - Preserve the database facade and preload API across internal refactors.
+- Treat schema v4 as the only upgrade baseline; add no pre-v4 adapters without an explicit compatibility decision.
+- Keep canonical fit aliases metadata-only and outside fit equivalence signatures.
 - Add a race regression test whenever a workflow performs multiple awaits while
   holding a reference to mutable renderer state.
 - Prefer feature registrars and repositories over adding more responsibilities

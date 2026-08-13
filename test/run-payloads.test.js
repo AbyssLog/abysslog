@@ -17,6 +17,9 @@ test('run payloads expose canonical summaries without storage-only fields', () =
   const summary = mapRunSummary(buildRun({
     id: 42,
     character_name: 'Abyss Pilot',
+    fit_identity_id: 7,
+    fit_key: 'abc12345',
+    fit_display_name: 'Gamma Runner',
     created_at: 1,
     internal_value: 'not renderer-facing',
     tags: ['Farm'],
@@ -24,6 +27,9 @@ test('run payloads expose canonical summaries without storage-only fields', () =
   }));
 
   assert.equal(summary.hull_name, 'Gila');
+  assert.equal(summary.fit_identity_id, 7);
+  assert.equal(summary.fit_key, 'abc12345');
+  assert.equal(summary.fit_display_name, 'Gamma Runner');
   assert.equal('ship_name' in summary, false);
   assert.equal('created_at' in summary, false);
   assert.equal('internal_value' in summary, false);

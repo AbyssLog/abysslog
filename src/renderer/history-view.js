@@ -80,7 +80,7 @@
       if (filters.hull) labels.push('Hull: ' + filters.hull);
       if (filters.hull_name) labels.push('Hull: ' + filters.hull_name);
       if (filters.ship_class) labels.push('Hull class: ' + filters.ship_class);
-      if (filters.fit_reference_run_id) labels.push('Equivalent fit');
+      if (filters.fit_identity_id) labels.push('Equivalent fit');
       if (filters.tag) labels.push('Tag: ' + filters.tag);
       const dateFrom = document.getElementById('historyDateFrom')?.value;
       const dateTo = document.getElementById('historyDateTo')?.value;
@@ -221,12 +221,17 @@
         const shipContext = run.hull_name && run.ship_class
           ? '<div class="history-ship-class">' + escapeHtml(run.ship_class) + '</div>'
           : '';
+        const displayedShip = run.fit_display_name || ship;
+        const displayedShipContext = run.fit_display_name && run.hull_name
+          ? '<div class="history-ship-class">' + escapeHtml(
+            run.hull_name + (run.ship_class ? ' / ' + run.ship_class : '')
+          ) + '</div>' : shipContext;
         html += '<tr>'
           + '<td class="mono">' + date.toLocaleDateString() + ' '
           + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</td>'
           + '<td><span class="badge tier">' + escapeHtml(run.tier || '—') + '</span></td>'
           + '<td><span class="badge weather">' + escapeHtml(run.weather || '—') + '</span></td>'
-          + '<td class="history-ship">' + escapeHtml(ship) + shipContext + '</td>'
+          + '<td class="history-ship">' + escapeHtml(displayedShip) + displayedShipContext + '</td>'
           + '<td class="mono">' + formatDuration(run.duration) + '</td>'
           + '<td><span class="badge ' + (run.outcome === 'Survived' ? 'survived' : 'died')
           + '">' + escapeHtml(run.outcome) + '</span></td>'

@@ -7,20 +7,24 @@ const appJs = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'renderer', 'app.js'),
   'utf8'
 );
+const runDetailsJs = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'renderer', 'run-details-controller.js'),
+  'utf8'
+);
 
-function functionSource(name, nextName) {
-  const start = appJs.indexOf(`function ${name}`);
-  const end = appJs.indexOf(`function ${nextName}`, start + 1);
+function functionSource(source, name, nextName) {
+  const start = source.indexOf(`function ${name}`);
+  const end = source.indexOf(`function ${nextName}`, start + 1);
   assert.notEqual(start, -1, `${name} was not found`);
   assert.notEqual(end, -1, `${nextName} was not found`);
-  return appJs.slice(start, end);
+  return source.slice(start, end);
 }
 
 test('historical re-appraisal stages changes until Save and supports Discard', () => {
-  const statusHelper = functionSource('setReappraisalStatus', 'reappraiseRun');
-  const reappraise = functionSource('reappraiseRun', 'saveHistoricalReappraisal');
-  const save = functionSource('saveHistoricalReappraisal', 'discardHistoricalReappraisal');
-  const discard = functionSource('discardHistoricalReappraisal', 'itemTableHtml');
+  const statusHelper = functionSource(runDetailsJs, 'setReappraisalStatus', 'reappraiseRun');
+  const reappraise = functionSource(runDetailsJs, 'reappraiseRun', 'saveHistoricalReappraisal');
+  const save = functionSource(runDetailsJs, 'saveHistoricalReappraisal', 'discardHistoricalReappraisal');
+  const discard = functionSource(runDetailsJs, 'discardHistoricalReappraisal', 'itemTableHtml');
 
   assert.match(statusHelper, /if \(!status\) return null/);
   assert.match(statusHelper, /status\.replaceChildren\(\)/);
@@ -30,7 +34,7 @@ test('historical re-appraisal stages changes until Save and supports Discard', (
   assert.doesNotMatch(reappraise, /runs\.updateAppraisal/);
   assert.match(reappraise, /finally \{/);
 
-  assert.match(save, /await window\.api\.runs\.updateAppraisal\(runId, pending\.appraisal\)/);
+  assert.match(save, /await api\.runs\.updateAppraisal\(runId, pending\.appraisal\)/);
   assert.match(save, /await refreshSavedRunViews\(\)/);
   assert.match(save, /await showRunDetail\(runId\)/);
   assert.match(discard, /pendingHistoricalReappraisal = null/);
@@ -43,7 +47,7 @@ test('run editing exposes Re-Appraise, Save, and Cancel with staged appraisal va
     path.join(__dirname, '..', 'src', 'renderer', 'index.html'),
     'utf8'
   );
-  const editFlow = functionSource('submitManualEntry', 'cancelRun');
+  const editFlow = functionSource(appJs, 'submitManualEntry', 'cancelRun');
 
   assert.match(html, /id="manualSaveBtn"[^>]*>Save<\/button>/);
   assert.match(html, /data-action="close-manual-entry">Cancel<\/button>/);
