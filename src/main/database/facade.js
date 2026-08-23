@@ -2,10 +2,10 @@ const { createBackupService } = require('./backup-service');
 const { createCharacterSettingsRepository } = require('./character-settings-repository');
 const { createCredentialRepository } = require('./credential-repository');
 const { createDatabaseLifecycle } = require('./lifecycle-service');
-const { createInventoryBaselineRepository } = require('./inventory-baseline-repository');
-const { createRunCsvRepository } = require('./run-csv-repository');
-const { createRunRepository } = require('./run-repository');
-const { createStatisticsRepository } = require('./statistics-repository');
+const { createInventoryBaselineRepository } = require('./inventory-baseline-repository-v6');
+const { createRunCsvRepository } = require('./run-csv-repository-v6');
+const { createRunRepository } = require('./run-repository-v6');
+const { createStatisticsRepository } = require('./statistics-repository-v6');
 
 const lifecycle = createDatabaseLifecycle();
 const getConnection = () => lifecycle.getConnection();
@@ -15,7 +15,11 @@ const credentials = createCredentialRepository(getConnection);
 const inventoryBaselines = createInventoryBaselineRepository(getConnection, characterSettings);
 const runRepository = createRunRepository(getConnection);
 const statisticsRepository = createStatisticsRepository(getConnection);
-const runCsvRepository = createRunCsvRepository(getConnection, runRepository.getRuns);
+const runCsvRepository = createRunCsvRepository(
+  getConnection,
+  runRepository.getRuns,
+  runRepository.saveRun
+);
 const backups = createBackupService(lifecycle);
 
 function deleteCharacter(characterId) {
@@ -55,6 +59,7 @@ module.exports = Object.freeze({
   updateRun: runRepository.updateRun,
   getRuns: runRepository.getRuns,
   getRunById: runRepository.getRunById,
+  getAppraisalHistory: runRepository.getAppraisalHistory,
   deleteRun: runRepository.deleteRun,
   getStats: statisticsRepository.getStats,
   getDailyStats: statisticsRepository.getDailyStats,

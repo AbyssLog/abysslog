@@ -50,6 +50,10 @@ function registerRunHandlers({
     const id = security.requireInteger(runId, 'Run ID');
     return runPayloads.mapRunDetail(database.getRunById(id));
   });
+  secureHandle('runs:get-appraisal-history', runId => {
+    const id = security.requireInteger(runId, 'Run ID');
+    return database.getAppraisalHistory(id).map(runPayloads.mapAppraisalHistoryItem);
+  });
   secureHandle('runs:copy-fitting', runId => {
     const id = security.requireInteger(runId, 'Run ID');
     const run = database.getRunById(id);

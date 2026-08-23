@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const {
@@ -41,9 +42,14 @@ function createBackupService(lifecycle) {
       throw new Error('The selected backup is not a non-empty file');
     }
 
+    const inspectionDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'abysslog-backup-inspect-')
+    );
+    const inspectionPath = path.join(inspectionDirectory, 'backup.db');
     let backupDb;
     try {
-      backupDb = lifecycle.openConnection(filePath, { readonly: true, fileMustExist: true });
+      fs.copyFileSync(filePath, inspectionPath, fs.constants.COPYFILE_EXCL);
+      backupDb = lifecycle.openConnection(inspectionPath, { readonly: true, fileMustExist: true });
       lifecycle.assertConnectionIntegrity(backupDb);
       const schemaVersion = backupDb.pragma('user_version', { simple: true });
       const applicationId = backupDb.pragma('application_id', { simple: true });
@@ -80,6 +86,7 @@ function createBackupService(lifecycle) {
       };
     } finally {
       if (backupDb?.open) backupDb.close();
+      fs.rmSync(inspectionDirectory, { recursive: true, force: true });
     }
   }
 

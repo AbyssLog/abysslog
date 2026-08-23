@@ -31,7 +31,9 @@ are always created as drafts first.
 - [ ] In the current installed version, create a manual backup from
       **Settings → Data & Recovery** and copy it outside the application data
       directory.
-- [ ] Install the release candidate over the previous public version.
+- [ ] Install the release candidate over the previous public version, or over
+      the documented private migration candidate when a deliberately removed
+      database schema makes a direct public-version upgrade unsupported.
 - [ ] Confirm existing characters, settings, run history, and remembered
       inventory baseline are retained.
 - [ ] Confirm an unfinished run is recovered after restarting the application.
@@ -83,8 +85,8 @@ are always created as drafts first.
 Create an annotated tag only after the release commit is on `main`:
 
 ```bash
-git tag -a v1.1.3 -m "AbyssLog v1.1.3"
-git push origin v1.1.3
+git tag -a v1.2.0 -m "AbyssLog v1.2.0"
+git push origin v1.2.0
 ```
 
 - [ ] Confirm the Release workflow succeeds.
@@ -92,8 +94,8 @@ git push origin v1.1.3
 - [ ] Download the installer and `SHA256SUMS.txt` from the draft.
 - [ ] Verify the installer's SHA-256 checksum.
 - [ ] Install that exact downloaded asset on a clean Windows profile.
-- [ ] Install it over the previous public version and repeat the critical
-      upgrade checks.
+- [ ] Install it over the applicable supported predecessor and repeat the
+      critical data-retention checks.
 - [ ] Review generated release notes for private information, internal details,
       and clarity.
 - [ ] Confirm the draft contains only the installer, update metadata, blockmap,

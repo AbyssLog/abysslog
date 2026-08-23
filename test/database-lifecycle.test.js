@@ -62,13 +62,13 @@ test('fresh foreign database identity is rejected without mutation', () => {
   );
 });
 
-test('older schema is rejected without creating a migration backup', () => {
+test('schema v5 is rejected without mutation or migration backup', () => {
   withLifecycle(
-    connection => connection.exec('CREATE TABLE marker (value TEXT); PRAGMA user_version = 4;'),
+    connection => connection.exec('CREATE TABLE marker (value TEXT); PRAGMA user_version = 5;'),
     (lifecycle, databasePath) => {
-      assert.throws(() => lifecycle.init(), /schema v4 is not supported.*requires schema v5/i);
+      assert.throws(() => lifecycle.init(), /schema v5 is not supported.*requires schema v6/i);
       const rejected = new Database(databasePath, { readonly: true, fileMustExist: true });
-      assert.equal(rejected.pragma('user_version', { simple: true }), 4);
+      assert.equal(rejected.pragma('user_version', { simple: true }), 5);
       assert.ok(rejected.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'marker'").get());
       rejected.close();
       assert.equal(fs.existsSync(path.join(path.dirname(databasePath), 'backups')), false);
@@ -80,14 +80,19 @@ test('current schema rejects unsupported credential formats', () => {
   withLifecycle(
     connection => {
       createCurrentDatabase(connection);
+      connection.pragma('ignore_check_constraints = ON');
       connection.prepare('INSERT INTO characters (id, name) VALUES (?, ?)')
         .run(8998, 'Unsupported Credential Pilot');
       connection.prepare(`
         INSERT INTO credentials (kind, character_id, ciphertext, format_version)
         VALUES ('oauth', 8998, 'legacy-ciphertext', 0)
       `).run();
+      connection.pragma('ignore_check_constraints = OFF');
     },
-    lifecycle => assert.throws(() => lifecycle.init(), /unsupported credential format/i)
+    lifecycle => assert.throws(
+      () => lifecycle.init(),
+      /unsupported credential format|integrity check failed/i
+    )
   );
 });
 

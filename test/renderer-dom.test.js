@@ -27,6 +27,7 @@ const rendererScripts = [
   'src/renderer/loadout-controller.js',
   'src/renderer/ui-task-controller.js',
   'src/renderer/support-settings-controller.js',
+  'src/renderer/appraisal-history-view.js',
   'src/renderer/run-details-controller.js',
   'src/renderer/fit-name-controller.js',
   'src/renderer/manual-run-controller.js',

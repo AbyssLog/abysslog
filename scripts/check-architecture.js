@@ -16,6 +16,7 @@ const budgets = new Map([
   ['src/renderer/app.js', 1950],
   ['src/renderer/index.html', 750],
   ['src/renderer/run-details-controller.js', 500],
+  ['src/renderer/appraisal-history-view.js', 60],
   ['src/renderer/support-settings-controller.js', 310],
   ['src/renderer/loadout-controller.js', 200],
   ['src/renderer/ui-task-controller.js', 80],
@@ -27,8 +28,12 @@ const budgets = new Map([
   ['src/main/database.js', 40],
   ['src/main/database/facade.js', 100],
   ['src/main/database/schema.js', 380],
-  ['src/main/database/schema-contract.js', 160],
+  ['src/main/database/schema-contract-v6.js', 230],
   ['src/main/database/lifecycle-service.js', 180],
+  ['src/main/database/run-repository-v6.js', 450],
+  ['src/main/database/run-query-repository-v6.js', 250],
+  ['src/main/database/run-csv-repository-v6.js', 350],
+  ['src/main/database/run-csv-validation-v6.js', 210],
 ]);
 
 for (const [relativePath, maximumLines] of budgets) {
@@ -45,7 +50,7 @@ const main = read('src/main/main.js');
 const database = read('src/main/database.js');
 const databaseFacade = read('src/main/database/facade.js');
 const databaseSchema = read('src/main/database/schema.js');
-const databaseSchemaContract = read('src/main/database/schema-contract.js');
+const databaseSchemaContractV6 = read('src/main/database/schema-contract-v6.js');
 const databaseLifecycle = read('src/main/database/lifecycle-service.js');
 const backupService = read('src/main/database/backup-service.js');
 const credentialService = read('src/main/credential-service.js');
@@ -123,16 +128,14 @@ expect(
   'database/facade.js must compose lifecycle, backup, settings, credentials, inventory, run, statistics, and CSV ownership'
 );
 expect(
-  /SCHEMA_VERSION = 5/.test(databaseSchema)
+  /SCHEMA_VERSION = SCHEMA_VERSION_V6/.test(databaseSchema)
     && /CURRENT_SCHEMA_CONTRACT/.test(databaseSchema)
     && /getCurrentSchemaIssues/.test(databaseSchema)
-    && /idx_runs_fit_identity_started/.test(databaseSchemaContract)
-    && /validate_runs_insert/.test(databaseSchemaContract)
-    && /foreignKeys/.test(databaseSchemaContract)
-    && /CREATE TABLE credentials/.test(databaseSchema)
-    && /CREATE TABLE fit_identities/.test(databaseSchema)
-    && /CHECK\(format_version >= 0\)/.test(databaseSchema)
-    && !/MIGRATIONS|migrateSchema|VersionFour/.test(databaseSchema)
+    && /idx_runs_fit_snapshot_started/.test(databaseSchemaContractV6)
+    && /appraisal_current_per_run/.test(databaseSchemaContractV6)
+    && /foreignKeys/.test(databaseSchemaContractV6)
+    && /createFreshSchemaV6/.test(databaseSchema)
+    && !/schema-v5|migrateV5ToV6|LEGACY/.test(databaseSchema)
     && !/ship_name/.test(databaseSchema),
   'database/schema.js must define only the current schema without legacy migration paths'
 );
@@ -142,8 +145,23 @@ expect(
     && /getCurrentSchemaIssues/.test(databaseLifecycle)
     && /schemaVersion !== SCHEMA_VERSION/.test(backupService)
     && /getCurrentSchemaIssues/.test(backupService)
-    && !/migrateSchema|before-migration/i.test(databaseLifecycle + backupService),
+    && !/migrate|legacy|schema-v5/i.test(databaseLifecycle + backupService),
   'database startup and restore must accept only the current schema'
+);
+const removedLegacyRuntimeFiles = [
+  'schema-v5.js',
+  'migrate-v5-to-v6.js',
+  'migration-candidate-service.js',
+  'schema-contract.js',
+  'fit-repository.js',
+  'inventory-baseline-repository.js',
+  'run-csv-repository.js',
+  'run-repository.js',
+  'statistics-repository.js',
+].map(filename => path.join(projectRoot, 'src', 'main', 'database', filename));
+expect(
+  removedLegacyRuntimeFiles.every(filePath => !fs.existsSync(filePath)),
+  'public source must not retain private-candidate or legacy repository modules'
 );
 expect(
   /safeStorage/.test(credentialService)

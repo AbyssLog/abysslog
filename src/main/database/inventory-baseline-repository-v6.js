@@ -20,12 +20,22 @@ function createInventoryBaselineRepository(getConnection, settings) {
 
   function getInventoryBaseline(characterId) {
     const latestRun = database().prepare(`
-      SELECT r.*, c.name AS character_name
+      SELECT r.*, c.name AS character_name,
+        MAX(CASE WHEN snapshots.phase = 'after' AND snapshots.location = 'cargo'
+          THEN snapshots.raw_text END) AS cargo_after,
+        MAX(CASE WHEN snapshots.phase = 'before' AND snapshots.location = 'drone'
+          THEN snapshots.raw_text END) AS drone_before,
+        MAX(CASE WHEN snapshots.phase = 'after' AND snapshots.location = 'drone'
+          THEN snapshots.raw_text END) AS drone_after
       FROM runs r
       JOIN characters c ON r.character_id = c.id
-      WHERE r.character_id = ?
-      ORDER BY r.started_at DESC, r.id DESC
-      LIMIT 1
+      LEFT JOIN inventory_snapshots snapshots ON snapshots.run_id = r.id
+      WHERE r.id = (
+        SELECT latest.id FROM runs latest
+        WHERE latest.character_id = ?
+        ORDER BY latest.started_at DESC, latest.id DESC LIMIT 1
+      )
+      GROUP BY r.id
     `).get(characterId);
     if (!latestRun || latestRun.outcome !== 'Survived') return null;
 
@@ -38,11 +48,9 @@ function createInventoryBaselineRepository(getConnection, settings) {
 
   function clearInventoryBaseline(characterId, runId) {
     const latestRun = database().prepare(`
-      SELECT id, outcome
-      FROM runs
+      SELECT id, outcome FROM runs
       WHERE character_id = ?
-      ORDER BY started_at DESC, id DESC
-      LIMIT 1
+      ORDER BY started_at DESC, id DESC LIMIT 1
     `).get(characterId);
     if (!latestRun || latestRun.outcome !== 'Survived' || latestRun.id !== runId) {
       return false;

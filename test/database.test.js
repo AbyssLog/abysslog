@@ -35,7 +35,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   database.hardenSensitiveStorage();
 
   const exitStatus = database.createExitBackup();
-  assert.equal(exitStatus.schemaVersion, 5);
+  assert.equal(exitStatus.schemaVersion, 6);
   assert.equal(exitStatus.automaticBackupRetention, 7);
   assert.ok(exitStatus.latestBackup);
   assert.equal(fs.existsSync(exitStatus.latestBackup.filePath), true);
@@ -105,27 +105,36 @@ test('database backup lifecycle round-trips current data safely', () => {
     drone_after: 'Vespa II, 4',
     notes: "'Literal apostrophe\nA \"quoted\" note",
   };
-  database.saveRun(sourceRun);
+  const sourceRunId = database.saveRun(sourceRun);
 
   const exported = database.exportRunsCSV({ character_id: 9001 });
   const csv = exported.csv;
   assert.equal(exported.count, 1);
   const parsed = parseCsv(csv);
-  assert.equal(parsed[0].includes('character_id'), true);
-  assert.equal(parsed[1][parsed[0].indexOf('cargo_before')], `'${
+  assert.equal(parsed[0].includes('run_uid'), true);
+  assert.equal(parsed[1][parsed[0].indexOf('format')], 'abysslog-history');
+  const exportedInventory = JSON.parse(
+    parsed[1][parsed[0].indexOf('inventory_snapshots')]
+  );
+  assert.equal(
+    exportedInventory.find(snapshot =>
+      snapshot.phase === 'before' && snapshot.location === 'cargo'
+    ).raw_text,
     sourceRun.cargo_before
-  }`);
+  );
 
-  assert.deepEqual(database.importRunsCSV(csv, 9002), {
-    imported: 1,
-    skipped: 0,
-    errors: [],
-  });
   assert.deepEqual(database.importRunsCSV(csv, 9002), {
     imported: 0,
     skipped: 1,
     errors: [],
   });
+  database.deleteRun(sourceRunId);
+  assert.deepEqual(database.importRunsCSV(csv, 9002), {
+    imported: 1,
+    skipped: 0,
+    errors: [],
+  });
+  database.saveRun(sourceRun);
 
   const importedSummary = database.getRuns({ character_id: 9002 })[0];
   const importedRun = database.getRunById(importedSummary.id);
@@ -155,11 +164,21 @@ test('database backup lifecycle round-trips current data safely', () => {
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
   assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
-    schemaVersion: 5,
+    schemaVersion: 6,
     characterCount: 3,
     runCount: 2,
     size: fs.statSync(manualStatus.filePath).size,
   });
+  assert.equal(fs.existsSync(`${manualStatus.filePath}-shm`), false);
+  assert.equal(fs.existsSync(`${manualStatus.filePath}-wal`), false);
+  const retainedMigrationBackup = path.join(
+    manualStatus.backupDirectory,
+    'abysslog-before-schema-v6-20260823T000000000Z.db'
+  );
+  fs.copyFileSync(manualStatus.filePath, retainedMigrationBackup);
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(retainedMigrationBackup, future, future);
+  assert.notEqual(database.getDataStatus().latestBackup?.filePath, retainedMigrationBackup);
 
   database.saveRun({
     ...sourceRun,
@@ -182,7 +201,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   newerDatabase.close();
   assert.throws(
     () => database.inspectBackup(newerRestorePath),
-    /schema v999.*requires schema v5/i
+    /schema v999.*requires schema v6/i
   );
 
   const foreignRestorePath = path.join(userDataDirectory, 'foreign-restore.db');
@@ -211,14 +230,16 @@ test('database backup lifecycle round-trips current data safely', () => {
   );
   fs.copyFileSync(manualStatus.filePath, unsupportedCredentialRestorePath);
   const unsupportedCredentialRestore = new Database(unsupportedCredentialRestorePath);
+  unsupportedCredentialRestore.pragma('ignore_check_constraints = ON');
   unsupportedCredentialRestore.prepare(`
     INSERT INTO credentials (kind, character_id, ciphertext, format_version)
     VALUES ('oauth', 9001, 'legacy-ciphertext', 0)
   `).run();
+  unsupportedCredentialRestore.pragma('ignore_check_constraints = OFF');
   unsupportedCredentialRestore.close();
   assert.throws(
     () => database.inspectBackup(unsupportedCredentialRestorePath),
-    /unsupported credential format/i
+    /unsupported credential format|integrity check failed/i
   );
 
   const lookalikeRestorePath = path.join(userDataDirectory, 'lookalike-restore.db');
@@ -236,7 +257,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   lookalikeDatabase.close();
   assert.throws(
     () => database.inspectBackup(lookalikeRestorePath),
-    /schema v2.*requires schema v5/i
+    /schema v2.*requires schema v6/i
   );
   assert.throws(
     () => database.restoreBackup(database.getDataStatus().databasePath),
@@ -244,7 +265,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   );
 
   const restoreResult = database.restoreBackup(manualStatus.filePath);
-  assert.equal(restoreResult.schemaVersion, 5);
+  assert.equal(restoreResult.schemaVersion, 6);
   assert.equal(restoreResult.characterCount, 3);
   assert.equal(restoreResult.runCount, 2);
   assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
@@ -447,6 +468,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
   assert.equal(rolledBack.drone_before, 'Vespa II, 5');
   assert.equal(rolledBack.items.length, 1);
   assert.equal(rolledBack.items[0].item_name, 'Triglavian Survey Database');
+  assert.equal(database.getAppraisalHistory(runId).length, 1);
 
   changedAppraisal.items = [{
     item_name: 'Triglavian Survey Database',
@@ -466,6 +488,11 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
   assert.equal(appraised.drone_before, '');
   assert.equal(appraised.drone_after, '');
   assert.equal(appraised.items[0].qty, 2);
+  const appraisalHistory = database.getAppraisalHistory(runId);
+  assert.equal(appraisalHistory.length, 2);
+  assert.equal(appraisalHistory.filter(entry => entry.is_current === 1).length, 1);
+  assert.equal(appraisalHistory.find(entry => entry.is_current === 1).net_isk, 200);
+  assert.equal(appraisalHistory.find(entry => entry.is_current === 0).net_isk, 80);
 
   assert.equal(database.updateRun(runId, {
     meta: { ...changedMeta, tier: 'T5', duration: 800 },
@@ -483,6 +510,7 @@ test('manual run edits commit metadata and appraisal changes atomically', () => 
   assert.equal(cargoOnly.net_isk, 200);
   assert.equal(cargoOnly.cargo_before, 'Nanite Repair Paste, 6');
   assert.equal(cargoOnly.items[0].qty, 2);
+  assert.equal(database.getAppraisalHistory(runId).length, 2);
 });
 
 test('history search finds rich metadata and all item names', () => {
@@ -832,7 +860,82 @@ test('fit statistics merge equivalent module layouts and captured hulls', () => 
   );
 });
 
-test('CSV import requires the current hull_name contract', () => {
+test('versioned CSV round-trips exact snapshots and appraisal history', () => {
+  database.saveCharacter({ id: 9014, name: 'CSV Source', portrait_url: '', client_id: 'csv-source' });
+  database.saveCharacter({ id: 9015, name: 'CSV Target', portrait_url: '', client_id: 'csv-target' });
+  const runId = database.saveRun({
+    character_id: 9014,
+    started_at: 1_740_000_000,
+    duration: 700,
+    tier: 'T5',
+    weather: 'Gamma',
+    outcome: 'Survived',
+    hull_name: 'Gila',
+    ship_class: 'Cruiser',
+    cargo_before: 'Nanite Repair Paste, 10',
+    cargo_after: 'Triglavian Survey Database, 1',
+    drone_before: 'Vespa II, 5',
+    drone_after: 'Vespa II, 4',
+    loot_value: 120,
+    consumed_cost: 20,
+    net_isk: 100,
+    appraised_at: 1_740_000_700,
+    tags: ['CSV'],
+    killmail_ids: [9_014_001],
+    items: [{
+      item_name: 'Triglavian Survey Database', qty: 1, type: 'gained',
+      unit_price_buy: 120, unit_price_sell: 130,
+    }],
+    fitting: [
+      { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull', unit_price_sell: 300_000_000 },
+      { type_id: 33_201, type_name: 'Launcher II', qty: 4, slot: 'HiSlot0', unit_price_sell: 2_000_000 },
+    ],
+    implants: [{
+      type_id: 22_101, type_name: 'Crystal Alpha', slot: 1, unit_price_sell: 20_000_000,
+    }],
+  });
+  const fitIdentityId = database.getRunById(runId).fit_identity_id;
+  database.setFitDisplayName(fitIdentityId, 'CSV Gamma Gila');
+  database.updateAppraisal(runId, {
+    loot_value: 280,
+    consumed_cost: 40,
+    net_isk: 240,
+    cargo_before: 'Nanite Repair Paste, 10',
+    cargo_after: 'Triglavian Survey Database, 2',
+    drone_before: 'Vespa II, 5',
+    drone_after: 'Vespa II, 4',
+    appraised_at: 1_740_001_000,
+    items: [{
+      item_name: 'Triglavian Survey Database', qty: 2, type: 'gained',
+      unit_price_buy: 140, unit_price_sell: 150,
+    }],
+  });
+
+  const csv = database.exportRunsCSV({ character_id: 9014 }).csv;
+  const parsed = parseCsv(csv);
+  const exportedUid = parsed[1][parsed[0].indexOf('run_uid')];
+  assert.equal(JSON.parse(parsed[1][parsed[0].indexOf('appraisals')]).length, 2);
+  database.deleteRun(runId);
+
+  assert.deepEqual(database.importRunsCSV(csv, 9015), {
+    imported: 1,
+    skipped: 0,
+    errors: [],
+  });
+  const imported = database.getRunById(database.getRuns({ character_id: 9015 })[0].id);
+  assert.equal(imported.run_uid, exportedUid);
+  assert.equal(imported.fit_display_name, 'CSV Gamma Gila');
+  assert.equal(imported.fitting.length, 2);
+  assert.equal(imported.implants.length, 1);
+  assert.equal(imported.cargo_after, 'Triglavian Survey Database, 2');
+  assert.deepEqual(imported.tags, ['CSV']);
+  assert.deepEqual(imported.killmail_ids, [9_014_001]);
+  const history = database.getAppraisalHistory(imported.id);
+  assert.deepEqual(history.map(appraisal => appraisal.net_isk), [240, 100]);
+  assert.deepEqual(history.map(appraisal => appraisal.is_current), [1, 0]);
+});
+
+test('CSV import accepts only the versioned 1.2 history format', () => {
   database.saveCharacter({
     id: 9013,
     name: 'CSV Pilot',
@@ -845,23 +948,23 @@ test('CSV import requires the current hull_name contract', () => {
   ].join('\n');
   assert.throws(
     () => database.importRunsCSV(legacyCsv, 9013),
-    /missing required column: hull_name/
+    /supported AbyssLog 1\.2 history format/
   );
 
-  const csv = [
-    'started_at,tier,weather,outcome,hull_name,ship_class',
-    '1735732800,T4,Electrical,Survived,Gila,Cruiser',
-  ].join('\n');
-  assert.deepEqual(database.importRunsCSV(csv, 9013), {
-    imported: 1,
-    skipped: 0,
-    errors: [],
+  database.saveRun({
+    character_id: 9013,
+    started_at: 1735732800,
+    duration: 600,
+    tier: 'T4',
+    weather: 'Electrical',
+    outcome: 'Survived',
+    hull_name: 'Gila',
+    ship_class: 'Cruiser',
   });
-  const run = database.getRuns({ character_id: 9013 })[0];
-  assert.equal(run.hull_name, 'Gila');
-  assert.equal('ship_name' in run, false);
 
   const headers = parseCsv(database.exportRunsCSV({ character_id: 9013 }).csv)[0];
+  assert.equal(headers.includes('format_version'), true);
+  assert.equal(headers.includes('run_uid'), true);
   assert.equal(headers.includes('hull_name'), true);
   assert.equal(headers.includes('ship_name'), false);
 });

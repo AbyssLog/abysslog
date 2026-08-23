@@ -379,6 +379,41 @@ input, select, textarea { font-family: var(--font); }
   background: var(--surface); border: 1px solid var(--border);
 }
 .run-detail-appraisals .item-table .name { max-width: 260px; }
+
+.appraisal-history {
+  margin-top: 18px;
+}
+
+.appraisal-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.appraisal-history-row {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.appraisal-history-row.current {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+
+.appraisal-history-source {
+  font-weight: 600;
+  margin-right: 8px;
+  text-transform: capitalize;
+}
+
+.appraisal-history-value {
+  text-align: right;
+  white-space: nowrap;
+}
 .run-detail-inventory-title { margin-top: 16px; }
 .run-detail-inventory-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));

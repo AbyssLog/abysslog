@@ -1,6 +1,6 @@
 # AbyssLog Privacy Notice
 
-Last updated: 9 August 2026
+Last updated: 23 August 2026
 
 AbyssLog is a locally installed, non-commercial hobby project. The developer does
 not operate an AbyssLog account service or application server, and the app does
@@ -14,8 +14,8 @@ AbyssLog stores the following data in its local SQLite database:
 - EVE character IDs, names, portrait URLs, and selected ESI permissions;
 - EVE OAuth access and refresh tokens;
 - the Janice API key you provide;
-- run history, notes, tags, system names, cargo and drone text, appraisal
-  timestamps and items, fittings, implants, and matching killmail IDs;
+- run history, notes, tags, system names, cargo and drone text, current and
+  earlier appraisal records and items, fittings, implants, and matching killmail IDs;
 - unfinished-run checkpoints, inventory-baseline state, and app settings.
 
 OAuth tokens and the Janice API key are encrypted with Electron `safeStorage`
@@ -30,6 +30,12 @@ live database after creating a before-restore safety backup. Credentials restore
 under a different operating-system installation or user profile may no longer
 decrypt; AbyssLog then treats them as disconnected until you sign in or enter the
 credential again.
+
+History CSV exports are created only when you request them and are written to the
+location you choose. A complete export can contain character identity, run notes,
+systems, inventory text, fittings, implants, appraisal history, tags, and killmail
+IDs. It does not contain OAuth tokens or the Janice API key. AbyssLog does not
+upload CSV exports; protect them as private EVE data.
 
 ## Local diagnostics
 
@@ -88,7 +94,7 @@ computer.
 
 For general privacy questions, open a
 [GitHub issue](https://github.com/AbyssLog/abysslog/issues). Do not include
-OAuth tokens, API keys, database files, backups, or private EVE data in a public
+OAuth tokens, API keys, database files, backups, CSV exports, or private EVE data in a public
 issue. Report suspected security vulnerabilities using the private process in
 [SECURITY.md](SECURITY.md).
 

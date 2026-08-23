@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { render } = require('../src/renderer/appraisal-history-view');
 
 const appJs = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'renderer', 'app.js'),
@@ -60,4 +61,24 @@ test('run editing exposes Re-Appraise, Save, and Cancel with staged appraisal va
   assert.match(manualRunJs, /: \(currentEditOriginal\?\.total_loss \|\| 0\)/);
   assert.match(appJs, /AbyssManualRuns/);
   assert.doesNotMatch(appJs, /async function submitManualEntry/);
+});
+
+test('appraisal history identifies the current revision without exposing markup', () => {
+  const html = render([{
+    kind: 'survived',
+    source: '<janice>',
+    appraised_at: 1_754_000_900,
+    resolution_status: 'complete',
+    net_isk: 100,
+    total_loss: 0,
+    is_current: true,
+  }], {
+    fmtIsk: value => `${value} ISK`,
+    esc: value => String(value).replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+  });
+  assert.match(html, /Appraisal History/);
+  assert.match(html, /Current/);
+  assert.match(html, /\+100 ISK/);
+  assert.match(html, /&lt;janice&gt;/);
+  assert.doesNotMatch(html, /<janice>/);
 });
