@@ -113,6 +113,8 @@ test('run details delegate captured setup and clipboard export to a dedicated di
   assert.match(html, /id="shipSetupModal"[^>]+role="dialog"/);
   assert.match(html, /src="\.\.\/shared\/fitting\.js"/);
   assert.match(runDetailsJs, /data-action="show-ship-setup"/);
+  assert.match(runDetailsJs, /data-action="edit-fit-name"/);
+  assert.match(runDetailsJs, /data-fit-return-run-id/);
   assert.match(runDetailsJs, /data-action="copy-run-fitting"/);
   assert.match(runDetailsJs, /fitting\.groupSnapshot/);
   assert.doesNotMatch(runDetailsJs, /function fittingTableHtml|function implantTableHtml/);

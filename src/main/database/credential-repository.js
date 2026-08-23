@@ -33,15 +33,6 @@ function createCredentialRepository(getConnection) {
     return row?.ciphertext || null;
   }
 
-  function listCredentialsNeedingNormalization() {
-    return database().prepare(`
-      SELECT kind, character_id, ciphertext
-      FROM credentials
-      WHERE format_version = 0
-      ORDER BY kind, character_id
-    `).all();
-  }
-
   function setCredential(kind, characterId, ciphertext) {
     const safeKind = normalizeKind(kind);
     const safeCharacterId = normalizeCharacterId(safeKind, characterId);
@@ -68,7 +59,6 @@ function createCredentialRepository(getConnection) {
   return Object.freeze({
     deleteCredential,
     getCredential,
-    listCredentialsNeedingNormalization,
     setCredential,
   });
 }

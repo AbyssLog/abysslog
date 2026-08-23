@@ -410,6 +410,7 @@ input, select, textarea { font-family: var(--font); }
 .fit-summary-title { color: var(--text); font-size: 12px; font-weight: 600; }
 .fit-summary-counts { color: var(--text-dim); font-size: 10px; margin-top: 2px; }
 .fit-summary-card .btn { flex-shrink: 0; }
+.fit-summary-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .ship-setup-meta {
   background: var(--surface); border: 1px solid var(--border); padding: 12px 14px;
   margin-bottom: 16px;

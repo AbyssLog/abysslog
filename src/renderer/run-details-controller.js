@@ -110,12 +110,24 @@
         if (summary.implantCount > 0) {
           counts.push(`${summary.implantCount} implant${summary.implantCount === 1 ? '' : 's'}`);
         }
+        const fitNameButton = run.fit_identity_id
+          ? `<button type="button" class="btn sm ghost" data-action="edit-fit-name" `
+            + `data-fit-identity-id="${esc(run.fit_identity_id)}" `
+            + `data-fit-display-name="${esc(run.fit_display_name || '')}" `
+            + `data-fit-hull-name="${esc(run.hull_name || 'this hull')}" `
+            + `data-fit-return-run-id="${esc(run.id)}">`
+            + (run.fit_display_name ? 'Rename fit' : 'Name fit')
+            + '</button>'
+          : '';
         html += `<div class="fit-summary-card">
           <div>
             <div class="fit-summary-title">Ship setup captured at run start</div>
             <div class="fit-summary-counts">${esc(counts.join(' · ') || 'Ship hull captured')}</div>
           </div>
-          <button class="btn sm ghost" data-action="show-ship-setup" data-run-id="${esc(run.id)}">View fit &amp; implants</button>
+          <div class="fit-summary-actions">
+            ${fitNameButton}
+            <button class="btn sm ghost" data-action="show-ship-setup" data-run-id="${esc(run.id)}">View fit &amp; implants</button>
+          </div>
         </div>`;
       }
 

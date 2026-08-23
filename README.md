@@ -24,7 +24,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
 - **Run journal & provenance** — save notes, tags, system names, appraisal time, and verified killmail IDs with each run
 - **Consistent ship identity** — run records use the hull type (for example, Gila), not the pilot-assigned ship name
-- **Friendly fit names** - optionally name a canonical captured fit so equivalent historical snapshots share a label without changing the captured setup or equivalence rules
+- **Friendly fit names** - name a canonical captured fit from Statistics or History details so equivalent snapshots share a label without changing the captured setup or equivalence rules
 
 ---
 
@@ -78,7 +78,7 @@ ESI character assets can be cached for up to an hour, so they are not used to de
 
 ## Building from Source
 
-Requires Node.js 22.12+.
+Requires Node.js 22.22.2+, Node.js 24.15.0+, or Node.js 26+.
 
 ```bash
 git clone https://github.com/AbyssLog/abysslog.git
@@ -142,7 +142,7 @@ OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` an
 
 On each clean exit, AbyssLog writes a verified full-database backup and retains the latest seven automatic backups. Unexpected termination leaves the previous verified backup in place. Use **Settings → Data & Recovery** to create a manual backup, open the backup folder, or restore a full `.db` backup. Restore validates the selected database, preserves the current database as a retained before-restore backup, replaces the live data, and restarts AbyssLog.
 
-The v1.1.6 data model accepts the v1.1.5/schema-v4 baseline and current schema-v5 databases or backups. Before the first v4-to-v5 migration, AbyssLog creates and verifies a retained `before-migration-v4-to-v5` backup, then applies the migration transactionally. Older databases and backups must first be opened with AbyssLog v1.1.5; pre-v4 compatibility paths are intentionally not retained.
+This release accepts only current schema-v5 databases and backups. Databases or backups from earlier schema versions are rejected without mutation; AbyssLog does not migrate them.
 
 A full restore replaces rather than merges the current database. Credentials encrypted by a different operating-system installation or user profile may no longer decrypt after a restore; reconnect affected EVE characters and re-enter the Janice API key.
 

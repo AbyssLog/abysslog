@@ -11,6 +11,10 @@ const runDetailsJs = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'renderer', 'run-details-controller.js'),
   'utf8'
 );
+const manualRunJs = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'renderer', 'manual-run-controller.js'),
+  'utf8'
+);
 
 function functionSource(source, name, nextName) {
   const start = source.indexOf(`function ${name}`);
@@ -47,13 +51,13 @@ test('run editing exposes Re-Appraise, Save, and Cancel with staged appraisal va
     path.join(__dirname, '..', 'src', 'renderer', 'index.html'),
     'utf8'
   );
-  const editFlow = functionSource(appJs, 'submitManualEntry', 'cancelRun');
-
   assert.match(html, /id="manualSaveBtn"[^>]*>Save<\/button>/);
   assert.match(html, /data-action="close-manual-entry">Cancel<\/button>/);
-  assert.match(appJs, /manualSubmitLabel'\)\.textContent = 'Re-Appraise'/);
-  assert.match(editFlow, /const pendingAppraisal = manualEditPendingAppraisal\?\.signature === formSignature/);
-  assert.match(editFlow, /manualEditPendingAppraisal = \{/);
-  assert.match(editFlow, /\? \{ meta, appraisal: pendingAppraisal\.appraisal \}/);
-  assert.match(editFlow, /: \(editOriginal\?\.total_loss \|\| 0\)/);
+  assert.match(manualRunJs, /manualSubmitLabel'\)\.textContent = 'Re-Appraise'/);
+  assert.match(manualRunJs, /const currentPendingAppraisal = pendingAppraisal\?\.signature === formSignature/);
+  assert.match(manualRunJs, /pendingAppraisal = \{/);
+  assert.match(manualRunJs, /\? \{ meta, appraisal: currentPendingAppraisal\.appraisal \}/);
+  assert.match(manualRunJs, /: \(currentEditOriginal\?\.total_loss \|\| 0\)/);
+  assert.match(appJs, /AbyssManualRuns/);
+  assert.doesNotMatch(appJs, /async function submitManualEntry/);
 });

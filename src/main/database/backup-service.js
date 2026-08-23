@@ -3,8 +3,8 @@ const path = require('node:path');
 
 const {
   ABYSSLOG_APPLICATION_ID,
-  MIN_SUPPORTED_SCHEMA_VERSION,
   SCHEMA_VERSION,
+  getCurrentSchemaIssues,
 } = require('./schema');
 
 const AUTOMATIC_BACKUP_RETENTION = 7;
@@ -50,73 +50,24 @@ function createBackupService(lifecycle) {
       if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 0) {
         throw new Error('The selected backup has an invalid schema version');
       }
-      if (schemaVersion > SCHEMA_VERSION) {
-        throw new Error('The selected backup was created by a newer version of AbyssLog');
-      }
-      if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
+      if (schemaVersion !== SCHEMA_VERSION) {
         throw new Error(
-          'This backup must be opened in AbyssLog 1.1.5 before it can be restored here'
+          `The selected backup uses schema v${schemaVersion}; `
+          + `this version requires schema v${SCHEMA_VERSION}`
         );
       }
-      if (
-        applicationId !== ABYSSLOG_APPLICATION_ID
-        && !(schemaVersion === MIN_SUPPORTED_SCHEMA_VERSION && applicationId === 0)
-      ) {
+      if (applicationId !== ABYSSLOG_APPLICATION_ID) {
         throw new Error('The selected backup does not have a valid AbyssLog database identity');
       }
 
-      const tables = new Set(backupDb.prepare(`
-        SELECT name FROM sqlite_schema WHERE type = 'table'
-      `).all().map(row => row.name));
-      const requiredColumns = {
-        characters: ['id', 'name', 'portrait_url', 'client_id', 'created_at'],
-        settings: ['key', 'value'],
-        runs: [
-          'id', 'character_id', 'started_at', 'duration', 'tier', 'weather',
-          'outcome', 'loot_value', 'consumed_cost', 'net_isk', 'total_loss',
-          'system_id', 'system_name', 'appraised_at', 'cargo_before', 'cargo_after',
-          'drone_before', 'drone_after', 'hull_name', 'ship_class', 'notes', 'created_at',
-        ],
-        run_items: [
-          'id', 'run_id', 'item_name', 'qty', 'type', 'unit_price_buy', 'unit_price_sell',
-        ],
-        run_fitting: [
-          'id', 'run_id', 'type_id', 'type_name', 'qty', 'slot', 'unit_price_sell',
-        ],
-        run_implants: [
-          'id', 'run_id', 'type_id', 'type_name', 'slot', 'unit_price_sell',
-        ],
-        run_tags: ['run_id', 'tag'],
-        run_killmails: ['run_id', 'killmail_id'],
-        active_run_state: ['character_id', 'snapshot', 'updated_at'],
-      };
-      if (schemaVersion === SCHEMA_VERSION) {
-        requiredColumns.credentials = [
-          'id', 'kind', 'character_id', 'ciphertext', 'format_version', 'updated_at',
-        ];
-        requiredColumns.fit_identities = [
-          'id', 'signature', 'signature_hash', 'hull_name', 'display_name',
-          'created_at', 'updated_at',
-        ];
-        requiredColumns.runs.push('fit_identity_id');
-      }
-
-      for (const [table, expectedColumns] of Object.entries(requiredColumns)) {
-        if (!tables.has(table)) {
-          throw new Error('The selected file is not an AbyssLog full backup');
-        }
-        const columns = new Set(
-          backupDb.pragma(`table_info(${table})`).map(column => column.name)
+      const schemaIssues = getCurrentSchemaIssues(backupDb);
+      if (schemaIssues.length) {
+        throw new Error(
+          `The selected file is not an AbyssLog full backup: ${schemaIssues.join('; ')}`
         );
-        if (expectedColumns.some(column => !columns.has(column))) {
-          throw new Error('The selected file is not an AbyssLog full backup');
-        }
       }
-      if (
-        schemaVersion === MIN_SUPPORTED_SCHEMA_VERSION
-        && backupDb.prepare("SELECT 1 FROM settings WHERE key = 'janice_api_key'").get()
-      ) {
-        throw new Error('This backup still contains a legacy plaintext credential');
+      if (backupDb.prepare('SELECT 1 FROM credentials WHERE format_version <> 1').get()) {
+        throw new Error('The selected backup contains an unsupported credential format');
       }
       if (backupDb.pragma('foreign_key_check').length > 0) {
         throw new Error('The selected backup contains inconsistent related data');
@@ -291,7 +242,7 @@ function createBackupService(lifecycle) {
     const { backupDirectory } = lifecycle.getPaths();
     fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
     return fs.readdirSync(backupDirectory, { withFileTypes: true })
-      .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z|before-restore-\d+T\d+Z|before-migration-v4-to-v5-\d+T\d+Z)\.db$/.test(entry.name))
+      .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z|before-restore-\d+T\d+Z)\.db$/.test(entry.name))
       .map(entry => {
         const filePath = path.join(backupDirectory, entry.name);
         const stat = fs.statSync(filePath);

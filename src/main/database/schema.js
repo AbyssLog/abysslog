@@ -1,16 +1,101 @@
-const { createFitIdentity } = require('../../shared/fit-identity');
-
 const SCHEMA_VERSION = 5;
-const MIN_SUPPORTED_SCHEMA_VERSION = 4;
 const ABYSSLOG_APPLICATION_ID = 0x4142594c;
+const { CURRENT_SCHEMA_CONTRACT } = require('./schema-contract');
 
 function tableColumns(connection, tableName) {
   return new Set(connection.pragma(`table_info(${tableName})`).map(column => column.name));
 }
 
-function ensureColumn(connection, tableName, columnName, definition) {
-  if (tableColumns(connection, tableName).has(columnName)) return;
-  connection.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+function getCurrentSchemaIssues(connection) {
+  const issues = [];
+  const objects = connection.prepare(`
+    SELECT type, name FROM sqlite_schema
+    WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'
+  `).all();
+  const namesByType = new Map([
+    ['table', new Set()],
+    ['index', new Set()],
+    ['trigger', new Set()],
+  ]);
+  for (const object of objects) namesByType.get(object.type)?.add(object.name);
+
+  const expectedTables = Object.keys(CURRENT_SCHEMA_CONTRACT.tables);
+  const actualTables = namesByType.get('table');
+  for (const table of expectedTables) {
+    if (!actualTables.has(table)) {
+      issues.push(`missing table ${table}`);
+      continue;
+    }
+    const expectedColumns = new Set(CURRENT_SCHEMA_CONTRACT.tables[table]);
+    const actualColumns = tableColumns(connection, table);
+    const missing = [...expectedColumns].filter(column => !actualColumns.has(column));
+    const unexpected = [...actualColumns].filter(column => !expectedColumns.has(column));
+    if (missing.length || unexpected.length) {
+      issues.push(
+        `invalid columns for ${table}`
+        + (missing.length ? `; missing ${missing.join(', ')}` : '')
+        + (unexpected.length ? `; unexpected ${unexpected.join(', ')}` : '')
+      );
+    }
+  }
+  const unexpectedTables = [...actualTables].filter(table => !expectedTables.includes(table));
+  if (unexpectedTables.length) issues.push(`unexpected tables ${unexpectedTables.join(', ')}`);
+
+  for (const [index, expected] of Object.entries(CURRENT_SCHEMA_CONTRACT.indexes)) {
+    if (!namesByType.get('index').has(index)) {
+      issues.push(`missing index ${index}`);
+      continue;
+    }
+    const listed = connection.pragma(`index_list(${expected.table})`)
+      .find(candidate => candidate.name === index);
+    const columns = connection.pragma(`index_info(${index})`).map(column => column.name);
+    if (
+      !listed
+      || Boolean(listed.unique) !== expected.unique
+      || Boolean(listed.partial) !== expected.partial
+      || columns.length !== expected.columns.length
+      || columns.some((column, position) => column !== expected.columns[position])
+    ) {
+      issues.push(`invalid index ${index}`);
+    }
+  }
+  for (const [trigger, expected] of Object.entries(CURRENT_SCHEMA_CONTRACT.triggers)) {
+    if (!namesByType.get('trigger').has(trigger)) {
+      issues.push(`missing trigger ${trigger}`);
+      continue;
+    }
+    const definition = connection.prepare(
+      "SELECT tbl_name, sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?"
+    ).get(trigger);
+    const normalizedSql = definition?.sql?.replace(/\s+/g, ' ').toUpperCase() || '';
+    if (
+      definition?.tbl_name !== expected.table
+      || !normalizedSql.includes(`BEFORE ${expected.event} ON ${expected.table}`.toUpperCase())
+      || !normalizedSql.includes(`RAISE(ABORT, '${expected.message}')`.toUpperCase())
+    ) {
+      issues.push(`invalid trigger ${trigger}`);
+    }
+  }
+
+  const foreignKeyKey = foreignKey => [
+    foreignKey.from,
+    foreignKey.table,
+    foreignKey.to,
+    foreignKey.on_delete || foreignKey.onDelete,
+  ].join('|');
+  for (const table of expectedTables) {
+    const expected = new Set(
+      (CURRENT_SCHEMA_CONTRACT.foreignKeys[table] || []).map(foreignKeyKey)
+    );
+    const actual = new Set(connection.pragma(`foreign_key_list(${table})`).map(foreignKeyKey));
+    if (
+      expected.size !== actual.size
+      || [...expected].some(foreignKey => !actual.has(foreignKey))
+    ) {
+      issues.push(`invalid foreign keys for ${table}`);
+    }
+  }
+  return issues;
 }
 
 function createValidationTriggers(connection) {
@@ -210,189 +295,11 @@ function createSchema(connection) {
   createValidationTriggers(connection);
 }
 
-function assertVersionFourDataCanMigrate(connection) {
-  const duplicateRun = connection.prepare(`
-    SELECT character_id, started_at, COUNT(*) AS count
-    FROM runs
-    GROUP BY character_id, started_at
-    HAVING COUNT(*) > 1
-    LIMIT 1
-  `).get();
-  if (duplicateRun) {
-    throw new Error('Schema v4 contains duplicate run timestamps and cannot be migrated safely');
-  }
-
-  const invalidRun = connection.prepare(`
-    SELECT id FROM runs
-    WHERE duration < 0 OR loot_value < 0 OR consumed_cost < 0 OR total_loss < 0
-      OR outcome NOT IN ('Survived', 'Died')
-    LIMIT 1
-  `).get();
-  const invalidItem = connection.prepare(`
-    SELECT id FROM run_items
-    WHERE qty <= 0 OR unit_price_buy < 0 OR unit_price_sell < 0
-      OR type NOT IN ('gained', 'consumed', 'lost')
-    LIMIT 1
-  `).get();
-  const invalidFitting = connection.prepare(`
-    SELECT id FROM run_fitting WHERE qty <= 0 OR unit_price_sell < 0 LIMIT 1
-  `).get();
-  const invalidImplant = connection.prepare(`
-    SELECT id FROM run_implants WHERE unit_price_sell < 0 LIMIT 1
-  `).get();
-  if (invalidRun || invalidItem || invalidFitting || invalidImplant) {
-    throw new Error('Schema v4 contains invalid historical values and cannot be migrated safely');
-  }
-  if (connection.prepare("SELECT 1 FROM settings WHERE key = 'janice_api_key'").get()) {
-    throw new Error('Schema v4 still contains a legacy plaintext Janice key; open it in 1.1.5 first');
-  }
-}
-
-function createVersionFiveTables(connection) {
-  connection.exec(`
-    CREATE TABLE credentials (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      kind TEXT NOT NULL CHECK(kind IN ('oauth', 'janice')),
-      character_id INTEGER,
-      ciphertext TEXT NOT NULL,
-      format_version INTEGER NOT NULL DEFAULT 1 CHECK(format_version >= 0),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-      CHECK(
-        (kind = 'oauth' AND character_id IS NOT NULL)
-        OR (kind = 'janice' AND character_id IS NULL)
-      ),
-      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
-    );
-    CREATE UNIQUE INDEX credential_oauth_character
-      ON credentials(character_id) WHERE kind = 'oauth';
-    CREATE UNIQUE INDEX credential_janice_singleton
-      ON credentials(kind) WHERE kind = 'janice';
-
-    CREATE TABLE fit_identities (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      signature TEXT NOT NULL UNIQUE,
-      signature_hash TEXT NOT NULL,
-      hull_name TEXT NOT NULL,
-      display_name TEXT CHECK(display_name IS NULL OR length(display_name) BETWEEN 1 AND 80),
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-    );
-    CREATE INDEX idx_fit_identities_hash ON fit_identities(signature_hash);
-  `);
-  ensureColumn(
-    connection,
-    'runs',
-    'fit_identity_id',
-    'INTEGER REFERENCES fit_identities(id) ON DELETE SET NULL'
-  );
-}
-
-function migrateCredentialSettings(connection) {
-  const insert = connection.prepare(`
-    INSERT INTO credentials (kind, character_id, ciphertext, format_version)
-    VALUES (?, ?, ?, 0)
-  `);
-  const tokenRows = connection.prepare(`
-    SELECT key, value FROM settings WHERE key GLOB 'tokens_[0-9]*'
-  `).all();
-  for (const row of tokenRows) {
-    const match = /^tokens_(\d+)$/.exec(row.key);
-    if (!match) continue;
-    const characterId = Number(match[1]);
-    if (!Number.isSafeInteger(characterId)) continue;
-    if (!connection.prepare('SELECT 1 FROM characters WHERE id = ?').get(characterId)) continue;
-    insert.run('oauth', characterId, row.value);
-    connection.prepare('DELETE FROM settings WHERE key = ?').run(row.key);
-  }
-  const janice = connection.prepare(
-    "SELECT value FROM settings WHERE key = 'secret_janice_api_key'"
-  ).get();
-  if (janice) {
-    insert.run('janice', null, janice.value);
-    connection.prepare("DELETE FROM settings WHERE key = 'secret_janice_api_key'").run();
-  }
-}
-
-function backfillFitIdentities(connection) {
-  const fittingByRun = new Map();
-  const implantsByRun = new Map();
-  for (const row of connection.prepare(`
-    SELECT run_id, type_id, type_name, qty, slot
-    FROM run_fitting ORDER BY run_id, id
-  `).all()) {
-    if (!fittingByRun.has(row.run_id)) fittingByRun.set(row.run_id, []);
-    fittingByRun.get(row.run_id).push(row);
-  }
-  for (const row of connection.prepare(`
-    SELECT run_id, type_id, type_name, slot
-    FROM run_implants ORDER BY run_id, id
-  `).all()) {
-    if (!implantsByRun.has(row.run_id)) implantsByRun.set(row.run_id, []);
-    implantsByRun.get(row.run_id).push(row);
-  }
-
-  const insertIdentity = connection.prepare(`
-    INSERT OR IGNORE INTO fit_identities
-      (signature, signature_hash, hull_name)
-    VALUES (?, ?, ?)
-  `);
-  const findIdentity = connection.prepare(
-    'SELECT id FROM fit_identities WHERE signature = ?'
-  );
-  const linkRun = connection.prepare(
-    'UPDATE runs SET fit_identity_id = ? WHERE id = ?'
-  );
-  for (const run of connection.prepare('SELECT id FROM runs ORDER BY id').all()) {
-    const identity = createFitIdentity(
-      fittingByRun.get(run.id) || [],
-      implantsByRun.get(run.id) || []
-    );
-    if (!identity) continue;
-    insertIdentity.run(identity.signature, identity.key, identity.hull_name);
-    linkRun.run(findIdentity.get(identity.signature).id, run.id);
-  }
-}
-
-function migrateVersionFourToFive(connection) {
-  assertVersionFourDataCanMigrate(connection);
-  createVersionFiveTables(connection);
-  migrateCredentialSettings(connection);
-  backfillFitIdentities(connection);
-  connection.exec(`
-    CREATE UNIQUE INDEX runs_character_started
-      ON runs(character_id, started_at);
-    CREATE INDEX idx_runs_fit_identity_started
-      ON runs(fit_identity_id, started_at DESC);
-  `);
-  createValidationTriggers(connection);
-}
-
-const MIGRATIONS = Object.freeze([
-  Object.freeze({ version: 5, up: migrateVersionFourToFive }),
-]);
-
-function migrateSchema(connection, currentVersion) {
-  if (currentVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
-    throw new Error(
-      `Schema v${currentVersion} is no longer supported; open it in AbyssLog 1.1.5 first`
-    );
-  }
-  let version = currentVersion;
-  for (const migration of MIGRATIONS) {
-    if (migration.version <= version) continue;
-    migration.up(connection);
-    connection.pragma(`user_version = ${migration.version}`);
-    version = migration.version;
-  }
-  return version;
-}
-
 module.exports = {
   ABYSSLOG_APPLICATION_ID,
-  MIGRATIONS,
-  MIN_SUPPORTED_SCHEMA_VERSION,
+  CURRENT_SCHEMA_CONTRACT,
   SCHEMA_VERSION,
   createSchema,
-  migrateSchema,
+  getCurrentSchemaIssues,
   tableColumns,
 };

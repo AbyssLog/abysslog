@@ -1,14 +1,11 @@
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { app } = require('electron');
 const {
   ABYSSLOG_APPLICATION_ID,
-  MIN_SUPPORTED_SCHEMA_VERSION,
   SCHEMA_VERSION,
   createSchema,
-  migrateSchema,
-  tableColumns,
+  getCurrentSchemaIssues,
 } = require('./schema');
 const { runInTransaction } = require('./transaction');
 
@@ -31,34 +28,16 @@ function userTableNames(connection) {
 }
 
 function assertCurrentSchema(connection) {
-  const required = {
-    characters: ['id', 'name'],
-    settings: ['key', 'value'],
-    credentials: ['id', 'kind', 'character_id', 'ciphertext', 'format_version'],
-    fit_identities: ['id', 'signature', 'signature_hash', 'hull_name', 'display_name'],
-    runs: ['id', 'character_id', 'started_at', 'hull_name', 'fit_identity_id'],
-    run_items: ['id', 'run_id', 'item_name', 'qty', 'type'],
-    run_fitting: ['id', 'run_id', 'type_id', 'type_name', 'qty', 'slot'],
-    run_implants: ['id', 'run_id', 'type_id', 'type_name', 'slot'],
-    run_tags: ['run_id', 'tag'],
-    run_killmails: ['run_id', 'killmail_id'],
-    active_run_state: ['character_id', 'snapshot', 'updated_at'],
-  };
-  const tables = userTableNames(connection);
-  for (const [table, columns] of Object.entries(required)) {
-    if (!tables.has(table)) throw new Error(`Schema v${SCHEMA_VERSION} is missing ${table}`);
-    const actual = tableColumns(connection, table);
-    if (columns.some(column => !actual.has(column))) {
-      throw new Error(`Schema v${SCHEMA_VERSION} has an invalid ${table} table`);
-    }
+  const issues = getCurrentSchemaIssues(connection);
+  if (issues.length) {
+    throw new Error(`Schema v${SCHEMA_VERSION} is invalid: ${issues.join('; ')}`);
+  }
+  if (connection.prepare('SELECT 1 FROM credentials WHERE format_version <> 1').get()) {
+    throw new Error('Database contains an unsupported credential format');
   }
   if (connection.pragma('foreign_key_check').length > 0) {
     throw new Error('Database contains inconsistent related data');
   }
-}
-
-function migrationTimestamp() {
-  return new Date().toISOString().replace(/[-:.]/g, '');
 }
 
 function createDatabaseLifecycle() {
@@ -95,35 +74,6 @@ function createDatabaseLifecycle() {
     target.pragma('foreign_keys = ON');
   }
 
-  function createPreMigrationBackup(currentVersion) {
-    fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
-    const fileName = `abysslog-before-migration-v${currentVersion}-to-v${SCHEMA_VERSION}-${migrationTimestamp()}.db`;
-    const backupPath = path.join(backupDirectory, fileName);
-    connection.pragma('wal_checkpoint(TRUNCATE)');
-    connection.close();
-    connection = null;
-    try {
-      fs.copyFileSync(databasePath, backupPath, fs.constants.COPYFILE_EXCL);
-      fs.chmodSync(backupPath, 0o600);
-      const backup = openConnection(backupPath, { readonly: true, fileMustExist: true });
-      try {
-        assertConnectionIntegrity(backup);
-        if (backup.pragma('user_version', { simple: true }) !== currentVersion) {
-          throw new Error('Pre-migration backup schema version did not match the source');
-        }
-      } finally {
-        backup.close();
-      }
-      return backupPath;
-    } catch (error) {
-      if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-      throw error;
-    } finally {
-      connection = openConnection(databasePath);
-      configureConnection(connection);
-    }
-  }
-
   function init() {
     const userDataDirectory = app.getPath('userData');
     databasePath = path.join(userDataDirectory, 'abysslog.db');
@@ -139,29 +89,23 @@ function createDatabaseLifecycle() {
       const tables = userTableNames(connection);
       const isFresh = currentVersion === 0 && tables.size === 0;
 
-      if (currentVersion > SCHEMA_VERSION) {
-        throw new Error('Database was created by a newer version of AbyssLog');
-      }
       if (applicationId !== 0 && applicationId !== ABYSSLOG_APPLICATION_ID) {
         throw new Error('Database belongs to another application');
       }
-      if (!isFresh && currentVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
+      if (!isFresh && currentVersion !== SCHEMA_VERSION) {
         throw new Error(
-          `Database schema v${currentVersion} is no longer supported. `
-          + 'Open this database in AbyssLog 1.1.5 first, then retry the upgrade.'
+          `Database schema v${currentVersion} is not supported; `
+          + `this version requires schema v${SCHEMA_VERSION}`
         );
+      }
+      if (!isFresh && applicationId !== ABYSSLOG_APPLICATION_ID) {
+        throw new Error('Database identity is invalid');
       }
 
       if (isFresh) {
         runInTransaction(connection, () => {
           createSchema(connection);
           connection.pragma(`user_version = ${SCHEMA_VERSION}`);
-          connection.pragma(`application_id = ${ABYSSLOG_APPLICATION_ID}`);
-        });
-      } else if (currentVersion < SCHEMA_VERSION) {
-        createPreMigrationBackup(currentVersion);
-        runInTransaction(connection, () => {
-          migrateSchema(connection, currentVersion);
           connection.pragma(`application_id = ${ABYSSLOG_APPLICATION_ID}`);
         });
       }
