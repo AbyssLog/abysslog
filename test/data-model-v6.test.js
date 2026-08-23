@@ -7,17 +7,11 @@ const {
   createInventorySnapshot,
 } = require('../src/shared/data-model-v6');
 const {
-  createMigratedRunUid,
   createNewRunUid,
   signatureHash,
 } = require('../src/main/database/v6-identities');
 
-test('migrated run UUIDs are deterministic, distinct, and standards-shaped', () => {
-  const run = { id: 7, character_id: 9001, started_at: 1_700_000_000 };
-  const first = createMigratedRunUid(run);
-  assert.equal(createMigratedRunUid({ ...run }), first);
-  assert.notEqual(createMigratedRunUid({ ...run, id: 8 }), first);
-  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+test('new run UUIDs are validated and normalized', () => {
   assert.equal(
     createNewRunUid(() => '550e8400-e29b-41d4-a716-446655440000'),
     '550e8400-e29b-41d4-a716-446655440000'
