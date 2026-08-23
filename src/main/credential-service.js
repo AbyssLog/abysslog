@@ -6,7 +6,6 @@ function createCredentialService({
   safeStorage,
   database,
   security,
-  migratedOAuthScopes = [],
   platform = process.platform,
 }) {
   if (!safeStorage || !database || !security) {
@@ -54,18 +53,6 @@ function createCredentialService({
     }
   }
 
-  function decryptMigratedSecret(stored) {
-    if (!stored || !isSecureStorageAvailable()) return null;
-    try {
-      const encoded = stored.startsWith(SECRET_PREFIX)
-        ? stored.slice(SECRET_PREFIX.length)
-        : stored;
-      return safeStorage.decryptString(Buffer.from(encoded, 'base64'));
-    } catch {
-      return null;
-    }
-  }
-
   function normalizeTokens(tokens, { allowExpired = false } = {}) {
     if (!security.isPlainObject(tokens)) throw new TypeError('OAuth token response is invalid');
     return {
@@ -75,9 +62,7 @@ function createCredentialService({
         min: allowExpired ? 0 : Date.now() - 60_000,
         max: Number.MAX_SAFE_INTEGER,
       }),
-      scopes: tokens.scopes == null
-        ? [...migratedOAuthScopes]
-        : security.validateEsiScopes(tokens.scopes),
+      scopes: security.validateEsiScopes(tokens.scopes),
     };
   }
 
@@ -120,35 +105,6 @@ function createCredentialService({
     return decryptSecret(database.getCredential(JANICE_CREDENTIAL_KIND, null));
   }
 
-  function normalizeMigratedCredentials() {
-    if (!isSecureStorageAvailable()) return false;
-
-    const migrated = database.listCredentialsNeedingNormalization();
-    for (const record of migrated) {
-      const plaintext = decryptMigratedSecret(record.ciphertext);
-      if (!plaintext) continue;
-      try {
-        if (record.kind === OAUTH_CREDENTIAL_KIND) {
-          const tokens = normalizeTokens(JSON.parse(plaintext), { allowExpired: true });
-          database.setCredential(
-            OAUTH_CREDENTIAL_KIND,
-            record.character_id,
-            encryptSecret(JSON.stringify(tokens))
-          );
-        } else if (record.kind === JANICE_CREDENTIAL_KIND) {
-          database.setCredential(
-            JANICE_CREDENTIAL_KIND,
-            null,
-            encryptSecret(plaintext)
-          );
-        }
-      } catch {
-        // Preserve unreadable v4 ciphertext for manual recovery from the pre-migration backup.
-      }
-    }
-    return true;
-  }
-
   return Object.freeze({
     clearTokens,
     deleteJaniceApiKey,
@@ -157,7 +113,6 @@ function createCredentialService({
     getSecureStorageStatus,
     isSecureStorageAvailable,
     loadTokens,
-    normalizeMigratedCredentials,
     saveJaniceApiKey,
     saveTokens,
   });

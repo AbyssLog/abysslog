@@ -29,6 +29,8 @@ const rendererScripts = [
   'src/renderer/support-settings-controller.js',
   'src/renderer/run-details-controller.js',
   'src/renderer/fit-name-controller.js',
+  'src/renderer/manual-run-controller.js',
+  'src/renderer/character-controller.js',
   'src/renderer/app.js',
 ];
 
@@ -128,6 +130,7 @@ async function createRendererHarness() {
     elementClientWidth: 600,
     janiceCalls: [],
     janiceGate: null,
+    fitNameSaves: [],
     killmailGate: null,
     killmailRequests: [],
     manualSaveGate: null,
@@ -224,6 +227,15 @@ async function createRendererHarness() {
         return true;
       },
       getById: async runId => state.runDetails.get(runId) || null,
+      setFitDisplayName: async (fitIdentityId, displayName) => {
+        state.fitNameSaves.push([fitIdentityId, displayName]);
+        for (const [runId, run] of state.runDetails) {
+          if (run.fit_identity_id === fitIdentityId) {
+            state.runDetails.set(runId, { ...run, fit_display_name: displayName });
+          }
+        }
+        return { fit_identity_id: fitIdentityId, display_name: displayName };
+      },
       save: async data => {
         state.manualSaves.push(data);
         if (state.manualSaveGate) return state.manualSaveGate.promise;
@@ -616,7 +628,11 @@ test('renderer async workflows execute against the real DOM', async t => {
         cargo_after: 'Caldari Navy Scourge Heavy Missile\t90\nTriglavian Survey Database\t2',
         drone_before: 'Vespa II\t5',
         drone_after: '',
-        fitting: [],
+        fit_identity_id: 70,
+        fit_display_name: null,
+        fitting: [
+          { type_id: 17_918, type_name: 'Gila', qty: 1, slot: 'hull', unit_price_sell: 0 },
+        ],
         implants: [],
         items: [],
       };
@@ -641,6 +657,23 @@ test('renderer async workflows execute against the real DOM', async t => {
       assert.equal(document.querySelectorAll('#runDetailContent .inventory-editor').length, 4);
       assert.match(document.getElementById('runDetailContent').textContent, /Unchanged/);
       assert.equal(document.getElementById('detailDroneAfter').value, 'Vespa II\t5');
+      document.querySelector(
+        '#runDetailContent [data-action="edit-fit-name"]'
+      ).click();
+      await waitFor(
+        () => document.getElementById('fitNameModal').classList.contains('open'),
+        'history fit-name modal'
+      );
+      document.getElementById('fitNameInput').value = 'History Gamma';
+      document.querySelector('[data-action="save-fit-name"]').click();
+      await waitFor(
+        () => state.fitNameSaves.some(call => call[0] === 70 && call[1] === 'History Gamma'),
+        'history fit name save'
+      );
+      await waitFor(
+        () => document.getElementById('runDetailContent').textContent.includes('History Gamma'),
+        'refreshed history run details'
+      );
       document.querySelector('[data-action="close-modal"][data-modal="runDetailModal"]').click();
       state.runQueryHandler = null;
     });

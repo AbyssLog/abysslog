@@ -1,6 +1,6 @@
 {
   "name": "abysslog",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "EVE Online Abyssal Deadspace run tracker",
   "author": "Erinys",
   "license": "MIT",
@@ -13,6 +13,9 @@
   },
   "homepage": "https://github.com/AbyssLog/abysslog#readme",
   "main": "src/main/main.js",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "setup": "node scripts/setup-electron.js",
     "check": "npm run check:architecture && npm test",
@@ -87,8 +90,8 @@
     "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
-    "electron": "^43.3.0",
+    "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
-    "jsdom": "^26.1.0"
+    "jsdom": "^30.0.1"
   }
 }

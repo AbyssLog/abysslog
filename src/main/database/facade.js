@@ -43,7 +43,6 @@ module.exports = Object.freeze({
   getCredential: credentials.getCredential,
   setCredential: credentials.setCredential,
   deleteCredential: credentials.deleteCredential,
-  listCredentialsNeedingNormalization: credentials.listCredentialsNeedingNormalization,
   getInventoryBaseline: inventoryBaselines.getInventoryBaseline,
   clearInventoryBaseline: inventoryBaselines.clearInventoryBaseline,
   saveRun: runRepository.saveRun,

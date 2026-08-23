@@ -10,7 +10,6 @@ const {
   safeStorage,
   shell,
 } = require('electron');
-const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -30,19 +29,13 @@ const esi = require('./esi');
 const { createCredentialService } = require('./credential-service');
 const { createIpcGuard } = require('./ipc-guard');
 const janice = require('./janice');
+const { createOAuthService } = require('./oauth-service');
 const { createUpdateService } = require('./update-service');
 const runTracking = require('../shared/run-tracking');
 const security = require('../shared/security');
 
 const CLIENT_ID = 'c74d7418579645ebbad0665c93e47900';
 const OAUTH_REDIRECT_URI = 'eveauth-abysslog://callback';
-const MIGRATED_V4_OAUTH_SCOPES = [
-  'esi-location.read_location.v1',
-  'esi-location.read_ship_type.v1',
-  'esi-location.read_online.v1',
-  'esi-fittings.read_fittings.v1',
-  'esi-clones.read_implants.v1',
-];
 // Secret formats and keys are owned by credential-service.js.
 const MAX_IPC_JSON_BYTES = 2 * 1024 * 1024;
 
@@ -50,11 +43,9 @@ const credentialService = createCredentialService({
   safeStorage,
   database: db,
   security,
-  migratedOAuthScopes: MIGRATED_V4_OAUTH_SCOPES,
 });
 
 let mainWindow;
-let pendingAuth = null;
 let diagnostics = null;
 let rendererRecoveryOpen = false;
 let appIsQuitting = false;
@@ -136,14 +127,6 @@ if (process.defaultApp) {
   app.setAsDefaultProtocolClient('eveauth-abysslog');
 }
 
-function base64Url(buffer) {
-  return buffer
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
 // Credential encryption and token persistence are owned by credentialService.
 
 const tokenCoordinator = runTracking.createTokenCoordinator({
@@ -157,7 +140,7 @@ const tokenCoordinator = runTracking.createTokenCoordinator({
     security.requireInteger(lifetime, 'Token lifetime', { min: 1, max: 86_400 }),
 });
 
-// Janice credential migration and access are owned by credentialService.
+// Janice credential access is owned by credentialService.
 function getPublicSettings() {
   const settings = {};
   for (const key of security.PUBLIC_SETTING_KEYS) {
@@ -178,46 +161,6 @@ function isTrustedClipboardPermission(window, webContents, permission, requestin
   );
 }
 
-function safeEqual(left, right) {
-  const a = Buffer.from(String(left));
-  const b = Buffer.from(String(right));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function getCharacterCapabilities(characterId) {
-  const tokens = credentialService.loadTokens(characterId);
-  return tokens
-    ? security.getEsiCapabilitiesForScopes(tokens.scopes)
-    : { tracking: false, fitting: false, implants: false, killmails: false };
-}
-
-async function startSso(selectedCapabilities) {
-  if (!credentialService.isSecureStorageAvailable()) {
-    throw new Error('Secure credential storage is required before adding a character');
-  }
-
-  const capabilities = security.validateEsiCapabilitySelection(selectedCapabilities);
-  const scopes = security.getEsiScopesForCapabilities(capabilities);
-  const verifier = base64Url(crypto.randomBytes(32));
-  const challenge = base64Url(crypto.createHash('sha256').update(verifier).digest());
-  const state = base64Url(crypto.randomBytes(32));
-  pendingAuth = { verifier, state, scopes, createdAt: Date.now() };
-
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: CLIENT_ID,
-    redirect_uri: OAUTH_REDIRECT_URI,
-    code_challenge: challenge,
-    code_challenge_method: 'S256',
-    state,
-  });
-  if (scopes.length > 0) params.set('scope', scopes.join(' '));
-  const authorizationUrl = `https://login.eveonline.com/v2/oauth/authorize?${params}`;
-  if (!security.isAllowedExternalUrl(authorizationUrl)) throw new Error('OAuth destination is not allowed');
-  await shell.openExternal(authorizationUrl);
-  return true;
-}
-
 function sendAuthEvent(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
@@ -229,56 +172,29 @@ function focusMainWindow() {
   mainWindow.focus();
 }
 
-async function handleOAuthCallback(callbackUrl) {
-  try {
-    const callback = security.parseOAuthCallback(callbackUrl);
-    const transaction = pendingAuth;
-
-    if (!transaction || Date.now() - transaction.createdAt > 10 * 60 * 1000) {
-      throw new Error('No active or valid sign-in request');
-    }
-    if (!safeEqual(callback.state, transaction.state)) throw new Error('OAuth state validation failed');
-    pendingAuth = null;
-    if (callback.error) throw new Error(callback.errorDescription);
-
-    const tokens = await esi.exchangeAuthorizationCode(
-      callback.code,
-      CLIENT_ID,
-      transaction.verifier,
-      OAUTH_REDIRECT_URI
-    );
-    tokens.expires_at = Date.now() + security.requireInteger(tokens.expires_in, 'Token lifetime', {
-      min: 1,
-      max: 86_400,
-    }) * 1000;
-    tokens.scopes = transaction.scopes;
-
-    const accessToken = security.requireString(tokens.access_token, 'Access token', 16 * 1024);
-    const characterInfo = await esi.verifyToken(accessToken);
-    const characterId = security.requireInteger(characterInfo.CharacterID, 'Character ID');
-    const characterName = security.requireString(characterInfo.CharacterName, 'Character name', 128);
-    const character = {
-      id: characterId,
-      name: characterName,
-      portrait_url: `https://images.evetech.net/characters/${characterId}/portrait?size=64`,
-      client_id: CLIENT_ID,
-    };
-
-    db.saveCharacter(character);
-    credentialService.saveTokens(characterId, tokens);
+const oauthService = createOAuthService({
+  clientId: CLIENT_ID,
+  redirectUri: OAUTH_REDIRECT_URI,
+  security,
+  esi,
+  credentials: credentialService,
+  database: db,
+  openExternal: authorizationUrl => shell.openExternal(authorizationUrl),
+  onComplete: character => {
     recordDiagnostic('oauth.complete', { source: 'eve-sso' });
     sendAuthEvent('auth:complete', character);
     focusMainWindow();
-  } catch (error) {
+  },
+  onFailure: error => {
     recordDiagnosticFailure('oauth.failure', { source: 'eve-sso' }, error);
     sendAuthEvent('auth:error', error instanceof Error ? error.message : 'Sign-in failed');
     focusMainWindow();
-  }
-}
+  },
+});
 
 async function withCharacterCapability(characterId, capability, operation) {
   const id = security.requireInteger(characterId, 'Character ID');
-  const capabilities = getCharacterCapabilities(id);
+  const capabilities = oauthService.getCharacterCapabilities(id);
   if (!capabilities[capability]) {
     throw new Error(`Character authorization does not include the ${capability} capability`);
   }
@@ -410,7 +326,7 @@ async function createWindow() {
   });
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
-    pendingAuth = null;
+    oauthService.clearPending();
   });
   await window.loadURL(APP_RENDERER_URL);
 }
@@ -422,7 +338,7 @@ if (!gotTheLock) {
   app.on('second-instance', (_event, commandLine) => {
     focusMainWindow();
     const callbackUrl = commandLine.find(arg => arg.startsWith('eveauth-abysslog://'));
-    if (callbackUrl) void handleOAuthCallback(callbackUrl);
+    if (callbackUrl) void oauthService.handleCallback(callbackUrl);
   });
 
   app.whenReady().then(async () => {
@@ -436,7 +352,6 @@ if (!gotTheLock) {
     registerAppProtocol();
     recordDiagnostic('startup.phase', { phase: 'database' });
     db.init();
-    credentialService.normalizeMigratedCredentials();
     db.hardenSensitiveStorage();
     recordDiagnostic('startup.phase', { phase: 'window' });
     await createWindow();
@@ -452,7 +367,7 @@ if (!gotTheLock) {
 
 app.on('open-url', (event, callbackUrl) => {
   event.preventDefault();
-  void handleOAuthCallback(callbackUrl);
+  void oauthService.handleCallback(callbackUrl);
 });
 
 app.on('window-all-closed', () => {
@@ -498,8 +413,8 @@ registerAuthSettingsHandlers({
   database: db,
   security,
   loadTokens: credentialService.loadTokens,
-  getCharacterCapabilities,
-  startSso,
+  getCharacterCapabilities: oauthService.getCharacterCapabilities,
+  startSso: oauthService.start,
   getPublicSettings,
   validateObjectPayload: ipcGuard.validateObjectPayload,
   getSecureStorageStatus: credentialService.getSecureStorageStatus,

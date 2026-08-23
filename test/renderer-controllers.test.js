@@ -80,6 +80,7 @@ test('fit names save and clear through the dedicated controller', async () => {
   const apiCalls = [];
   const modalCalls = [];
   const saved = [];
+  const saveContexts = [];
   const controller = createFitNameController({
     document,
     api: {
@@ -92,11 +93,19 @@ test('fit names save and clear through the dedicated controller', async () => {
     },
     openModal: id => modalCalls.push(['open', id]),
     closeModal: id => modalCalls.push(['close', id]),
-    onSaved: result => saved.push(result),
+    onSaved: (result, context) => {
+      saved.push(result);
+      saveContexts.push(context);
+    },
   });
 
   controller.open({
-    dataset: { fitIdentityId: '7', fitDisplayName: 'Gamma Runner', fitHullName: 'Gila' },
+    dataset: {
+      fitIdentityId: '7',
+      fitDisplayName: 'Gamma Runner',
+      fitHullName: 'Gila',
+      fitReturnRunId: '42',
+    },
   });
   assert.equal(elements.get('fitNameIdentityId').value, '7');
   assert.equal(elements.get('fitNameInput').value, 'Gamma Runner');
@@ -114,6 +123,7 @@ test('fit names save and clear through the dedicated controller', async () => {
     ['close', 'fitNameModal'],
   ]);
   assert.deepEqual(saved.map(value => value.display_name), ['Updated Gamma', null]);
+  assert.deepEqual(saveContexts, [{ runId: 42 }, null]);
 });
 
 test('support settings controller uses injected formatting, polling, and scheduling', async () => {

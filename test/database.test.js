@@ -29,131 +29,13 @@ test.after(() => {
   fs.rmSync(userDataDirectory, { recursive: true, force: true });
 });
 
-test('database lifecycle creates verified backups and round-trips multiline CSV safely', () => {
+test('database backup lifecycle round-trips current data safely', () => {
   const Database = require('better-sqlite3');
-  const previousDatabase = new Database(path.join(userDataDirectory, 'abysslog.db'));
-  previousDatabase.exec(`
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE characters (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      portrait_url TEXT,
-      client_id TEXT,
-      created_at INTEGER DEFAULT (strftime('%s','now'))
-    );
-    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
-    CREATE TABLE runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      character_id INTEGER NOT NULL,
-      started_at INTEGER NOT NULL,
-      duration INTEGER NOT NULL DEFAULT 0,
-      tier TEXT,
-      weather TEXT,
-      outcome TEXT NOT NULL,
-      loot_value REAL DEFAULT 0,
-      consumed_cost REAL DEFAULT 0,
-      net_isk REAL DEFAULT 0,
-      total_loss REAL DEFAULT 0,
-      system_id INTEGER,
-      system_name TEXT,
-      appraised_at INTEGER,
-      cargo_before TEXT,
-      cargo_after TEXT,
-      drone_before TEXT,
-      drone_after TEXT,
-      hull_name TEXT,
-      ship_class TEXT,
-      notes TEXT,
-      created_at INTEGER DEFAULT (strftime('%s','now')),
-      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
-    );
-    CREATE TABLE run_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id INTEGER NOT NULL,
-      item_name TEXT NOT NULL,
-      qty INTEGER NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('gained','consumed','lost')),
-      unit_price_buy REAL DEFAULT 0,
-      unit_price_sell REAL DEFAULT 0,
-      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-    );
-    CREATE TABLE run_fitting (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id INTEGER NOT NULL,
-      type_id INTEGER NOT NULL,
-      type_name TEXT NOT NULL,
-      qty INTEGER NOT NULL DEFAULT 1,
-      slot TEXT,
-      unit_price_sell REAL DEFAULT 0,
-      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-    );
-    CREATE TABLE run_implants (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id INTEGER NOT NULL,
-      type_id INTEGER NOT NULL,
-      type_name TEXT NOT NULL,
-      slot INTEGER,
-      unit_price_sell REAL DEFAULT 0,
-      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-    );
-    CREATE TABLE run_tags (
-      run_id INTEGER NOT NULL,
-      tag TEXT NOT NULL COLLATE NOCASE,
-      PRIMARY KEY (run_id, tag),
-      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-    );
-    CREATE TABLE run_killmails (
-      run_id INTEGER NOT NULL,
-      killmail_id INTEGER NOT NULL,
-      PRIMARY KEY (run_id, killmail_id),
-      FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-    );
-    CREATE TABLE active_run_state (
-      character_id INTEGER PRIMARY KEY,
-      snapshot TEXT NOT NULL,
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
-    );
-    INSERT INTO characters (id, name, portrait_url, client_id)
-    VALUES (8999, 'Legacy Pilot', '', 'legacy-client');
-    INSERT INTO runs (
-      character_id, started_at, duration, tier, weather, outcome,
-      loot_value, consumed_cost, net_isk, total_loss, hull_name, notes
-    ) VALUES (
-      8999, 1600000000, 780, 'T3', 'Dark', 'Survived',
-      90, 20, 70, 0, 'Gila', 'Created by the v1.1.5 schema'
-    );
-    PRAGMA user_version = 4;
-  `);
-  previousDatabase.close();
-
   database.init();
   database.hardenSensitiveStorage();
 
-  const migrationBackupDirectory = path.join(userDataDirectory, 'backups');
-  const migrationBackupNames = fs.readdirSync(migrationBackupDirectory)
-    .filter(name => name.startsWith('abysslog-before-migration-v4-to-v5-') && name.endsWith('.db'));
-  assert.equal(migrationBackupNames.length, 1);
-  const migrationBackup = new Database(
-    path.join(migrationBackupDirectory, migrationBackupNames[0]),
-    { readonly: true, fileMustExist: true }
-  );
-  assert.equal(migrationBackup.pragma('user_version', { simple: true }), 4);
-  assert.equal(migrationBackup.pragma('application_id', { simple: true }), 0);
-  assert.equal(migrationBackup.pragma('quick_check', { simple: true }), 'ok');
-  assert.equal(
-    migrationBackup.prepare('SELECT notes FROM runs WHERE character_id = 8999').get().notes,
-    'Created by the v1.1.5 schema'
-  );
-  migrationBackup.close();
-
   const exitStatus = database.createExitBackup();
   assert.equal(exitStatus.schemaVersion, 5);
-  const migratedRun = database.getRuns({ character_id: 8999 })[0];
-  assert.equal(migratedRun.notes, 'Created by the v1.1.5 schema');
-  assert.equal(migratedRun.cargo_before, null);
-  assert.equal(migratedRun.drone_after, null);
-  assert.equal(migratedRun.ship_class, null);
   assert.equal(exitStatus.automaticBackupRetention, 7);
   assert.ok(exitStatus.latestBackup);
   assert.equal(fs.existsSync(exitStatus.latestBackup.filePath), true);
@@ -274,8 +156,8 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
   assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
     schemaVersion: 5,
-    characterCount: 4,
-    runCount: 3,
+    characterCount: 3,
+    runCount: 2,
     size: fs.statSync(manualStatus.filePath).size,
   });
 
@@ -300,7 +182,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   newerDatabase.close();
   assert.throws(
     () => database.inspectBackup(newerRestorePath),
-    /newer version of AbyssLog/
+    /schema v999.*requires schema v5/i
   );
 
   const foreignRestorePath = path.join(userDataDirectory, 'foreign-restore.db');
@@ -311,6 +193,32 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.throws(
     () => database.inspectBackup(foreignRestorePath),
     /valid AbyssLog database identity/
+  );
+
+  const incompleteRestorePath = path.join(userDataDirectory, 'incomplete-restore.db');
+  fs.copyFileSync(manualStatus.filePath, incompleteRestorePath);
+  const incompleteRestore = new Database(incompleteRestorePath);
+  incompleteRestore.exec('DROP INDEX idx_run_tags_tag');
+  incompleteRestore.close();
+  assert.throws(
+    () => database.inspectBackup(incompleteRestorePath),
+    /missing index idx_run_tags_tag/i
+  );
+
+  const unsupportedCredentialRestorePath = path.join(
+    userDataDirectory,
+    'unsupported-credential-restore.db'
+  );
+  fs.copyFileSync(manualStatus.filePath, unsupportedCredentialRestorePath);
+  const unsupportedCredentialRestore = new Database(unsupportedCredentialRestorePath);
+  unsupportedCredentialRestore.prepare(`
+    INSERT INTO credentials (kind, character_id, ciphertext, format_version)
+    VALUES ('oauth', 9001, 'legacy-ciphertext', 0)
+  `).run();
+  unsupportedCredentialRestore.close();
+  assert.throws(
+    () => database.inspectBackup(unsupportedCredentialRestorePath),
+    /unsupported credential format/i
   );
 
   const lookalikeRestorePath = path.join(userDataDirectory, 'lookalike-restore.db');
@@ -328,7 +236,7 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   lookalikeDatabase.close();
   assert.throws(
     () => database.inspectBackup(lookalikeRestorePath),
-    /opened in AbyssLog 1\.1\.5/
+    /schema v2.*requires schema v5/i
   );
   assert.throws(
     () => database.restoreBackup(database.getDataStatus().databasePath),
@@ -337,8 +245,8 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
 
   const restoreResult = database.restoreBackup(manualStatus.filePath);
   assert.equal(restoreResult.schemaVersion, 5);
-  assert.equal(restoreResult.characterCount, 4);
-  assert.equal(restoreResult.runCount, 3);
+  assert.equal(restoreResult.characterCount, 3);
+  assert.equal(restoreResult.runCount, 2);
   assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
   assert.equal(
     backupDirectoryEntries().filter(name => name.includes('-before-restore-')).length,
@@ -416,12 +324,6 @@ test('database lifecycle creates verified backups and round-trips multiline CSV 
   assert.equal(database.completeActiveRun(completedRun), completedId);
   assert.equal(database.getRuns({ character_id: 9003 }).length, 1);
 
-  const v4RestoreResult = database.restoreBackup(
-    path.join(migrationBackupDirectory, migrationBackupNames[0])
-  );
-  assert.equal(v4RestoreResult.schemaVersion, 4);
-  assert.equal(database.getDataStatus().schemaVersion, 5);
-  assert.equal(database.getRuns({ character_id: 8999 })[0].notes, 'Created by the v1.1.5 schema');
 });
 
 test('character deletion rolls back credentials and settings when the database delete fails', () => {
@@ -930,7 +832,7 @@ test('fit statistics merge equivalent module layouts and captured hulls', () => 
   );
 });
 
-test('CSV import requires the v1.1.5 hull_name contract', () => {
+test('CSV import requires the current hull_name contract', () => {
   database.saveCharacter({
     id: 9013,
     name: 'CSV Pilot',

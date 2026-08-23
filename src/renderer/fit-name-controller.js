@@ -21,12 +21,15 @@
     if (onSaved !== null && typeof onSaved !== 'function') {
       throw new TypeError('Fit name save callback must be a function');
     }
+    let saveContext = null;
 
     function open(element) {
       const fitIdentityId = Number(element.dataset.fitIdentityId);
       if (!Number.isSafeInteger(fitIdentityId)) throw new TypeError('Fit identity is invalid');
       const displayName = element.dataset.fitDisplayName || '';
       const hullName = element.dataset.fitHullName || 'this hull';
+      const returnRunId = Number(element.dataset.fitReturnRunId);
+      saveContext = Number.isSafeInteger(returnRunId) ? { runId: returnRunId } : null;
       document.getElementById('fitNameIdentityId').value = String(fitIdentityId);
       document.getElementById('fitNameInput').value = displayName;
       document.getElementById('fitNameHelp').textContent =
@@ -42,7 +45,9 @@
       if (!Number.isSafeInteger(fitIdentityId)) throw new TypeError('Fit identity is invalid');
       const result = await api.runs.setFitDisplayName(fitIdentityId, displayName);
       closeModal('fitNameModal');
-      if (onSaved) await onSaved(result);
+      const context = saveContext;
+      saveContext = null;
+      if (onSaved) await onSaved(result, context);
       return result;
     }
 

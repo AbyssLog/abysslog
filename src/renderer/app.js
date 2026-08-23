@@ -18,6 +18,8 @@ const fitNameHelpers = window.AbyssFitNames;
 const supportSettingsHelpers = window.AbyssSupportSettings;
 const uiTaskHelpers = window.AbyssUiTasks;
 const runDetailsHelpers = window.AbyssRunDetails;
+const manualRunHelpers = window.AbyssManualRuns;
+const characterHelpers = window.AbyssCharacters;
 const formatBytes = formatters.formatBytes;
 const fmtIsk = formatters.formatIsk;
 const fmtDuration = formatters.formatDuration;
@@ -52,6 +54,37 @@ const S = {
   pollGeneration: 0,
   pollFailureCount: 0,
 };
+const normalizeCapabilities = characterHelpers.normalizeCapabilities;
+const characterController = characterHelpers.createCharacterController({
+  document,
+  api: window.api,
+  state: S,
+  escapeHtml: esc,
+  switchCharacter,
+  onRemoveActiveCharacter: async () => {
+    stopESIPoll();
+    S.activeRun = null;
+    resetRunUI();
+  },
+  openModal,
+  closeModal,
+  confirmAction: message => confirm(message),
+});
+const {
+  getSelectedCapabilities,
+  handleComplete: handleAuthComplete,
+  handleError: handleAuthError,
+  openAdd: openAddCharModal,
+  populateSelect: populateCharSelect,
+  reauthorize: reauthCharacter,
+  refreshCapabilities: refreshCharacterCapabilities,
+  remove: removeCharacter,
+  renderList: renderCharList,
+  setSelectedCapabilities,
+  showNoCharacter: showNoCharPrompt,
+  startSso: startSSO,
+  updatePermissionSummary,
+} = characterController;
 const supportSettings = supportSettingsHelpers.createSupportSettingsController({
   document,
   api: window.api,
@@ -135,6 +168,30 @@ const {
   showShipSetup,
 } = runDetailsController;
 
+const manualRunController = manualRunHelpers.createManualRunController({
+  document,
+  api: window.api,
+  state: S,
+  appraisal: appraisalHelpers,
+  parseTags: parseRunTags,
+  parseInventory: parseCargo,
+  mergeInventory: mergeDiffItems,
+  setInventoryText,
+  formatIsk: fmtIsk,
+  escapeHtml: esc,
+  openModal,
+  closeModal,
+  refreshSavedRunViews,
+});
+const {
+  close: closeManualEntryModal,
+  invalidatePreview: invalidateManualEditAppraisalPreview,
+  openEdit: openEditRunModal,
+  openNew: openManualEntryModal,
+  submit: submitManualEntry,
+  updateOutcome: updateManualOutcomeUI,
+} = manualRunController;
+
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
   inventoryEditors.initialize(document);
@@ -198,40 +255,7 @@ function showPage(name) {
   return navigationController.show(name);
 }
 
-// ── Character Management ──────────────────────────────────────────────────
-function normalizeCapabilities(value) {
-  return {
-    tracking: value?.tracking === true,
-    fitting: value?.fitting === true,
-    implants: value?.implants === true,
-    killmails: value?.killmails === true,
-  };
-}
-
-async function refreshCharacterCapabilities() {
-  const entries = await Promise.all(S.characters.map(async character => {
-    try {
-      const capabilities = await window.api.auth.getCapabilities(character.id);
-      return [character.id, normalizeCapabilities(capabilities)];
-    } catch {
-      return [character.id, normalizeCapabilities(null)];
-    }
-  }));
-  S.characterCapabilities = Object.fromEntries(entries);
-}
-
-async function populateCharSelect() {
-  const sel = document.getElementById('charSelect');
-  sel.innerHTML = '<option value="">No character</option>';
-  for (const c of S.characters) {
-    const opt = document.createElement('option');
-    opt.value = c.id;
-    opt.textContent = c.name;
-    sel.appendChild(opt);
-  }
-  if (S.activeCharId) sel.value = S.activeCharId;
-}
-
+// Character switching remains the top-level owner of active-run and polling transitions.
 let characterSwitchChain = Promise.resolve();
 
 function switchCharacter(charId, save = true) {
@@ -312,44 +336,9 @@ async function performCharacterSwitch(charId, save = true) {
   if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
 }
 
-function showNoCharPrompt() {
-  document.getElementById('no-char-prompt').style.display = 'block';
-  document.getElementById('tracker-ui').style.display = 'none';
-}
-
 function loadDefaultSelects() {
   if (S.settings.default_tier) document.getElementById('tierSelect').value = S.settings.default_tier;
   if (S.settings.default_weather) document.getElementById('weatherSelect').value = S.settings.default_weather;
-}
-
-// ── SSO Auth ──────────────────────────────────────────────────────────────
-async function startSSO() {
-  try {
-    document.getElementById('ssoStatus').textContent = 'Browser opened — waiting for authorisation...';
-    document.getElementById('ssoStatus').textContent += ' AbyssLog will return to the foreground when sign-in finishes.';
-    document.getElementById('ssoSpinner').style.display = 'inline-block';
-    await window.api.auth.startSso(getSelectedCapabilities());
-  } catch (error) {
-    document.getElementById('ssoStatus').textContent = 'Error: ' + error.message;
-    document.getElementById('ssoSpinner').style.display = 'none';
-  }
-}
-
-async function handleAuthComplete(character) {
-  S.characters = await window.api.auth.getCharacters();
-  await refreshCharacterCapabilities();
-  await populateCharSelect();
-  await switchCharacter(character.id);
-  document.getElementById('ssoStatus').textContent = `✓ Logged in as ${character.name}`;
-  document.getElementById('ssoStatus').textContent += '. You can close the browser tab.';
-  document.getElementById('ssoSpinner').style.display = 'none';
-  setTimeout(() => closeModal('addCharModal'), 1500);
-  renderCharList();
-}
-
-function handleAuthError(message) {
-  document.getElementById('ssoStatus').textContent = 'Error: ' + message;
-  document.getElementById('ssoSpinner').style.display = 'none';
 }
 
 // ── ESI Polling ───────────────────────────────────────────────────────────
@@ -1347,131 +1336,6 @@ async function saveCurrentRunSafely() {
 }
 
 
-// ── Manual Entry & Run Editing ────────────────────────────────────────────
-
-let manualEditRunId = null; // null = new entry, number = editing existing
-let manualEditOriginal = null;
-let manualEditPendingAppraisal = null;
-let manualEntrySubmitting = false;
-const MANUAL_EDIT_PREVIEW_FIELDS = new Set([
-  'manualTier',
-  'manualWeather',
-  'manualOutcome',
-  'manualDuration',
-  'manualDate',
-  'manualShipClass',
-  'manualCargoBefore',
-  'manualCargoAfter',
-  'manualDroneBefore',
-  'manualDroneAfter',
-]);
-
-function invalidateManualEditAppraisalPreview(element) {
-  if (!manualEditRunId || !manualEditPendingAppraisal
-    || !MANUAL_EDIT_PREVIEW_FIELDS.has(element.id)) return;
-  manualEditPendingAppraisal = null;
-  const status = document.getElementById('manualEntryStatus');
-  if (!status) return;
-  const alert = document.createElement('div');
-  alert.className = 'alert warn';
-  alert.textContent = 'The form changed after re-appraisal. Re-Appraise again to update the totals, or Save to retain the stored appraisal where compatible.';
-  status.replaceChildren(alert);
-}
-
-
-function openManualEntryModal() {
-  manualEditRunId = null;
-  manualEditOriginal = null;
-  manualEditPendingAppraisal = null;
-  document.getElementById('manualEntryTitle').textContent = 'Enter Run Manually';
-  document.getElementById('manualSubmitLabel').textContent = 'Appraise & Save';
-  document.getElementById('manualSaveBtn').style.display = 'none';
-  document.getElementById('manualTier').value = S.settings.default_tier || '';
-  document.getElementById('manualWeather').value = S.settings.default_weather || '';
-  document.getElementById('manualOutcome').value = 'Survived';
-  document.getElementById('manualDuration').value = '';
-  document.getElementById('manualShipClass').value = 'Unknown';
-  document.getElementById('manualHullName').value = '';
-  document.getElementById('manualSystemName').value = '';
-  document.getElementById('manualTags').value = '';
-  document.getElementById('manualNotes').value = '';
-  setInventoryText('manualCargoBefore', '');
-  setInventoryText('manualDroneBefore', '');
-  setInventoryText('manualCargoAfter', '');
-  setInventoryText('manualDroneAfter', '');
-  document.getElementById('manualEntryStatus').innerHTML = '';
-  // Default date to now
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  document.getElementById('manualDate').value = now.toISOString().slice(0, 16);
-  updateManualOutcomeUI();
-  openModal('manualEntryModal');
-}
-
-async function openEditRunModal(runId) {
-  const run = await window.api.runs.getById(runId);
-  if (!run) return;
-  manualEditRunId = runId;
-  manualEditPendingAppraisal = null;
-  manualEditOriginal = {
-    outcome: run.outcome,
-    total_loss: run.total_loss || 0,
-  };
-  document.getElementById('manualEntryTitle').textContent = 'Edit Run';
-  document.getElementById('manualSubmitLabel').textContent = 'Re-Appraise';
-  document.getElementById('manualSaveBtn').style.display = 'inline-flex';
-  document.getElementById('manualTier').value = run.tier || '';
-  document.getElementById('manualWeather').value = run.weather || '';
-  document.getElementById('manualOutcome').value = run.outcome || 'Survived';
-  // Duration: convert seconds to mm:ss
-  const dur = run.duration || 0;
-  const mm = Math.floor(dur / 60).toString().padStart(2, '0');
-  const ss = (dur % 60).toString().padStart(2, '0');
-  document.getElementById('manualDuration').value = `${mm}:${ss}`;
-  // Date
-  const d = new Date(run.started_at * 1000);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  document.getElementById('manualDate').value = d.toISOString().slice(0, 16);
-  document.getElementById('manualShipClass').value = run.ship_class || 'Unknown';
-  document.getElementById('manualHullName').value = run.hull_name || '';
-  document.getElementById('manualSystemName').value = run.system_name || '';
-  document.getElementById('manualTags').value = (run.tags || []).join(', ');
-  document.getElementById('manualNotes').value = run.notes || '';
-  setInventoryText('manualCargoBefore', run.cargo_before || '');
-  setInventoryText('manualDroneBefore', run.drone_before || '');
-  setInventoryText('manualDroneAfter', run.drone_after || '');
-  setInventoryText('manualCargoAfter', run.cargo_after || '');
-  document.getElementById('manualEntryStatus').innerHTML = '';
-  updateManualOutcomeUI();
-  closeModal('runDetailModal');
-  openModal('manualEntryModal');
-}
-
-function updateManualOutcomeUI() {
-  const outcome = document.getElementById('manualOutcome').value;
-  const afterCol = document.getElementById('manualCargoAfterCol');
-  if (outcome === 'Died') {
-    afterCol.style.display = 'none';
-  } else {
-    afterCol.style.display = 'block';
-  }
-}
-
-function setManualEntrySubmitting(submitting) {
-  manualEntrySubmitting = submitting;
-  document.querySelectorAll('#manualEntryModal button, #manualEntryModal input, #manualEntryModal select, #manualEntryModal textarea')
-    .forEach(control => { control.disabled = submitting; });
-  document.getElementById('manualSpinner').style.display = submitting ? 'inline-block' : 'none';
-}
-
-function closeManualEntryModal(force = false) {
-  if (manualEntrySubmitting && !force) return;
-  closeModal('manualEntryModal');
-  manualEditRunId = null;
-  manualEditOriginal = null;
-  manualEditPendingAppraisal = null;
-}
-
 async function initAboutPage() {
   const version = await window.api.app.getVersion();
   document.getElementById('aboutVersion').textContent = `Version ${version}`;
@@ -1548,13 +1412,6 @@ function updatePasteHint(textareaId, hintId) {
   hint.textContent = `${lines} item${lines !== 1 ? 's' : ''} pasted`;
 }
 
-function parseDuration(str) {
-  if (!str || !str.trim()) return 0;
-  const parts = str.trim().split(':');
-  if (parts.length === 2) return parseInt(parts[0]) * 60 + parseInt(parts[1]);
-  if (parts.length === 3) return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
-  return parseInt(str) || 0;
-}
 async function refreshSavedRunViews() {
   const tasks = [
     runUiTask('Could not refresh run history', () => renderHistory()),
@@ -1566,192 +1423,6 @@ async function refreshSavedRunViews() {
   await Promise.all(tasks);
 }
 
-
-async function submitManualEntry(doAppraise = true) {
-  if (manualEntrySubmitting) return;
-  const editRunId = manualEditRunId;
-  const editOriginal = manualEditOriginal;
-  const characterId = S.activeCharId;
-  const tier = document.getElementById('manualTier').value;
-  const weather = document.getElementById('manualWeather').value;
-  const outcome = document.getElementById('manualOutcome').value;
-  const duration = parseDuration(document.getElementById('manualDuration').value);
-  const shipClass = document.getElementById('manualShipClass').value;
-  const hullName = document.getElementById('manualHullName').value.trim();
-  const systemName = document.getElementById('manualSystemName').value.trim();
-  const tags = parseRunTags(document.getElementById('manualTags').value);
-  const notes = document.getElementById('manualNotes').value;
-  const dateVal = document.getElementById('manualDate').value;
-  const cargoBefore = document.getElementById('manualCargoBefore').value;
-  const cargoAfter = document.getElementById('manualCargoAfter').value;
-  const droneBefore = document.getElementById('manualDroneBefore')?.value || '';
-  const droneAfter = document.getElementById('manualDroneAfter')?.value || '';
-  const statusEl = document.getElementById('manualEntryStatus');
-  const formSignature = JSON.stringify({
-    tier,
-    weather,
-    outcome,
-    duration,
-    shipClass,
-    dateVal,
-    cargoBefore,
-    cargoAfter,
-    droneBefore,
-    droneAfter,
-  });
-  const pendingAppraisal = manualEditPendingAppraisal?.signature === formSignature
-    ? manualEditPendingAppraisal : null;
-  if (doAppraise && editRunId) manualEditPendingAppraisal = null;
-
-  if (!tier || !weather) {
-    statusEl.innerHTML = '<div class="alert err">Please select a tier and weather type.</div>';
-    return;
-  }
-  if (doAppraise && !S.hasJaniceKey) {
-    statusEl.innerHTML = '<div class="alert err">Janice API key not set — go to Settings.</div>';
-    return;
-  }
-  if (
-    !doAppraise
-    && editRunId
-    && outcome !== editOriginal?.outcome
-    && !pendingAppraisal
-  ) {
-    statusEl.innerHTML =
-      '<div class="alert warn">Changing the outcome requires re-appraisal so the saved totals and item records remain consistent.</div>';
-    return;
-  }
-
-  const started_at = dateVal ? Math.floor(new Date(dateVal).getTime() / 1000) : Math.floor(Date.now() / 1000);
-  const savedCargoAfter = outcome === 'Survived' ? cargoAfter : '';
-  const savedDroneAfter = outcome === 'Survived' ? droneAfter : '';
-  setManualEntrySubmitting(true);
-  statusEl.innerHTML = '';
-
-  try {
-    let loot_value = 0, consumed_cost = 0, net_isk = 0, total_loss = 0;
-    let items = [];
-
-    if (!doAppraise && editRunId) {
-      const meta = {
-        tier,
-        weather,
-        outcome,
-        duration,
-        started_at,
-        total_loss: pendingAppraisal
-          ? pendingAppraisal.total_loss
-          : (editOriginal?.total_loss || 0),
-        hull_name: hullName,
-        ship_class: shipClass,
-        system_name: systemName,
-        notes,
-        tags,
-      };
-      const update = pendingAppraisal
-        ? { meta, appraisal: pendingAppraisal.appraisal }
-        : {
-            meta,
-            cargo: {
-              cargo_before: cargoBefore,
-              cargo_after: savedCargoAfter,
-              drone_before: droneBefore,
-              drone_after: savedDroneAfter,
-            },
-          };
-      await window.api.runs.update(editRunId, update);
-      closeManualEntryModal(true);
-      await refreshSavedRunViews();
-      return;
-    }
-    if (outcome === 'Survived') {
-      const appraisal = await appraisalHelpers.appraiseSurvivedInventory({
-        cargoBefore,
-        cargoAfter: savedCargoAfter,
-        droneBefore,
-        droneAfter: savedDroneAfter,
-        appraise: (appraisalItems, pricing) =>
-          window.api.janice.appraise(appraisalItems, pricing),
-      });
-      loot_value = appraisal.loot_value;
-      consumed_cost = appraisal.consumed_cost;
-      net_isk = appraisal.net_isk;
-      items = appraisal.items;
-    } else {
-      // Died — appraise all manually supplied pre-run inventory as loss
-      const lossItems = mergeDiffItems(
-        parseCargo(cargoBefore),
-        parseCargo(droneBefore)
-      );
-      const loss = await appraisalHelpers.appraiseLostInventory(
-        lossItems,
-        (appraisalItems, pricing) =>
-          window.api.janice.appraise(appraisalItems, pricing)
-      );
-      total_loss = loss.total_loss;
-      items = loss.items;
-    }
-
-    const runData = {
-      character_id: characterId,
-      started_at,
-      duration,
-      tier,
-      weather,
-      outcome,
-      loot_value,
-      consumed_cost,
-      net_isk,
-      total_loss,
-      cargo_before: cargoBefore,
-      cargo_after: savedCargoAfter,
-      drone_before: droneBefore,
-      drone_after: savedDroneAfter,
-      system_name: systemName,
-      hull_name: hullName,
-      ship_class: shipClass,
-      notes,
-      tags,
-      appraised_at: Math.floor(Date.now() / 1000),
-      items,
-      fitting: [],
-      implants: []
-    };
-
-    const appraisal = {
-      loot_value,
-      consumed_cost,
-      net_isk,
-      cargo_before: cargoBefore,
-      cargo_after: savedCargoAfter,
-      drone_before: droneBefore,
-      drone_after: savedDroneAfter,
-      items,
-      appraised_at: Math.floor(Date.now() / 1000),
-    };
-
-    if (editRunId) {
-      manualEditPendingAppraisal = {
-        signature: formSignature,
-        total_loss,
-        appraisal,
-      };
-      const previewMessage = outcome === 'Survived'
-        ? `Re-appraisal preview: ${fmtIsk(loot_value)} loot, ${fmtIsk(consumed_cost)} consumed, ${fmtIsk(net_isk)} net. Click Save to commit it.`
-        : `Re-appraisal preview: ${fmtIsk(total_loss)} total loss. Click Save to commit it.`;
-      statusEl.innerHTML = `<div class="alert success">${esc(previewMessage)}</div>`;
-    } else {
-      await window.api.runs.save(runData);
-      closeManualEntryModal(true);
-      await refreshSavedRunViews();
-      statusEl.innerHTML = '';
-    }
-  } catch (e) {
-    statusEl.innerHTML = `<div class="alert err">Failed: ${esc(e.message)}</div>`;
-  } finally {
-    setManualEntrySubmitting(false);
-  }
-}
 
 async function cancelRun() {
   if (!S.activeRun || S.activeRun.finalizing) return;
@@ -1955,79 +1626,6 @@ function renderStats() {
   return statsView.render();
 }
 
-// ── Settings ──────────────────────────────────────────────────────────────
-function renderCharList() {
-  const el = document.getElementById('charList');
-  if (!S.characters.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">No characters added yet.</div>';
-    return;
-  }
-  el.innerHTML = S.characters.map(c => {
-    const capabilities = normalizeCapabilities(S.characterCapabilities[c.id]);
-    const badges = [
-      ['tracking', 'Tracking'],
-      ['fitting', 'Fitting'],
-      ['implants', 'Implants'],
-      ['killmails', 'Killmails'],
-    ].filter(([capability]) => capabilities[capability])
-      .map(([, label]) => `<span class="capability-badge enabled">${label}</span>`)
-      .join('');
-    return `
-      <div class="char-item">
-        <img class="char-portrait" src="${esc(characterPortraitUrl(c.portrait_url))}" alt="" data-hide-on-error>
-        <div class="char-info">
-          <div class="char-name">${esc(c.name)}</div>
-          <div class="char-id">${esc(c.id)}</div>
-          <div class="capability-list">${badges || '<span class="capability-badge">Manual only</span>'}</div>
-        </div>
-        <div style="display:flex;gap:6px;margin-left:auto">
-          <button class="btn sm ghost" data-action="reauth-character" data-character-id="${esc(c.id)}">Permissions</button>
-          <button class="btn sm red" data-action="remove-character" data-character-id="${esc(c.id)}">Remove</button>
-        </div>
-      </div>`;
-  }).join('');
-}
-
-function characterPortraitUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname === 'images.evetech.net' ? url.href : '';
-  } catch {
-    return '';
-  }
-}
-
-async function reauthCharacter(charId) {
-  // Existing run data is preserved; only the authorization is replaced.
-  await switchCharacter(charId);
-  document.getElementById('addCharModalTitle').textContent = 'Character Permissions';
-  setSelectedCapabilities(S.characterCapabilities[charId]);
-  document.getElementById('ssoSpinner').style.display = 'none';
-  document.getElementById('ssoStatus').textContent =
-    'Adjust the features, then continue to EVE SSO to replace this character authorization.';
-  openModal('addCharModal');
-}
-
-async function removeCharacter(charId) {
-  if (!confirm('Remove this character? Their run history will be deleted.')) return;
-  const removingActiveCharacter = String(S.activeCharId) === String(charId);
-  await window.api.auth.deleteCharacter(charId);
-  if (removingActiveCharacter) {
-    stopESIPoll();
-    S.activeRun = null;
-    resetRunUI();
-  }
-  S.characters = await window.api.auth.getCharacters();
-  await refreshCharacterCapabilities();
-  await populateCharSelect();
-  renderCharList();
-  if (removingActiveCharacter) {
-    S.activeCharId = null;
-    if (S.characters.length) await switchCharacter(S.characters[0].id);
-    else showNoCharPrompt();
-  }
-}
-
 // ── Utilities ─────────────────────────────────────────────────────────────
 let recentRunsRenderGeneration = 0;
 
@@ -2092,51 +1690,12 @@ const fitNameController = fitNameHelpers.createFitNameController({
   api: window.api,
   openModal,
   closeModal,
-  onSaved: async () => {
+  onSaved: async (_result, context) => {
     await Promise.all([renderStats(), renderHistory()]);
+    if (context?.runId) await showRunDetail(context.runId);
   },
 });
 
-
-function getSelectedCapabilities() {
-  return [
-    ['tracking', 'permissionTracking'],
-    ['fitting', 'permissionFitting'],
-    ['implants', 'permissionImplants'],
-    ['killmails', 'permissionKillmails'],
-  ].filter(([, id]) => document.getElementById(id).checked)
-    .map(([capability]) => capability);
-}
-
-function setSelectedCapabilities(capabilities) {
-  const selected = normalizeCapabilities(capabilities);
-  document.getElementById('permissionTracking').checked = selected.tracking;
-  document.getElementById('permissionFitting').checked = selected.fitting;
-  document.getElementById('permissionImplants').checked = selected.implants;
-  document.getElementById('permissionKillmails').checked = selected.killmails;
-  updatePermissionSummary();
-}
-
-function updatePermissionSummary() {
-  const selected = getSelectedCapabilities();
-  const summary = document.getElementById('permissionSummary');
-  summary.textContent = selected.length === 0
-    ? 'No ESI data permissions will be requested. This character can use manual run entry only.'
-    : `${selected.length} optional feature${selected.length === 1 ? '' : 's'} selected. EVE SSO requires approval for every corresponding permission.`;
-}
-
-function openAddCharModal() {
-  document.getElementById('addCharModalTitle').textContent = 'Add Character';
-  document.getElementById('ssoStatus').textContent = '';
-  document.getElementById('ssoSpinner').style.display = 'none';
-  setSelectedCapabilities({
-    tracking: true,
-    fitting: false,
-    implants: false,
-    killmails: false,
-  });
-  openModal('addCharModal');
-}
 
 // Overlay clicks, Escape, and focus trapping are installed by modalController.
 

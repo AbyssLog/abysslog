@@ -482,6 +482,12 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   const runDetailsJs = fs.readFileSync(
     path.join(projectRoot, 'src/renderer/run-details-controller.js'), 'utf8'
   );
+  const manualRunJs = fs.readFileSync(
+    path.join(projectRoot, 'src/renderer/manual-run-controller.js'), 'utf8'
+  );
+  const characterJs = fs.readFileSync(
+    path.join(projectRoot, 'src/renderer/character-controller.js'), 'utf8'
+  );
 
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
   const scriptDirective = csp.split(';').map(part => part.trim()).find(part => part.startsWith('script-src'));
@@ -493,7 +499,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /setInterval\(pollESI/);
   assert.match(appJs, /runESIPollLoop/);
   assert.match(appJs, /calculateBackoffDelay/);
-  assert.match(appJs, /getSelectedCapabilities/);
+  assert.match(characterJs, /getSelectedCapabilities/);
   assert.match(appJs, /S\.capabilities\.tracking/);
   assert.match(appJs, /inferAbyssalFilament/);
   assert.match(appJs, /restoreInventoryBaseline/);
@@ -504,8 +510,8 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.match(html, /src="\.\.\/shared\/appraisal\.js"/);
   assert.match(html, /src="\.\.\/shared\/loadouts\.js"/);
   assert.match(appJs, /S\.capabilities\.killmails/);
-  assert.match(appJs, /editOriginal\?\.total_loss\s*\|\|\s*0/);
-  assert.match(appJs, /drone_before:\s*droneBefore/);
+  assert.match(manualRunJs, /currentEditOriginal\?\.total_loss\s*\|\|\s*0/);
+  assert.match(manualRunJs, /drone_before:\s*droneBefore/);
   assert.match(runDetailsJs, /appraisalHelpers\.appraiseSurvivedInventory/);
   assert.match(appraisalJs, /diffOptionalInventoryPastes/);
   assert.match(appraisalJs, /mergeInventoryItems\(cargo\.gained,\s*drones\.gained\)/);
@@ -522,7 +528,7 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   assert.doesNotMatch(appJs, /Promise\.resolve\(handler\(element\)\)/);
   assert.match(appJs, /persistActiveRun\(\)\.catch\(reportActiveRunCheckpointError\)/);
   assert.match(html, /src="\.\.\/shared\/ui-errors\.js"/);
-  assert.match(appJs, /window\.api\.runs\.update\(editRunId/);
+  assert.match(manualRunJs, /api\.runs\.update\(currentEditRunId/);
   assert.doesNotMatch(appJs, /window\.api\.runs\.(?:updateMeta|updateCargoOnly)/);
   assert.match(appJs, /window\.api\.runs\.saveActive/);
   assert.match(esi, /validateEsiLocation/);
@@ -569,6 +575,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
   ].join('\n');
   const ipcGuard = fs.readFileSync(path.join(projectRoot, 'src/main/ipc-guard.js'), 'utf8');
   const credentials = fs.readFileSync(path.join(projectRoot, 'src/main/credential-service.js'), 'utf8');
+  const oauth = fs.readFileSync(path.join(projectRoot, 'src/main/oauth-service.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(projectRoot, 'src/renderer/app.js'), 'utf8');
   const inventoryEditor = fs.readFileSync(path.join(projectRoot, 'src/renderer/inventory-editor.js'), 'utf8');
 
@@ -603,14 +610,17 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(handlerSource, /security\.validateRunData/);
   assert.match(handlerSource, /security\.validateAppraisalUpdate/);
   assert.match(handlerSource, /security\.validateRunEdit/);
-  assert.match(main, /security\.validateEsiCapabilitySelection/);
+  assert.match(oauth, /security\.validateEsiCapabilitySelection/);
   assert.match(handlerSource, /loadouts\.serializePresets\(data\.presets\)/);
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'fitting'/);
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'killmails'/);
-  assert.match(main, /tokens\.scopes = transaction\.scopes/);
+  assert.match(oauth, /tokens\.scopes = transaction\.scopes/);
+  assert.match(main, /createOAuthService/);
+  assert.doesNotMatch(main, /pendingAuth|function startSso|function handleOAuthCallback/);
   assert.match(credentials, /database\.deleteCredential\(OAUTH_CREDENTIAL_KIND, safeCharacterId\)/);
   assert.match(appJs, /if \(result\?\.authError\) return;/);
-  assert.match(main, /credentialService\.normalizeMigratedCredentials\(\);[\s\S]*db\.hardenSensitiveStorage\(\);/);
+  assert.doesNotMatch(main, /normalizeMigratedCredentials/);
+  assert.match(main, /db\.init\(\);[\s\S]*db\.hardenSensitiveStorage\(\);/);
   assert.match(main, /app\.on\('before-quit'[\s\S]*db\.createExitBackup\(\);[\s\S]*db\.close\(\);/);
   assert.match(database, /function createExitBackup\(\)[\s\S]*replaceExisting: true/);
   assert.doesNotMatch(main, /finishStartup|runs:get-recent-isk-per-hour/);
