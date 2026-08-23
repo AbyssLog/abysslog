@@ -2,7 +2,7 @@
 
 EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, and Janice price appraisals.
 
-[Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
+[Changelog](CHANGELOG.md) · [Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
 
 ## Features
 
@@ -17,7 +17,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
 - **Run history search** — search notes, tags, systems, ships, and specific loot, consumed, or lost item names; combine text with date, tier, weather, outcome, ship, and tag filters
 - **Statistics drill-through** - open History from tier, weather, hull, or captured-fit rows with the exact filter and date range visible and easy to clear
-- **Filtered CSV export** - export the active History results, with the dialog and completion message distinguishing filtered history from all history
+- **Filtered CSV export** - export the active History results in the versioned 1.2 format, including snapshots and appraisal history; the dialog distinguishes filtered history from all history
 - **Statistics** — survival rate, death-adjusted profit/hour, latest automatic session summary, and breakdowns by tier, weather, ship, captured fit, and item
 - **Statistics ranges** - view all time, rolling last hour, today, recent-day, current-month, or custom-date results
 - **Multi-character** — add multiple characters, switch between them
@@ -25,6 +25,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Run journal & provenance** — save notes, tags, system names, appraisal time, and verified killmail IDs with each run
 - **Consistent ship identity** — run records use the hull type (for example, Gila), not the pilot-assigned ship name
 - **Friendly fit names** - name a canonical captured fit from Statistics or History details so equivalent snapshots share a label without changing the captured setup or equivalence rules
+- **Appraisal history** - retain and show earlier valuations when a historical run is re-appraised
 
 ---
 
@@ -142,7 +143,8 @@ OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` an
 
 On each clean exit, AbyssLog writes a verified full-database backup and retains the latest seven automatic backups. Unexpected termination leaves the previous verified backup in place. Use **Settings → Data & Recovery** to create a manual backup, open the backup folder, or restore a full `.db` backup. Restore validates the selected database, preserves the current database as a retained before-restore backup, replaces the live data, and restarts AbyssLog.
 
-This release accepts only current schema-v5 databases and backups. Databases or backups from earlier schema versions are rejected without mutation; AbyssLog does not migrate them.
+This release accepts only complete schema-v6 databases and backups. Other schema
+versions, foreign databases, and structurally invalid files are rejected without mutation.
 
 A full restore replaces rather than merges the current database. Credentials encrypted by a different operating-system installation or user profile may no longer decrypt after a restore; reconnect affected EVE characters and re-enter the Janice API key.
 

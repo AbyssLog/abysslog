@@ -45,6 +45,7 @@ test('public release documentation covers privacy, security, support, and CCP at
   const license = read('LICENSE');
   const notice = read('NOTICE.md');
   const checklist = read('RELEASE_CHECKLIST.md');
+  const changelog = read('CHANGELOG.md');
   const about = read(path.join('src', 'renderer', 'index.html'));
   const packageJson = JSON.parse(read('package.json'));
   const packageLock = JSON.parse(read('package-lock.json'));
@@ -58,11 +59,15 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(privacy, /privacy-filtered diagnostic event log/);
   assert.match(privacy, /five files of 1 MB each/);
   assert.match(privacy, /never sent automatically/);
+  assert.match(privacy, /complete export can contain character identity/);
+  assert.match(privacy, /does not contain OAuth tokens or the Janice API key/);
   assert.match(security, /Private Vulnerability Reporting/);
   assert.match(security, /contains only a\s+request to establish private contact/);
   assert.match(support, /best effort/);
   assert.match(support, /Copy Diagnostics/);
   assert.match(support, /does not include\s+error messages, credentials/);
+  assert.match(support, /database, backup, or History CSV export/);
+  assert.match(security, /database backups, History\s+CSV exports/);
   assert.match(license, /^MIT License/);
   assert.match(license, /Copyright \(c\) 2026 Erinys/);
   assert.match(notice, /not affiliated with\s+or endorsed by Fenris Creations/);
@@ -72,6 +77,9 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(checklist, /Install the release candidate over the previous public version/);
   assert.match(checklist, /npm audit --omit=dev --audit-level=high/);
   assert.match(checklist, /An immutable tag name must not be reused/);
+  assert.match(changelog, /## 1\.2\.0/);
+  assert.match(changelog, /Schema v6 is the only supported database/);
+  assert.match(changelog, /versioned 1\.2 History CSV/);
   assert.equal(packageJson.license, 'MIT');
   assert.equal(packageLock.packages[''].license, 'MIT');
   assert.equal(packageJson.build.files.includes('LICENSE'), true);

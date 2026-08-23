@@ -20,9 +20,9 @@ operating-system versions plus bounded operational events; it does not include
 error messages, credentials, authorization URLs, character details, inventories,
 or stack traces.
 
-Do not upload an AbyssLog database or backup. Do not post OAuth tokens, Janice API
-keys, authorization URLs, or private character data. Reproduce with test data or
-redact sensitive values.
+Do not upload an AbyssLog database, backup, or History CSV export. Do not post
+OAuth tokens, Janice API keys, authorization URLs, or private character data.
+Reproduce with test data or redact sensitive values.
 
 ## Where an issue belongs
 

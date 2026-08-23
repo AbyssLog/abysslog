@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('api', {
     clearActive: characterId => ipcRenderer.invoke('runs:clear-active', characterId),
     getAll: filters => ipcRenderer.invoke('runs:get-all', filters),
     getById: runId => ipcRenderer.invoke('runs:get-by-id', runId),
+    getAppraisalHistory: runId => ipcRenderer.invoke('runs:get-appraisal-history', runId),
     copyFitting: runId => ipcRenderer.invoke('runs:copy-fitting', runId),
     delete: runId => ipcRenderer.invoke('runs:delete', runId),
     setFitDisplayName: (fitIdentityId, displayName) =>

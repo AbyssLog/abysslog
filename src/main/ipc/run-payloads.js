@@ -88,4 +88,26 @@ function mapInventoryBaseline(run) {
   };
 }
 
-module.exports = { mapInventoryBaseline, mapRunDetail, mapRunSummary };
+function mapAppraisalHistoryItem(appraisal) {
+  return {
+    id: appraisal.id,
+    kind: appraisal.kind,
+    source: appraisal.source,
+    provider: appraisal.provider,
+    appraised_at: appraisal.appraised_at,
+    resolution_status: appraisal.resolution_status,
+    loot_value: appraisal.loot_value,
+    consumed_cost: appraisal.consumed_cost,
+    net_isk: appraisal.net_isk,
+    total_loss: appraisal.total_loss,
+    is_current: appraisal.is_current === 1,
+    line_count: appraisal.line_count,
+  };
+}
+
+module.exports = {
+  mapAppraisalHistoryItem,
+  mapInventoryBaseline,
+  mapRunDetail,
+  mapRunSummary,
+};

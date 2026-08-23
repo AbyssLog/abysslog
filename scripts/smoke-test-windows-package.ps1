@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$AppPath,
+  [string]$SeedDatabasePath,
   [string]$NodePath = 'node',
   [ValidateRange(5, 120)]
   [int]$TimeoutSeconds = 30
@@ -77,6 +78,13 @@ function Stop-SmokeProcesses {
 }
 
 New-Item -ItemType Directory -Path $normalizedSmokeDirectory -ErrorAction Stop | Out-Null
+if (-not [string]::IsNullOrWhiteSpace($SeedDatabasePath)) {
+  $resolvedSeedDatabasePath = (Resolve-Path -LiteralPath $SeedDatabasePath -ErrorAction Stop).Path
+  if (-not (Test-Path -LiteralPath $resolvedSeedDatabasePath -PathType Leaf)) {
+    throw "Seed database was not found: $resolvedSeedDatabasePath"
+  }
+  Copy-Item -LiteralPath $resolvedSeedDatabasePath -Destination $databasePath -ErrorAction Stop
+}
 
 try {
   $profileArgument = "--user-data-dir=`"$normalizedSmokeDirectory`""

@@ -23,8 +23,9 @@ Include:
 - a minimal proof of concept, if one is safe to share;
 - whether the issue has been disclosed anywhere else.
 
-Never include live EVE OAuth tokens, Janice API keys, database backups, or another
-person's data. Use test credentials and redact screenshots and logs.
+Never include live EVE OAuth tokens, Janice API keys, database backups, History
+CSV exports, or another person's data. Use test credentials and redact screenshots
+and logs.
 
 This is a volunteer-maintained hobby project, so no response-time guarantee is
 offered. Reports will be acknowledged and assessed on a best-effort basis.

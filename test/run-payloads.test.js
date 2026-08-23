@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  mapAppraisalHistoryItem,
   mapInventoryBaseline,
   mapRunDetail,
   mapRunSummary,
@@ -12,6 +13,38 @@ const {
   buildInventoryItem,
   buildRun,
 } = require('./support/builders');
+
+test('appraisal history payloads reduce storage rows and normalize current state', () => {
+  assert.deepEqual(mapAppraisalHistoryItem({
+    id: 9,
+    kind: 'survived',
+    source: 'janice',
+    provider: 'janice',
+    appraised_at: 1_754_000_900,
+    resolution_status: 'complete',
+    loot_value: 120,
+    consumed_cost: 20,
+    net_isk: 100,
+    total_loss: 0,
+    is_current: 1,
+    line_count: 3,
+    created_at: 1,
+    internal_value: 'hidden',
+  }), {
+    id: 9,
+    kind: 'survived',
+    source: 'janice',
+    provider: 'janice',
+    appraised_at: 1_754_000_900,
+    resolution_status: 'complete',
+    loot_value: 120,
+    consumed_cost: 20,
+    net_isk: 100,
+    total_loss: 0,
+    is_current: true,
+    line_count: 3,
+  });
+});
 
 test('run payloads expose canonical summaries without storage-only fields', () => {
   const summary = mapRunSummary(buildRun({

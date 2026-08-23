@@ -1,10 +1,10 @@
 (function initRunDetailsController(root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./appraisal-history-view'));
   } else {
-    root.AbyssRunDetails = factory();
+    root.AbyssRunDetails = factory(root.AbyssAppraisalHistory);
   }
-})(typeof globalThis !== 'undefined' ? globalThis : window, function createModule() {
+})(typeof globalThis !== 'undefined' ? globalThis : window, function createModule(appraisalHistoryView) {
   function createRunDetailsController({
     document,
     api,
@@ -36,7 +36,12 @@
 
     async function showRunDetail(runId) {
       pendingHistoricalReappraisal = null;
-      const run = await api.runs.getById(runId);
+      const [run, appraisalHistory] = await Promise.all([
+        api.runs.getById(runId),
+        typeof api.runs.getAppraisalHistory === 'function'
+          ? api.runs.getAppraisalHistory(runId)
+          : Promise.resolve([]),
+      ]);
       if (!run) return;
 
       const d = new Date(run.started_at * 1000);
@@ -143,6 +148,8 @@
       }
       html += '</div>';
 
+      html += appraisalHistoryView.render(appraisalHistory, { fmtIsk, esc });
+
       // Cargo paste section — always shown, editable for re-appraisal
       html += `<div class="section-title run-detail-inventory-title">Inventory Snapshots</div>`;
 
@@ -208,7 +215,6 @@
       }
       return status;
     }
-
 
     function setReappraisalActionsVisible(runId, visible) {
       const saveButton = document.getElementById(`reappraise-save-${runId}`);
