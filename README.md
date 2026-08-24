@@ -2,7 +2,7 @@
 
 EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, and Janice price appraisals.
 
-[Changelog](CHANGELOG.md) · [Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
+[Changelog](CHANGELOG.md) · [Statistics Reports](docs/statistics-reports.md) · [Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
 
 ## Features
 
@@ -17,6 +17,7 @@ EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, an
 - **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
 - **Run history search** — search notes, tags, systems, ships, and specific loot, consumed, or lost item names; combine text with date, tier, weather, outcome, ship, and tag filters
 - **Statistics drill-through** - open History from tier, weather, hull, or captured-fit rows with the exact filter and date range visible and easy to clear
+- **Dynamic Statistics reports** - build run-performance or item-drop reports with filters, up to two selected breakdowns, selectable metrics, sorting, and exact History drill-through
 - **Filtered CSV export** - export the active History results in the versioned 1.2 format, including snapshots and appraisal history; the dialog distinguishes filtered history from all history
 - **Statistics** — survival rate, death-adjusted profit/hour, latest automatic session summary, and breakdowns by tier, weather, ship, captured fit, and item
 - **Statistics ranges** - view all time, rolling last hour, today, recent-day, current-month, or custom-date results

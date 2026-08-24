@@ -51,6 +51,11 @@ function createRunQueryRepository(getDb) {
     ).all(...runIds)) {
       runMap.get(Number(row.run_id))?.tags.push(row.tag);
     }
+    if (filters.drop_item_name) {
+      for (const run of runs) {
+        run.matching_items.push({ item_name: filters.drop_item_name, type: 'gained' });
+      }
+    }
     if (filters.search) {
       const rows = connection.prepare(`
         SELECT DISTINCT a.run_id, al.item_name, al.disposition AS type
@@ -109,6 +114,45 @@ function createRunQueryRepository(getDb) {
         WHERE selected_tag.run_id = r.id AND selected_tag.tag = ? COLLATE NOCASE
       )`;
       params.push(filters.tag);
+    }
+    if (filters.drop_item_name) {
+      query += ` AND r.outcome = 'Survived'
+        AND EXISTS (
+          SELECT 1 FROM inventory_snapshots observed_before
+          WHERE observed_before.run_id = r.id
+            AND observed_before.phase = 'before'
+            AND observed_before.location = 'cargo'
+            AND observed_before.parse_status = 'complete'
+        )
+        AND EXISTS (
+          SELECT 1 FROM inventory_snapshots observed_after
+          WHERE observed_after.run_id = r.id
+            AND observed_after.phase = 'after'
+            AND observed_after.location = 'cargo'
+            AND observed_after.parse_status = 'complete'
+        )
+        AND COALESCE((
+          SELECT SUM(after_item.qty)
+          FROM inventory_snapshots after_snapshot
+          JOIN inventory_snapshot_items after_item
+            ON after_item.snapshot_id = after_snapshot.id
+          WHERE after_snapshot.run_id = r.id
+            AND after_snapshot.phase = 'after'
+            AND after_snapshot.location = 'cargo'
+            AND after_snapshot.parse_status = 'complete'
+            AND after_item.item_name = ? COLLATE NOCASE
+        ), 0) > COALESCE((
+          SELECT SUM(before_item.qty)
+          FROM inventory_snapshots before_snapshot
+          JOIN inventory_snapshot_items before_item
+            ON before_item.snapshot_id = before_snapshot.id
+          WHERE before_snapshot.run_id = r.id
+            AND before_snapshot.phase = 'before'
+            AND before_snapshot.location = 'cargo'
+            AND before_snapshot.parse_status = 'complete'
+            AND before_item.item_name = ? COLLATE NOCASE
+        ), 0)`;
+      params.push(filters.drop_item_name, filters.drop_item_name);
     }
     if (filters.search) {
       const searchLike = escapeLike(filters.search);

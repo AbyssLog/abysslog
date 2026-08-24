@@ -4,7 +4,9 @@ const appraisalHelpers = window.AbyssAppraisal;
 const uiErrors = window.AbyssUiErrors;
 const updateHelpers = window.AbyssUpdates;
 const statistics = window.AbyssStatistics;
+const statisticsReport = window.AbyssStatisticsReport;
 const statsViewHelpers = window.AbyssStatsView;
+const statisticsReportControllerHelpers = window.AbyssStatisticsReportController;
 const historyViewHelpers = window.AbyssHistoryView;
 const loadoutHelpers = window.AbyssLoadouts;
 const shipGroups = window.AbyssShipGroups;
@@ -1604,6 +1606,20 @@ function scheduleHistorySearch() {
   }, 250);
 }
 // ── Stats ─────────────────────────────────────────────────────────────────
+const statisticsReportController = statisticsReportControllerHelpers
+  .createStatisticsReportController({
+    document,
+    api: window.api,
+    reporting: statisticsReport,
+    getActiveCharacterId: () => S.activeCharId,
+    formatIsk: fmtIsk,
+    formatDuration: fmtDuration,
+    escapeHtml: esc,
+    onDrillThrough: selection => {
+      historyView.applyDrillThrough(selection);
+      return showPage('history');
+    },
+  });
 const statsView = statsViewHelpers.createStatsView({
   document,
   api: window.api,
@@ -1612,10 +1628,7 @@ const statsView = statsViewHelpers.createStatsView({
   formatIsk: fmtIsk,
   formatDuration: fmtDuration,
   escapeHtml: esc,
-  onDrillThrough: selection => {
-    historyView.applyDrillThrough(selection);
-    return showPage('history');
-  },
+  reportController: statisticsReportController,
 });
 
 function handleStatsRangeChange() {
@@ -1740,7 +1753,10 @@ const clickActions = {
   'close-manual-entry': () => closeManualEntryModal(),
   'submit-manual-entry': element => submitManualEntry(element.dataset.appraise === 'true'),
   'sort-history': element => sortHistory(element.dataset.sortColumn),
-  'stats-drill-through': element => statsView.openHistory(element),
+  'run-statistics-report': () => statisticsReportController.run(),
+  'reset-statistics-report': () => statisticsReportController.reset(),
+  'stats-report-sort': element => statisticsReportController.sort(element),
+  'stats-report-drill-through': element => statisticsReportController.openHistory(element),
   'show-run-detail': element => showRunDetail(Number(element.dataset.runId)),
   'show-ship-setup': element => showShipSetup(
     Number(element.dataset.runId),
@@ -1850,6 +1866,16 @@ document.addEventListener('change', event => {
     void runUiTask('Could not change the Statistics date range', () => handleStatsRangeChange());
   } else if (element.dataset.changeAction === 'render-stats') {
     void runUiTask('Could not refresh Statistics', () => renderStats());
+  } else if (element.dataset.changeAction === 'stats-report-preset') {
+    void runUiTask('Could not apply the report preset', () => (
+      statisticsReportController.handlePreset(element.value)
+    ));
+  } else if (element.dataset.changeAction === 'stats-report-mode') {
+    void runUiTask('Could not change the report type', () => (
+      statisticsReportController.handleMode(element.value)
+    ));
+  } else if (element.dataset.changeAction === 'stats-report-definition') {
+    statisticsReportController.handleDefinitionChange(element);
   } else if (element.dataset.changeAction === 'manual-outcome') {
     void runUiTask('Could not update the manual run form', () => updateManualOutcomeUI());
   }

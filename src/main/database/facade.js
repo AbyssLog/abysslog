@@ -6,6 +6,7 @@ const { createInventoryBaselineRepository } = require('./inventory-baseline-repo
 const { createRunCsvRepository } = require('./run-csv-repository-v6');
 const { createRunRepository } = require('./run-repository-v6');
 const { createStatisticsRepository } = require('./statistics-repository-v6');
+const { createStatisticsReportRepository } = require('./statistics-report-repository');
 
 const lifecycle = createDatabaseLifecycle();
 const getConnection = () => lifecycle.getConnection();
@@ -15,6 +16,7 @@ const credentials = createCredentialRepository(getConnection);
 const inventoryBaselines = createInventoryBaselineRepository(getConnection, characterSettings);
 const runRepository = createRunRepository(getConnection);
 const statisticsRepository = createStatisticsRepository(getConnection);
+const statisticsReports = createStatisticsReportRepository(getConnection);
 const runCsvRepository = createRunCsvRepository(
   getConnection,
   runRepository.getRuns,
@@ -63,6 +65,8 @@ module.exports = Object.freeze({
   deleteRun: runRepository.deleteRun,
   getStats: statisticsRepository.getStats,
   getDailyStats: statisticsRepository.getDailyStats,
+  getStatisticsReport: statisticsReports.getReport,
+  getStatisticsReportOptions: statisticsReports.getOptions,
   exportRunsCSV: runCsvRepository.exportRunsCSV,
   importRunsCSV: runCsvRepository.importRunsCSV,
 });

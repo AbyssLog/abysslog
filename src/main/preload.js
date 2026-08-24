@@ -72,6 +72,9 @@ contextBridge.exposeInMainWorld('api', {
     clearInventoryBaseline: (characterId, runId) =>
       ipcRenderer.invoke('runs:clear-inventory-baseline', characterId, runId),
     getStats: filters => ipcRenderer.invoke('runs:get-stats', filters),
+    getStatisticsReportOptions: scope =>
+      ipcRenderer.invoke('runs:get-statistics-report-options', scope),
+    getStatisticsReport: report => ipcRenderer.invoke('runs:get-statistics-report', report),
     updateAppraisal: (runId, data) => ipcRenderer.invoke('runs:update-appraisal', runId, data),
     update: (runId, data) => ipcRenderer.invoke('runs:update', runId, data),
     exportCSV: filters => ipcRenderer.invoke('runs:export-csv', filters),

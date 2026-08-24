@@ -14,6 +14,14 @@ const runDetailsJs = fs.readFileSync(
   path.join(projectRoot, 'src', 'renderer', 'run-details-controller.js'),
   'utf8'
 );
+const statsViewJs = fs.readFileSync(
+  path.join(projectRoot, 'src', 'renderer', 'stats-view.js'),
+  'utf8'
+);
+const statsReportMarkup = fs.readFileSync(
+  path.join(projectRoot, 'src', 'renderer', 'statistics-report-markup.js'),
+  'utf8'
+);
 
 test('empty survived post-run drone snapshots display the pre-run bay as unchanged', () => {
   assert.deepEqual(
@@ -61,9 +69,16 @@ test('History is the single run CSV export location', () => {
   assert.match(html, /data-action="import-csv"/);
 });
 
-test('statistics tables use one fixed seven-column grid and uniform weather badges', () => {
-  assert.match(styles, /\.stats-table \{[^}]*table-layout: fixed[^}]*min-width: 840px/);
-  assert.match(styles, /\.stats-table th:first-child \{[^}]*width: 28%/);
-  assert.match(styles, /\.stats-table \.stat-number \{[^}]*width: 12%[^}]*text-align: right/);
-  assert.match(styles, /\.weather-badge-group \.badge\.weather \{[^}]*width: 78px/);
+test('Statistics keeps the overview and provides a responsive report builder', () => {
+  assert.match(html, /id="statsReportSection"[^>]*aria-labelledby="statsReportTitle"/);
+  assert.match(statsReportMarkup, /id=\"statsReportMode\"/);
+  assert.match(statsReportMarkup, /id=\"statsReportGroupPrimary\"/);
+  assert.match(statsReportMarkup, /id=\"statsReportMetrics\"/);
+  assert.match(styles, /\.stats-report-toolbar,[\s\S]*grid-template-columns: repeat\(auto-fit/);
+  assert.match(styles, /\.stats-report-table \{[^}]*min-width: 760px/);
+  assert.match(styles, /\.stats-report-table th\.stat-number \.table-sort \{[^}]*text-align: right/);
+  assert.match(styles, /#statsReportItem \{[^}]*background-color: var\(--surface\)[^}]*color-scheme: dark/);
+  assert.match(styles, /#statsReportItem:-webkit-autofill[\s\S]*-webkit-box-shadow: 0 0 0 1000px var\(--surface\) inset/);
+  assert.doesNotMatch(statsViewJs, /section-title">By Tier/);
+  assert.doesNotMatch(statsViewJs, /section-title">By Weather/);
 });
