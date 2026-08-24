@@ -344,6 +344,10 @@
       </div>
       <div class="stats-filter-error" id="statsFilterError" role="alert" hidden></div>
       <div id="statsContent"></div>
+      <section class="stats-report-section" id="statsReportSection" aria-labelledby="statsReportTitle" hidden>
+        <div class="section-title" id="statsReportTitle">Report Builder</div>
+        <div id="statsReportMount"></div>
+      </section>
     </div>
 
     <!-- ── SETTINGS PAGE ──────────────────────────────────────────────── -->
@@ -702,7 +706,10 @@
 <script src="../shared/ui-errors.js"></script>
 <script src="../shared/updates.js"></script>
 <script src="../shared/statistics.js"></script>
+<script src="../shared/statistics-report.js"></script>
 <script src="./stats-view.js"></script>
+<script src="./statistics-report-markup.js"></script>
+<script src="./statistics-report-controller.js"></script>
 <script src="./history-view.js"></script>
 <script src="../shared/ship-groups.js"></script>
 <script src="./inventory-editor.js"></script>

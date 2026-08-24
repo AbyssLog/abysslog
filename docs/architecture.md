@@ -36,6 +36,9 @@ network access are blocked.
 - src/renderer/manual-run-controller.js owns manual run entry, historical run editing, staged appraisal, and submission guards.
 - src/renderer/character-controller.js owns character lists, permission selection, SSO presentation, reauthorization, and removal UI. renderer/app.js retains active-run character-switch orchestration.
 - src/renderer/stats-view.js owns statistics range controls, session and analytics markup, and charts.
+- src/renderer/statistics-report-controller.js owns dynamic report state, options,
+  result generations, sorting, formatting, and History drill-through.
+- src/renderer/statistics-report-markup.js owns accessible report-builder markup.
 - src/renderer/history-view.js owns history filter mapping, sorting, result generations, and match context.
 - src/renderer/styles/app.css owns the application stylesheet.
 - src/renderer/inventory-editor.js owns structured cargo and drone editing.
@@ -54,6 +57,8 @@ network access are blocked.
   schema-v6 connection and backup lifecycles.
 - src/main/database contains focused character/settings, inventory-baseline, run-write,
   run-query, fit, statistics, CSV, and CSV-validation repositories.
+- src/main/database/statistics-report-repository.js owns typed Run Performance and
+  Item Drops aggregation; src/shared/statistics-report.js owns the allowlisted contract.
 - src/shared/fit-identity.js defines canonical fit equivalence from hulls, modules, drones, and implants.
 - src/main/esi.js and src/main/janice.js are validated external-service clients.
 - src/main/http-client.js provides bounded HTTP, retries, and rate-limit waits.
@@ -170,10 +175,18 @@ the exported row count. The only accepted interchange shape is the explicitly ve
 inventory-snapshot, appraisal-history, tag, and killmail records. A duplicate UID is
 skipped instead of cloned under a second local identity.
 
-Statistics exposes hull summaries as `byHull`; each fit row references a persisted
-canonical fit identity. Equivalence is calculated only from the captured hull, modules,
-drones, and implants. A user-defined display name belongs to that identity, is exposed
-separately from captured snapshots, and never participates in equivalence.
+The Statistics overview retains its tiles, latest session, and activity chart. One
+typed report builder replaces the fixed tier, weather, hull, and fit tables. Run
+Performance reports aggregate current run results. Item Drops reports calculate
+positive quantity changes from complete before/after cargo snapshots, so drop rates
+do not depend on Janice values or appraisal dates. Report dimensions and metrics are
+strictly allowlisted, with at most two user-selected breakdowns; Item is implicit for
+unfiltered Item Drops reports.
+
+Fit report rows reference persisted canonical fit identities. Equivalence is calculated
+only from the captured hull, modules, drones, and implants. A user-defined display name
+belongs to that identity, is exposed separately from captured snapshots, and never
+participates in equivalence.
 
 ## Persistence
 

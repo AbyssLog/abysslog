@@ -16,6 +16,9 @@ const budgets = new Map([
   ['src/renderer/app.js', 1950],
   ['src/renderer/index.html', 750],
   ['src/renderer/run-details-controller.js', 500],
+  ['src/renderer/stats-view.js', 340],
+  ['src/renderer/statistics-report-controller.js', 430],
+  ['src/renderer/statistics-report-markup.js', 90],
   ['src/renderer/appraisal-history-view.js', 60],
   ['src/renderer/support-settings-controller.js', 310],
   ['src/renderer/loadout-controller.js', 200],
@@ -31,9 +34,11 @@ const budgets = new Map([
   ['src/main/database/schema-contract-v6.js', 230],
   ['src/main/database/lifecycle-service.js', 180],
   ['src/main/database/run-repository-v6.js', 450],
-  ['src/main/database/run-query-repository-v6.js', 250],
+  ['src/main/database/run-query-repository-v6.js', 280],
   ['src/main/database/run-csv-repository-v6.js', 350],
   ['src/main/database/run-csv-validation-v6.js', 210],
+  ['src/main/database/statistics-report-repository.js', 410],
+  ['src/shared/statistics-report.js', 260],
 ]);
 
 for (const [relativePath, maximumLines] of budgets) {
@@ -53,6 +58,8 @@ const databaseSchema = read('src/main/database/schema.js');
 const databaseSchemaContractV6 = read('src/main/database/schema-contract-v6.js');
 const databaseLifecycle = read('src/main/database/lifecycle-service.js');
 const backupService = read('src/main/database/backup-service.js');
+const statisticsReportRepository = read('src/main/database/statistics-report-repository.js');
+const statisticsReportContract = read('src/shared/statistics-report.js');
 const credentialService = read('src/main/credential-service.js');
 const credentialRepository = read('src/main/database/credential-repository.js');
 const oauthService = read('src/main/oauth-service.js');
@@ -73,6 +80,7 @@ expect(
 expect(
   /AbyssRunSession/.test(rendererApp)
     && /AbyssStatsView/.test(rendererApp)
+    && /AbyssStatisticsReportController/.test(rendererApp)
     && /AbyssHistoryView/.test(rendererApp)
     && /AbyssNavigation/.test(rendererApp)
     && /AbyssModals/.test(rendererApp)
@@ -124,8 +132,17 @@ expect(
     && /createInventoryBaselineRepository/.test(databaseFacade)
     && /createRunRepository/.test(databaseFacade)
     && /createStatisticsRepository/.test(databaseFacade)
+    && /createStatisticsReportRepository/.test(databaseFacade)
     && /createRunCsvRepository/.test(databaseFacade),
   'database/facade.js must compose lifecycle, backup, settings, credentials, inventory, run, statistics, and CSV ownership'
+);
+expect(
+  /survived_with_cargo_gain/.test(statisticsReportRepository)
+    && /beforeObserved && run\.afterObserved/.test(statisticsReportRepository)
+    && /group_by/.test(statisticsReportContract)
+    && /length > 2/.test(statisticsReportContract)
+    && !/SELECT|INSERT|UPDATE|DELETE/.test(statisticsReportContract),
+  'dynamic reports must use typed snapshot aggregation and a SQL-free allowlisted contract'
 );
 expect(
   /SCHEMA_VERSION = SCHEMA_VERSION_V6/.test(databaseSchema)

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const fitting = require('../../shared/fitting');
 const runPayloads = require('./run-payloads');
+const statisticsReport = require('../../shared/statistics-report');
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
 
@@ -91,6 +92,14 @@ function registerRunHandlers({
   secureHandle('runs:get-stats', filters =>
     database.getStats(security.validateStatsFilters(
       filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
+    )));
+  secureHandle('runs:get-statistics-report-options', scope =>
+    database.getStatisticsReportOptions(statisticsReport.validateScope(
+      scope === undefined ? {} : validateObjectPayload(scope, 'Statistics report scope', 4096)
+    )));
+  secureHandle('runs:get-statistics-report', report =>
+    database.getStatisticsReport(statisticsReport.validateReportRequest(
+      validateObjectPayload(report, 'Statistics report', 16 * 1024)
     )));
   secureHandle('runs:update-appraisal', (runId, data) =>
     database.updateAppraisal(

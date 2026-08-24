@@ -132,6 +132,7 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     date_to: 1_700_086_400,
     hull: ' Gila ',
     tag: ' Farm ',
+    drop_item_name: ' Triglavian Survey Database ',
   }), {
     character_id: 123,
     search: 'mutaplasmid',
@@ -139,6 +140,7 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     date_to: 1_700_086_400,
     hull: 'Gila',
     tag: 'Farm',
+    drop_item_name: 'Triglavian Survey Database',
     limit: 5,
   });
   assert.deepEqual(security.validateStatsFilters({
@@ -541,6 +543,11 @@ test('renderer policy blocks inline script and inline event handlers', () => {
 
 test('renderer exposes accessible form, dialog, and disclosure semantics', () => {
   const html = fs.readFileSync(path.join(projectRoot, 'src/renderer/index.html'), 'utf8');
+  const reportMarkup = fs.readFileSync(
+    path.join(projectRoot, 'src/renderer/statistics-report-markup.js'),
+    'utf8'
+  );
+  const accessibleMarkup = `${html}\n${reportMarkup}`;
 
   assert.match(html, /<title>AbyssLog<\/title>/);
   assert.match(html, /role="dialog" aria-modal="true"/);
@@ -548,11 +555,11 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
   assert.match(html, /id="globalErrorNotice"[^>]+role="alert"[^>]+aria-live="assertive"/);
   assert.doesNotMatch(html, /<div class="collapsible-header"/);
   assert.match(html, /class="collapsible-header"[^>]+aria-expanded="true"/);
-  for (const tag of html.match(/<(?:input|select|textarea)\b[^>]*>/g) || []) {
+  for (const tag of accessibleMarkup.match(/<(?:input|select|textarea)\b[^>]*>/g) || []) {
     const id = tag.match(/\bid="([^"]+)"/)?.[1];
     assert.ok(id, `Form control is missing an ID: ${tag}`);
     const hasAccessibleName = /\baria-label(?:ledby)?="[^"]+"/.test(tag)
-      || new RegExp(`<label[^>]+for="${id}"`).test(html);
+      || new RegExp(`<label[^>]+for="${id}"`).test(accessibleMarkup);
     assert.equal(hasAccessibleName, true, `Form control ${id} is missing an accessible name`);
   }
 });
@@ -610,6 +617,8 @@ test('IPC bridge matches guarded main-process handlers', () => {
   assert.match(handlerSource, /security\.validateRunData/);
   assert.match(handlerSource, /security\.validateAppraisalUpdate/);
   assert.match(handlerSource, /security\.validateRunEdit/);
+  assert.match(handlerSource, /statisticsReport\.validateReportRequest/);
+  assert.match(handlerSource, /statisticsReport\.validateScope/);
   assert.match(oauth, /security\.validateEsiCapabilitySelection/);
   assert.match(handlerSource, /loadouts\.serializePresets\(data\.presets\)/);
   assert.match(handlerSource, /withCharacterCapability\(characterId, 'fitting'/);

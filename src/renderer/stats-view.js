@@ -13,7 +13,7 @@
     formatIsk,
     formatDuration,
     escapeHtml,
-    onDrillThrough = null,
+    reportController = null,
   }) {
     if (!document || !api?.runs || !statistics) {
       throw new Error('Stats view requires document, run APIs, and statistics helpers');
@@ -26,8 +26,11 @@
     ) {
       throw new TypeError('Stats view formatter dependencies must be functions');
     }
-    if (onDrillThrough !== null && typeof onDrillThrough !== 'function') {
-      throw new TypeError('Statistics drill-through callback must be a function');
+    if (reportController !== null && (
+      typeof reportController.render !== 'function'
+      || typeof reportController.hide !== 'function'
+    )) {
+      throw new TypeError('Statistics report controller is invalid');
     }
 
   let statsRenderGeneration = 0;
@@ -35,44 +38,6 @@
   let chartResizeFrame = null;
   const viewWindow = document.defaultView;
   let historyRange = { filters: {}, label: null };
-
-  function drillButton(content, { group, value, label, shipClass = '' }) {
-    return '<button type="button" class="stats-drill-link" '
-      + 'data-action="stats-drill-through" data-drill-group="' + escapeHtml(group)
-      + '" data-drill-value="' + escapeHtml(value)
-      + '" data-drill-label="' + escapeHtml(label)
-      + '" data-drill-ship-class="' + escapeHtml(shipClass) + '">'
-      + content + '</button>';
-  }
-
-  function openHistory(element) {
-    if (!onDrillThrough) return undefined;
-    const filters = { ...historyRange.filters };
-    const labels = historyRange.label ? [historyRange.label] : [];
-    const value = element.dataset.drillValue;
-    const label = element.dataset.drillLabel;
-    switch (element.dataset.drillGroup) {
-      case 'tier':
-        filters.tier = value;
-        break;
-      case 'weather':
-        filters.weather = value;
-        break;
-      case 'hull':
-        filters.hull_name = value;
-        if (element.dataset.drillShipClass) {
-          filters.ship_class = element.dataset.drillShipClass;
-        }
-        break;
-      case 'fit':
-        filters.fit_identity_id = Number(value);
-        break;
-      default:
-        throw new TypeError('Statistics drill-through group is invalid');
-    }
-    labels.unshift(label);
-    return onDrillThrough({ filters, labels });
-  }
 
 
   function handleStatsRangeChange() {
@@ -106,41 +71,6 @@
     return filters;
   }
 
-  function renderWeatherBadges(value) {
-    const weathers = String(value || 'Unknown')
-      .split(',')
-      .map(weather => weather.trim())
-      .filter(Boolean);
-    return '<span class="weather-badge-group">'
-      + weathers.map(weather => '<span class="badge weather">'
-        + escapeHtml(weather) + '</span>').join('')
-      + '</span>';
-  }
-
-  function renderStatColumnHeaders() {
-    return '<th class="stat-number">Runs</th>'
-      + '<th class="stat-number">Survived</th>'
-      + '<th class="stat-number">Died</th>'
-      + '<th class="stat-number">Survival %</th>'
-      + '<th class="stat-number">Avg. Duration</th>'
-      + '<th class="stat-number">Avg. Net</th>';
-  }
-
-  function renderStatCells(group) {
-    const totalRuns = Number(group.total_runs) || 0;
-    const survived = Number(group.survived) || 0;
-    const died = Math.max(0, totalRuns - survived);
-    const survivalRate = totalRuns > 0 ? Math.round(survived / totalRuns * 100) : 0;
-    const avgDuration = Math.round(Number(group.avg_duration) || 0);
-    const avgNet = Number(group.avg_net_isk) || 0;
-    return '<td class="stat-number">' + totalRuns + '</td>'
-      + '<td class="stat-number" style="color:var(--green)">' + survived + '</td>'
-      + '<td class="stat-number" style="color:var(--red)">' + died + '</td>'
-      + '<td class="stat-number">' + survivalRate + '%</td>'
-      + '<td class="mono stat-number">' + formatDuration(avgDuration) + '</td>'
-      + '<td class="stat-number ' + (avgNet >= 0 ? 'positive' : 'negative') + '">'
-      + formatIsk(avgNet) + '</td>';
-  }
   async function renderStats() {
     const generation = ++statsRenderGeneration;
     const characterId = getActiveCharacterId();
@@ -153,6 +83,7 @@
       filterError.textContent = error instanceof Error ? error.message : 'Date range is invalid';
       filterError.hidden = false;
       lastChart = null;
+      reportController?.hide();
       el.innerHTML = '';
       return;
     }
@@ -176,6 +107,7 @@
     if (!o || o.total_runs === 0) {
       const message = range.preset === 'all' ? 'No runs logged yet' : 'No runs in selected period';
       lastChart = null;
+      reportController?.hide();
       el.innerHTML = `<div class="empty-state">${message}</div>`;
       return;
     }
@@ -229,112 +161,12 @@
       <div class="stats-chart-note">${chartNote}</div>
       <div id="dailyChart" style="background:var(--panel);border:1px solid var(--border);padding:16px;margin-bottom:16px"></div>`;
 
-    if (stats.byTier.length) {
-      html += '<div class="section-title">By Tier</div>'
-        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
-        + '<th>Tier</th>' + renderStatColumnHeaders()
-        + '</tr></thead><tbody>';
-      for (const tier of stats.byTier) {
-        const tierName = tier.tier || '-';
-        const content = '<span class="badge tier">' + escapeHtml(tierName) + '</span>';
-        html += '<tr><td>' + drillButton(content, {
-          group: 'tier', value: tierName, label: 'Tier: ' + tierName,
-        }) + '</td>' + renderStatCells(tier) + '</tr>';
-      }
-      html += '</tbody></table></div>';
-    }
-
-    if (stats.byWeather.length) {
-      html += '<div class="section-title">By Weather</div>'
-        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
-        + '<th>Weather</th>' + renderStatColumnHeaders()
-        + '</tr></thead><tbody>';
-      for (const weather of stats.byWeather) {
-        const weatherName = weather.weather || '-';
-        html += '<tr><td>' + drillButton(renderWeatherBadges(weatherName), {
-          group: 'weather', value: weatherName, label: 'Weather: ' + weatherName,
-        }) + '</td>'
-          + renderStatCells(weather) + '</tr>';
-      }
-      html += '</tbody></table></div>';
-    }
-
-    if (stats.byHull?.length) {
-      html += '<div class="section-title">By Hull</div>'
-        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
-        + '<th>Hull</th>' + renderStatColumnHeaders()
-        + '</tr></thead><tbody>';
-      for (const hull of stats.byHull) {
-        const hullContent = escapeHtml(hull.hull_name)
-          + ' <span class="stats-group-detail">(' + escapeHtml(hull.ship_class) + ')</span>';
-        html += '<tr><td>' + drillButton(hullContent, {
-          group: 'hull',
-          value: hull.hull_name,
-          shipClass: hull.ship_class,
-          label: 'Hull: ' + hull.hull_name + ' (' + hull.ship_class + ')',
-        }) + '</td>' + renderStatCells(hull) + '</tr>';
-      }
-      html += '</tbody></table></div>';
-    }
-
-    if (stats.byFit?.length) {
-      html += '<div class="section-title">By Fit</div>'
-        + '<div class="table-scroll"><table class="data-table analytics-table stats-table"><thead><tr>'
-        + '<th>Fit</th>' + renderStatColumnHeaders()
-        + '</tr></thead><tbody>';
-      for (const fit of stats.byFit) {
-        const fallbackName = fit.hull_name + ' fit #' + fit.fit_key;
-        const fitLabel = fit.display_name || fallbackName;
-        const detail = fit.display_name
-          ? fit.hull_name + ' #' + fit.fit_key
-          : '#' + fit.fit_key;
-        html += '<tr><td><button type="button" class="analytics-fit-link" '
-          + 'data-action="show-ship-setup" data-run-id="'
-          + escapeHtml(fit.representative_run_id) + '" data-return-modal="none" '
-          + 'aria-label="View ' + escapeHtml(fitLabel) + ' details">'
-          + escapeHtml(fitLabel) + ' <span class="analytics-key">'
-          + escapeHtml(detail) + '</span></button> '
-          + drillButton('View runs', {
-            group: 'fit', value: fit.fit_identity_id, label: 'Fit: ' + fitLabel,
-          })
-          + ' <button type="button" class="stats-fit-name-button" '
-          + 'data-action="edit-fit-name" data-fit-identity-id="'
-          + escapeHtml(fit.fit_identity_id) + '" data-fit-display-name="'
-          + escapeHtml(fit.display_name || '') + '" data-fit-hull-name="'
-          + escapeHtml(fit.hull_name) + '">'
-          + (fit.display_name ? 'Rename' : 'Name fit') + '</button></td>'
-          + renderStatCells(fit) + '</tr>';
-      }
-      html += '</tbody></table></div>';
-    }
-
-    const itemGroups = [
-      ['gained', 'Loot Drops'],
-      ['consumed', 'Consumed Items'],
-      ['lost', 'Lost Items'],
-    ];
-    const populatedItemGroups = itemGroups.filter(([type]) => stats.items?.[type]?.length);
-    if (populatedItemGroups.length) {
-      html += '<div class="section-title">Item Analytics</div><div class="item-analytics-grid">';
-      for (const [type, label] of populatedItemGroups) {
-        html += '<section class="item-analytics-panel"><h3>' + label + '</h3>'
-          + '<div class="table-scroll"><table class="data-table analytics-table"><thead><tr>'
-          + '<th>Item</th><th>Runs</th><th>Qty</th><th>Value</th>'
-          + '</tr></thead><tbody>';
-        for (const item of stats.items[type]) {
-          html += '<tr><td>' + escapeHtml(item.item_name) + '</td>'
-            + '<td>' + item.runs_containing + '</td><td>' + item.total_qty + '</td>'
-            + '<td>' + formatIsk(item.total_value || 0) + '</td></tr>';
-        }
-        html += '</tbody></table></div></section>';
-      }
-      html += '</div>';
-    }
     el.innerHTML = html;
 
     // Render chart after DOM is set
     lastChart = { daily: chart.rows, bucket: chart.bucket, bucketDays: chart.bucketDays };
     renderDailyChart(lastChart.daily, lastChart.bucket, lastChart.bucketDays);
+    return reportController?.render({ scope: filters, history: historyRange });
   }
 
   function renderDailyChart(daily, bucket = 'day', bucketDays = 1) {
@@ -486,7 +318,6 @@
       getSelectedRange: getSelectedStatsRange,
       createFilters: createStatsFilters,
       renderDailyChart,
-      openHistory,
     });
   }
 

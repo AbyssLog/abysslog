@@ -20,6 +20,7 @@ function createHarness(statsResult = {
     ['statsRangeSummary', { textContent: '' }],
   ]);
   const calls = [];
+  const reportCalls = [];
   const range = { preset: 'all', label: 'All time' };
   const api = {
     runs: {
@@ -46,12 +47,16 @@ function createHarness(statsResult = {
     formatIsk: value => String(value),
     formatDuration: value => String(value),
     escapeHtml: value => String(value),
+    reportController: {
+      hide: () => reportCalls.push(['hide']),
+      render: async context => reportCalls.push(['render', context]),
+    },
   });
-  return { calls, elements, range, view };
+  return { calls, elements, range, reportCalls, view };
 }
 
 test('statistics view owns range-to-query mapping and empty-state rendering', async () => {
-  const { calls, elements, range, view } = createHarness();
+  const { calls, elements, range, reportCalls, view } = createHarness();
 
   assert.deepEqual(view.getSelectedRange(), range);
   assert.deepEqual(view.createFilters(
@@ -71,6 +76,7 @@ test('statistics view owns range-to-query mapping and empty-state rendering', as
     ['stats', { character_id: 9001 }],
     ['daily', { character_id: 9001 }],
   ]);
+  assert.deepEqual(reportCalls, [['hide']]);
 });
 
 test('statistics view initializes a missing custom range before rendering', async () => {
@@ -84,8 +90,8 @@ test('statistics view initializes a missing custom range before rendering', asyn
   assert.equal(elements.get('statsDateTo').value, '2026-08-09');
 });
 
-test('statistics fit rows link to the captured fit and implants dialog', async () => {
-  const { elements, view } = createHarness({
+test('statistics overview delegates fit reporting instead of rendering fixed fit rows', async () => {
+  const { elements, reportCalls, view } = createHarness({
     overall: { total_runs: 1 },
     byTier: [],
     byWeather: [],
@@ -106,25 +112,18 @@ test('statistics fit rows link to the captured fit and implants dialog', async (
   await view.render();
 
   const html = elements.get('statsContent').innerHTML;
-  assert.match(html, /class="analytics-fit-link"/);
-  assert.match(html, /data-action="show-ship-setup"/);
-  assert.match(html, /data-run-id="42" data-return-modal="none"/);
-  assert.match(html, /View Gamma Runner details/);
-  assert.match(html, /data-drill-group="fit" data-drill-value="7"/);
-  assert.match(html, /data-fit-identity-id="7"/);
-  assert.match(html, />Rename<\/button>/);
-  assert.doesNotMatch(html, /<th>Weather<\/th>/);
-  assert.doesNotMatch(html, /weather-badge-group/);
+  assert.doesNotMatch(html, /class="analytics-fit-link"/);
+  assert.equal(reportCalls[0][0], 'render');
 });
 
-test('statistics grouped tables share metric columns and combine ship metadata', async () => {
+test('statistics overview no longer renders the four fixed grouping tables', async () => {
   const metrics = {
     total_runs: 3,
     survived: 2,
     avg_duration: 600,
     avg_net_isk: 100,
   };
-  const { elements, view } = createHarness({
+  const { elements, reportCalls, view } = createHarness({
     overall: { total_runs: 3 },
     byTier: [{ tier: 'T5', ...metrics }],
     byWeather: [{ weather: 'Exotic', ...metrics }],
@@ -142,83 +141,6 @@ test('statistics grouped tables share metric columns and combine ship metadata',
   await view.render();
 
   const html = elements.get('statsContent').innerHTML;
-  const commonHeaders = '<th class="stat-number">Runs</th>'
-    + '<th class="stat-number">Survived</th>'
-    + '<th class="stat-number">Died</th>'
-    + '<th class="stat-number">Survival %</th>'
-    + '<th class="stat-number">Avg. Duration</th>'
-    + '<th class="stat-number">Avg. Net</th>';
-  assert.equal(html.split(commonHeaders).length - 1, 4);
-  assert.equal((html.match(/data-table analytics-table stats-table/g) || []).length, 4);
-  assert.match(html, /data-drill-group="hull"/);
-  assert.match(html, /Gila <span class="stats-group-detail">\(Cruiser\)<\/span><\/button>/);
-  assert.equal((html.match(/class="badge weather"/g) || []).length, 1);
-});
-
-test('statistics drill-through preserves the selected date range and exact group filter', async () => {
-  const { elements, document } = createDocumentHarness([
-    ['statsRangePreset', { value: '30d' }],
-    ['statsCustomRange', { hidden: true }],
-    ['statsDateFrom', { value: '' }],
-    ['statsDateTo', { value: '' }],
-    ['statsContent', { innerHTML: '' }],
-    ['statsFilterError', { textContent: '', hidden: true }],
-    ['statsRangeSummary', { textContent: '' }],
-  ]);
-  const drillCalls = [];
-  const view = createStatsView({
-    document,
-    api: {
-      runs: {
-        getStats: async () => ({
-          overall: { total_runs: 1, survived: 1 },
-          byTier: [{
-            tier: 'T5', total_runs: 1, survived: 1, avg_duration: 600, avg_net_isk: 10,
-          }],
-          byWeather: [],
-          iskPerHour: 0,
-        }),
-        getDailyStats: async () => [],
-      },
-    },
-    statistics: {
-      defaultCustomDates: () => ({ from: '', to: '' }),
-      resolveDateRange: () => ({
-        preset: '30d', label: 'Last 30 days', range_start: 100, range_end: 200,
-      }),
-      createChartSeries: () => ({ rows: [], bucket: 'day', bucketDays: 1 }),
-    },
-    getActiveCharacterId: () => 9001,
-    formatIsk: String,
-    formatDuration: String,
-    escapeHtml: String,
-    onDrillThrough: selection => drillCalls.push(selection),
-  });
-
-  await view.render();
-  view.openHistory({
-    dataset: {
-      drillGroup: 'tier',
-      drillValue: 'T5',
-      drillLabel: 'Tier: T5',
-      drillShipClass: '',
-    },
-  });
-
-  view.openHistory({
-    dataset: {
-      drillGroup: 'fit',
-      drillValue: '7',
-      drillLabel: 'Fit: Gamma Runner',
-      drillShipClass: '',
-    },
-  });
-
-  assert.deepEqual(drillCalls, [{
-    filters: { date_from: 100, date_to: 200, tier: 'T5' },
-    labels: ['Tier: T5', 'Date range: Last 30 days'],
-  }, {
-    filters: { date_from: 100, date_to: 200, fit_identity_id: 7 },
-    labels: ['Fit: Gamma Runner', 'Date range: Last 30 days'],
-  }]);
+  assert.doesNotMatch(html, /data-table analytics-table stats-table/);
+  assert.equal(reportCalls[0][0], 'render');
 });

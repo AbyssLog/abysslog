@@ -82,6 +82,7 @@
       if (filters.ship_class) labels.push('Hull class: ' + filters.ship_class);
       if (filters.fit_identity_id) labels.push('Equivalent fit');
       if (filters.tag) labels.push('Tag: ' + filters.tag);
+      if (filters.drop_item_name) labels.push('Drop: ' + filters.drop_item_name);
       const dateFrom = document.getElementById('historyDateFrom')?.value;
       const dateTo = document.getElementById('historyDateTo')?.value;
       if (dateFrom || dateTo) {

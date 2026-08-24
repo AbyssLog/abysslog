@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.1 — 24 August 2026
+
+- Replaced the four fixed Statistics grouping tables with a dynamic report builder.
+- Added Run Performance reports grouped by tier, weather, hull, fit, or outcome.
+- Added Item Drops reports based on before/after cargo quantities rather than prices.
+- Added selectable run, survival, duration, run-performance net, drop-rate, and quantity metrics;
+  drop rate and average quantity use survived runs where any cargo loot was gained.
+- Added built-in presets, two-level grouping, dynamic sorting, and exact History drill-through.
+- Item is now an implicit result column for unfiltered Item Drops reports, leaving
+  both breakdown selectors available for combinations such as Tier and Weather.
+- Kept the item picker in the application dark theme after selecting a suggestion.
+- Kept Item Drops quantity-focused by excluding appraisal-derived net metrics.
+
 ## 1.2.0 — 23 August 2026
 
 ### Highlights

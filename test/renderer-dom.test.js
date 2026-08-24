@@ -16,7 +16,10 @@ const rendererScripts = [
   'src/shared/ui-errors.js',
   'src/shared/updates.js',
   'src/shared/statistics.js',
+  'src/shared/statistics-report.js',
   'src/renderer/stats-view.js',
+  'src/renderer/statistics-report-markup.js',
+  'src/renderer/statistics-report-controller.js',
   'src/renderer/history-view.js',
   'src/shared/ship-groups.js',
   'src/renderer/inventory-editor.js',
@@ -159,6 +162,7 @@ async function createRendererHarness() {
       byWeather: [],
       iskPerHour: 1000,
     },
+    statisticsReportHandler: null,
     daily: [
       { day: '2026-08-01', total_runs: 1, survived: 1, net_isk: 1000, total_loss: 0 },
       { day: '2026-08-02', total_runs: 1, survived: 0, net_isk: -500, total_loss: 500 },
@@ -249,6 +253,18 @@ async function createRendererHarness() {
       },
       getStats: async () => state.stats,
       getDailyStats: async () => state.daily,
+      getStatisticsReportOptions: async () => ({
+        items: [], hulls: [], fits: [], truncated: false,
+      }),
+      getStatisticsReport: async report => state.statisticsReportHandler?.(report) || ({
+          version: 1,
+          mode: report.mode,
+          group_by: report.group_by,
+          metrics: report.metrics,
+          population: report.mode === 'drops' ? 'survived_with_cargo_gain' : 'filtered_runs',
+          truncated: false,
+          rows: [],
+        }),
       importCSV: async () => ({ success: true, imported: 1, skipped: 0, errors: [] }),
     }),
     janice: apiGroup({
@@ -580,18 +596,43 @@ test('renderer async workflows execute against the real DOM', async t => {
         items: [],
       };
       state.runDetails.set(fitRun.id, fitRun);
-      state.stats.byFit = [{
-        fit_key: 'abc12345',
-        representative_run_id: fitRun.id,
-        hull_name: 'Gila',
-        ship_class: 'Cruiser',
-        weather: 'Exotic',
-        total_runs: 2,
-        survived: 2,
-        avg_net_isk: 500,
-      }];
+      state.statisticsReportHandler = report => ({
+        version: 1,
+        mode: report.mode,
+        group_by: report.group_by,
+        metrics: report.metrics,
+        population: 'filtered_runs',
+        truncated: false,
+        rows: report.group_by.includes('fit') ? [{
+          dimensions: {
+            fit: {
+              fit_identity_id: 7,
+              fit_key: 'abc12345',
+              representative_run_id: fitRun.id,
+              hull_name: 'Gila',
+              display_name: 'Gamma Runner',
+              label: 'Gamma Runner',
+            },
+          },
+          values: {
+            runs: 2,
+            survived: 2,
+            died: 0,
+            survival_pct: 100,
+            duration_avg: 600,
+            net_avg: 500,
+          },
+        }] : [],
+      });
 
       document.querySelector('[data-page="stats"]').click();
+      await waitFor(
+        () => document.querySelector('#statsReportPreset option[value="runs-fit"]'),
+        'statistics report presets'
+      );
+      const preset = document.getElementById('statsReportPreset');
+      preset.value = 'runs-fit';
+      preset.dispatchEvent(new window.Event('change', { bubbles: true }));
       await waitFor(
         () => document.querySelector('[data-action="show-ship-setup"][data-return-modal="none"]'),
         'statistics fit action'
@@ -618,7 +659,7 @@ test('renderer async workflows execute against the real DOM', async t => {
         'statistics fit modal close'
       );
       assert.equal(document.getElementById('runDetailModal').classList.contains('open'), false);
-      delete state.stats.byFit;
+      state.statisticsReportHandler = null;
       state.runDetails.delete(fitRun.id);
     });
 

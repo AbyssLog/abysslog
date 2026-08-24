@@ -687,7 +687,7 @@
     assertAllowedKeys(value, 'Run filters', new Set([
       'character_id', 'tier', 'weather', 'outcome', 'limit',
       'search', 'date_from', 'date_to', 'hull', 'hull_name', 'ship_class',
-      'fit_identity_id', 'tag',
+      'fit_identity_id', 'tag', 'drop_item_name',
     ]));
     const filters = {};
     if (value.character_id != null && value.character_id !== '') {
@@ -728,6 +728,9 @@
     }
     if (value.tag != null && String(value.tag).trim()) {
       filters.tag = requireTrimmedText(value.tag, 'Tag filter', 48);
+    }
+    if (value.drop_item_name != null && String(value.drop_item_name).trim()) {
+      filters.drop_item_name = requireTrimmedText(value.drop_item_name, 'Drop item filter', 256);
     }
     if (value.limit != null) {
       filters.limit = requireInteger(value.limit, 'Run limit', { min: 1, max: 1000 });
