@@ -17,8 +17,8 @@ CCP hf., or anyone else.
 AbyssLog is an independent third-party application and is not affiliated with
 or endorsed by Fenris Creations.
 
-The current EVE Online Developer License Agreement requires the following
-proprietary notice:
+The [EVE Online Developer License Agreement](https://developers.eveonline.com/license-agreement)
+requires the following proprietary notice:
 
 > © 2014 CCP hf. All rights reserved. “EVE”, “EVE Online”, “CCP”, and all
 > related logos and images are trademarks or registered trademarks of CCP hf.

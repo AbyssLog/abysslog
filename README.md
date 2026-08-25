@@ -1,176 +1,189 @@
 # AbyssLog
 
-EVE Online Abyssal Deadspace run tracker with ESI integration, cargo diffing, and Janice price appraisals.
+A local EVE Online Abyssal Deadspace run tracker with ESI integration, inventory
+comparison, Janice appraisals, searchable history, and statistics.
 
-[Changelog](CHANGELOG.md) · [Statistics Reports](docs/statistics-reports.md) · [Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
+[Changelog](CHANGELOG.md) · [Statistics reports](docs/statistics-reports.md) ·
+[Architecture](docs/architecture.md) · [Privacy](PRIVACY.md) ·
+[Security](SECURITY.md) · [Support](SUPPORT.md) · [License](LICENSE)
 
 ## Features
 
-- **ESI auto-detection** — polls every 5 seconds, auto-starts/stops timer on abyssal entry/exit
-- **Ship loss detection** — detects pod on exit, triggers loss appraisal automatically
-- **Optional fitting & implant capture** — captures authorized loss details at run start for loss valuation
-- **Optional killmail reconciliation** — replaces estimated death losses with the ship, cargo, drones, and implants recorded by ESI
-- **Cargo diffing** — paste pre/post cargo, app diffs to separate loot gained from items consumed
-- **Filament inference** — recognizes the filament in pre-run cargo and selects its tier and weather
-- **Remembered inventory baseline** — carries a survived run's post-run cargo and drones into the next run
-- **Loadout presets** - save, edit, and apply reusable cargo and drone inventories using item names and quantities only
-- **Janice appraisals** — prices loot at instant-sell (buy orders) and consumed items at replacement cost (sell orders)
-- **Run history search** — search notes, tags, systems, ships, and specific loot, consumed, or lost item names; combine text with date, tier, weather, outcome, ship, and tag filters
-- **Statistics drill-through** - open History from tier, weather, hull, or captured-fit rows with the exact filter and date range visible and easy to clear
-- **Dynamic Statistics reports** - build run-performance or item-drop reports with filters, up to two selected breakdowns, selectable metrics, sorting, and exact History drill-through
-- **Filtered CSV export** - export the active History results in the versioned 1.2 format, including snapshots and appraisal history; the dialog distinguishes filtered history from all history
-- **Statistics** — survival rate, death-adjusted profit/hour, latest automatic session summary, and breakdowns by tier, weather, ship, captured fit, and item
-- **Statistics ranges** - view all time, rolling last hour, today, recent-day, current-month, or custom-date results
-- **Multi-character** — add multiple characters, switch between them
-- **Run recovery** — checkpoints unfinished runs locally and restores them after a restart
-- **Run journal & provenance** — save notes, tags, system names, appraisal time, and verified killmail IDs with each run
-- **Consistent ship identity** — run records use the hull type (for example, Gila), not the pilot-assigned ship name
-- **Friendly fit names** - name a canonical captured fit from Statistics or History details so equivalent snapshots share a label without changing the captured setup or equivalence rules
-- **Appraisal history** - retain and show earlier valuations when a historical run is re-appraised
+- **Automatic or manual tracking:** ESI can detect Abyssal entry and exit, with
+  a configurable polling interval that defaults to five seconds.
+- **Inventory comparison:** compare cargo and drones before and after a run,
+  infer tier and weather from a recognized filament, and reuse the last survived
+  inventory or a saved loadout preset.
+- **Janice appraisals:** value gained items at buy prices and consumed items at
+  replacement prices while retaining unpriced item names in History.
+- **Loss handling:** detect capsule exits, capture authorized fits and implants,
+  and replace estimated losses with verified killmail contents when available.
+- **Searchable History:** combine free-text search across run details, tags, and
+  gained, consumed, or lost item names with structured filters.
+- **Versioned CSV:** export the current History filters and import complete 1.2
+  History files. Duplicate run UIDs are skipped.
+- **Statistics:** review survival and ISK summaries, build Run Performance or
+  Item Drops reports, and open the matching runs in History.
+- **Captured fits:** group equivalent hull, module, drone, and implant setups,
+  then assign an optional display name without changing historical snapshots.
+- **Multiple characters and recovery:** keep permissions, history, and active
+  state per character, and recover unfinished runs after a restart.
+- **Local data controls:** create and restore full database backups, inspect
+  privacy-filtered diagnostics, and store credentials with operating-system
+  encryption.
 
----
+## Getting started
 
-## Getting Started
+### Download
 
-### 1. Download
+Download the Windows installer from [GitHub Releases](https://github.com/AbyssLog/abysslog/releases/latest).
+Releases are not code signed, so Windows may show a SmartScreen warning. Compare
+the installer hash with the included `SHA256SUMS.txt` before running it.
 
-Download Windows installers from the [GitHub Releases page](https://github.com/AbyssLog/abysslog/releases/latest). Releases currently are not code signed, so Windows may show a SmartScreen warning. Each release includes `SHA256SUMS.txt`; verify the installer's SHA-256 hash before running it.
+Unsigned Windows, macOS, and Linux preview artifacts are available from
+[GitHub Actions](https://github.com/AbyssLog/abysslog/actions). They are intended
+for testing and expire after 14 days.
 
-Unsigned preview builds for Windows, macOS, and Linux are available from the [GitHub Actions page](https://github.com/AbyssLog/abysslog/actions). Preview artifacts expire and are intended for testing.
+### Connect an EVE character
 
-### 2. EVE Online Sign-In
+AbyssLog includes its EVE OAuth client configuration. In **Settings**, select
+**Add Character**, choose the ESI features you want, and approve those permissions
+in your browser:
 
-AbyssLog includes its EVE OAuth client configuration. Use **Add Character** in Settings, choose the features you want, and approve their ESI permissions in the browser:
-
-- **Automatic run tracking** reads the current solar system and active ship type.
-- **Ship fitting loss capture** reads character assets and the active ship type.
+- **Automatic run tracking** reads the current solar system and active hull type.
+- **Ship fitting loss capture** reads character assets and the active hull type.
 - **Implant loss capture** reads the active clone's implants.
 - **Killmail loss reconciliation** reads recent killmails after a death.
 
-These choices are stored per character. You can change them later with **Permissions** in Settings. Selecting no optional features leaves manual run entry available without ESI data access.
+Permissions are stored per character and can be changed later. Manual run entry
+remains available when no optional ESI features are selected.
 
-### 3. Janice API Key
+### Add a Janice API key
 
-Janice API keys are available by filing a ticket in the [Janice Discord](https://discord.gg/janice).
+AbyssLog does not include a shared Janice key. Request a key through the
+[Janice Discord](https://discord.gg/janice), then save and test it in **Settings**.
 
-### 4. First Run
+### Record the first run
 
-1. Open AbyssLog
-2. Go to **Settings**
-3. Paste your **Janice API Key**, click Save
-4. Click **Add Character** and log in via EVE SSO
-5. Head to the **Tracker** tab — you're ready
+1. Open **Settings** and save a Janice API key.
+2. Add an EVE character, or use manual entry without ESI.
+3. Open **Tracker**.
+4. Paste the pre-run cargo and drone contents.
+5. Start the run manually, or let ESI detect entry.
 
----
+## Run workflow
 
-## Run Workflow
+1. **Awaiting:** enter the pre-run inventory. A recognized filament sets the
+   tier and weather.
+2. **In Abyss:** the timer runs after manual start or confirmed ESI entry.
+3. **Survived:** stop the run, enter the post-run inventory, appraise the result,
+   review it, and save.
+4. **Died:** AbyssLog checks for an Abyssal killmail and appraises the recorded
+   loss. If the killmail is delayed or unavailable, it uses the captured pre-run
+   inventory, fit, and implants as an estimate.
 
-1. **Awaiting** — paste your pre-run cargo hold contents. A recognized filament selects the tier and weather automatically.
-2. **In Abyss** — ESI detects entry, timer starts automatically
-3. **Survived** — ESI detects exit, timer stops. Paste post-run cargo, click **Appraise Loot**, review, click **Save Run**
-4. **Died** — ESI detects pod, then checks for an Abyssal killmail and appraises the recorded loss. Killmails can take several minutes to appear, so **Check Killmail** is available for a retry. Without that permission or a matching killmail, the app falls back to the pre-run cargo, fitting, and implant estimate.
+After a survived run, the post-run cargo and drones become the next pre-run
+baseline. Clear or replace that baseline after unloading, restocking, or changing
+drones.
 
-After saving a survived run, your post-run cargo and drone bay are automatically promoted to the next run's pre-run baseline. Clear or replace that baseline after docking to unload loot, restock, or change drones.
+Use **Manage** under Pre-Run Contents to save a loadout from pasted cargo and
+drone lists. A preset stores only item names and quantities. Applying one replaces
+both pre-run inventories and still performs filament inference.
 
-Use **Manage** under Pre-Run Contents to create a preset from pasted cargo and drone lists. Applying a preset replaces both pre-run fields, ignores price/category columns, and still performs filament inference.
+ESI character assets can be cached for up to one hour, so AbyssLog does not use
+them to detect real-time cargo changes during a run.
 
-ESI character assets can be cached for up to an hour, so they are not used to detect real-time cargo changes during a run.
+## Building from source
 
----
-
-## Building from Source
-
-Requires Node.js 22.22.2+, Node.js 24.15.0+, or Node.js 26+.
+Supported Node.js versions are 22.22.2 or later in the 22.x line, 24.15.0 or
+later in the 24.x line, and 26 or later.
 
 ```bash
 git clone https://github.com/AbyssLog/abysslog.git
 cd abysslog
 npm ci
-npm run setup      # download the pinned Electron runtime
-npm start          # run in dev mode
-npm run build:win  # build Windows .exe
-npm run build:mac  # build macOS .dmg
-npm run build:linux # build Linux .AppImage
+npm run setup
+npm start
 ```
 
-Run `npm run check` before submitting a change. It enforces the architectural
-boundaries around the main composition root, database facade, renderer
-coordinator, and stylesheet, then runs the full test suite. Use
-`npm run test:coverage` when reviewing coverage.
+`npm run setup` downloads the pinned Electron runtime. Dependency lifecycle
+scripts are disabled by default in `.npmrc`.
 
-Dependency lifecycle scripts are disabled by default in `.npmrc`. `npm run setup` is the explicit, reviewable step that downloads the Electron runtime. It retries transient network/download failures up to three times and stops immediately for deterministic installer errors.
-
----
-
-## Publishing a Windows Release
-
-Windows releases are currently unsigned. Enable immutable releases in the
-repository settings before the first public release. Update both `package.json`
-and `version.json` to the same version, merge and validate the change on `main`,
-then create and push a matching annotated tag:
+Build commands:
 
 ```bash
-git tag -a v1.0.1 -m "AbyssLog v1.0.1"
-git push origin v1.0.1
+npm run build:win
+npm run build:mac
+npm run build:linux
+```
+
+Run `npm run check` before submitting a change. It checks architectural boundaries
+and runs the complete test suite. Use `npm run test:coverage` for a coverage report.
+
+## Publishing a Windows release
+
+Public releases use immutable GitHub releases and unsigned Windows installers.
+Set the same version in `package.json`, `package-lock.json`, and `version.json`,
+merge the release commit into `main`, then create and push a matching annotated tag:
+
+```bash
+git tag -a v1.2.2 -m "AbyssLog v1.2.2"
+git push origin v1.2.2
 ```
 
 The release workflow:
 
-1. verifies that the tag matches both version files;
-2. requires an annotated tag whose commit is already part of `main`;
-3. runs tests and audits production dependencies;
-4. builds and smoke-tests the unsigned Windows installer;
-5. creates SHA-256 checksums for the release assets;
-6. creates a draft GitHub release for manual installation testing and review.
+1. verifies the tag and its position on `main`;
+2. installs dependencies, runs tests, and audits production dependencies;
+3. builds and smoke-tests the unsigned Windows installer;
+4. generates SHA-256 checksums;
+5. creates a draft GitHub release.
 
-After testing the exact draft asset and comparing its hash with
-`SHA256SUMS.txt`, manually publish the draft release. The release workflow never
-publishes a release automatically.
+Download and test the draft installer, verify its checksum, review the generated
+notes and assets, then publish the draft manually.
 
----
+## Data storage
 
-## Data Storage
+The SQLite database is stored in the application data directory:
 
-Run history is stored in a local SQLite database at:
 - **Windows:** `%APPDATA%\abysslog\abysslog.db`
 - **macOS:** `~/Library/Application Support/abysslog/abysslog.db`
 - **Linux:** `~/.config/abysslog/abysslog.db`
 
-OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` and stored in a dedicated credentials table. Public preferences remain in settings. AbyssLog disables sign-in and credential storage when a secure OS-backed provider is unavailable; credentials are never persisted with the insecure plaintext/basic-text fallback.
+OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` and
+stored in the credentials table. Sign-in and credential storage are disabled if
+a secure operating-system provider is unavailable.
 
-On each clean exit, AbyssLog writes a verified full-database backup and retains the latest seven automatic backups. Unexpected termination leaves the previous verified backup in place. Use **Settings → Data & Recovery** to create a manual backup, open the backup folder, or restore a full `.db` backup. Restore validates the selected database, preserves the current database as a retained before-restore backup, replaces the live data, and restarts AbyssLog.
+On each clean exit, AbyssLog writes a verified automatic backup for the current
+local date. A later clean exit on the same date replaces that day's automatic
+backup. The latest seven automatic backups are retained. Manual and before-restore
+backups remain until you delete them.
 
-This release accepts only complete schema-v6 databases and backups. Other schema
-versions, foreign databases, and structurally invalid files are rejected without mutation.
+Restore accepts complete schema-v6 AbyssLog databases only. It validates a private
+copy, creates a safety backup of the current database, replaces the live database,
+and restarts the app. Credentials restored under another operating-system account
+may not decrypt and must then be entered again.
 
-A full restore replaces rather than merges the current database. Credentials encrypted by a different operating-system installation or user profile may no longer decrypt after a restore; reconnect affected EVE characters and re-enter the Janice API key.
+Local diagnostics are retained for seven days and limited to five files of 1 MB
+each. They contain operational categories and status codes, not error messages,
+credentials, or EVE data, and are never sent automatically.
 
-The app also keeps privacy-filtered local diagnostic events for seven days,
-bounded to five 1 MB files. These events contain operational categories and
-status codes rather than error messages or EVE data, and they are never sent
-automatically. Use **Settings → Diagnostics** to open the folder or copy a
-reviewable support summary.
+See the [privacy notice](PRIVACY.md) for retention, network, export, and deletion
+details.
 
-See the [privacy notice](PRIVACY.md) for the complete local-data, external-service,
-retention, and deletion details.
-
----
-
-## EVE Online Notice
+## EVE Online notice
 
 AbyssLog is an independent third-party application and is not affiliated with or
 endorsed by Fenris Creations.
 
-The current [EVE Online Developer License Agreement](https://developers.eveonline.com/license-agreement)
-requires this proprietary notice:
+The [EVE Online Developer License Agreement](https://developers.eveonline.com/license-agreement)
+requires this notice:
 
 © 2014 CCP hf. All rights reserved. “EVE”, “EVE Online”, “CCP”, and all related
 logos and images are trademarks or registered trademarks of CCP hf.
 
----
-
 ## License
 
-AbyssLog-authored software and documentation are released under the
-[MIT License](LICENSE). The license does not grant rights to EVE Online game
+AbyssLog-authored software and documentation are available under the
+[MIT License](LICENSE). That license does not grant rights to EVE Online game
 data, third-party material, or trademarks. See [NOTICE.md](NOTICE.md).
