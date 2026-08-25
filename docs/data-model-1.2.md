@@ -1,150 +1,139 @@
 # AbyssLog 1.2 data model
 
-Status: implemented and verified; production data and backups are schema v6.
+Status: implemented in schema v6. Schema v6 is the only runtime and full-backup
+contract supported by AbyssLog 1.2.
 
-Implementation note: schema v6 is the only runtime and restore contract. The private
-migration candidate completed successfully, and its retained v5 recovery backup,
-byte-identical live/manual v6 databases, and complete History CSV were verified before
-the candidate-only v5 path was removed.
+## Design goals
 
-## Goals
-
-- Preserve every captured historical value and original inventory paste.
+- Preserve captured historical values and original inventory text.
 - Separate captured snapshots, derived inventory changes, and price appraisals.
-- Give each run a stable export/import identity independent of local row IDs.
-- Store exact historical setups once while keeping canonical fit equivalence and aliases separate.
-- Preserve original and later appraisals instead of overwriting price history.
-- Keep the renderer-facing run model small and keep statistics queries straightforward.
-- Migrate the released v1.1.7/schema-v5 contract transactionally and verify it against real data.
+- Give each run a stable export and import identity independent of local row IDs.
+- Store exact historical fits once while keeping fit equivalence and display names
+  separate.
+- Retain original and later appraisals instead of overwriting price history.
+- Keep renderer payloads smaller than storage rows.
 
-## Non-goals
+Cloud synchronization, accounts, event sourcing, and relational active-run drafts
+are outside this model.
 
-- Cloud synchronization or accounts.
-- Event sourcing.
-- Relational storage for the short-lived active-run recovery snapshot.
-- Framework, TypeScript, or renderer build-system adoption.
-- Credential or public-settings redesign.
-- Removal of raw inventory text.
-- Bundled Janice access; that remains an independent onboarding change.
+## Current contract
 
-## Historical invariants
+The database uses application identity `0x4142594c`, SQLite `user_version = 6`,
+foreign keys, WAL mode, and secure deletion. Startup and restore validate the full
+schema contract before accepting a file.
 
-Migration must preserve:
+Foreign databases, other schema versions, unsupported credential formats, and
+structurally incomplete files are rejected without mutation.
 
-- character and run IDs, ordering, timestamps, outcomes, tiers, weather, hull types, classes, systems, notes, and tags;
-- raw before/after cargo and drone text exactly, including empty and unparseable values;
-- run item names, quantities, dispositions, captured prices, and displayed totals;
-- captured fitting rows, drones, implants, and their slot metadata;
-- canonical fit signatures, identity IDs, representative runs, and friendly names;
-- killmail IDs and active-run recovery state;
-- current character/run/fit/tag/killmail counts and all aggregate ISK totals.
+## Runs
 
-The migration must never contact ESI or Janice and must not infer missing type IDs from the network.
+`runs` is the aggregate root. Each row has:
 
-## Proposed schema-v6 ownership
+- a stable `run_uid` for CSV interchange and duplicate detection;
+- a local integer ID used by related tables;
+- character, timing, tier, weather, outcome, system, notes, and hull metadata;
+- an optional reference to an exact fit snapshot.
 
-### Runs
+`hull_name` is the hull type. Pilot-assigned ship names are not stored, and the
+former `ship_name` field is not supported by runtime payloads or the 1.2 CSV.
 
-`runs` remains the aggregate root and gains an immutable `run_uid` used by CSV interchange and future merging. Local integer IDs remain stable.
+Tags and verified killmail IDs are stored in `run_tags` and `run_killmails`.
 
-Run metadata remains on `runs`. Current appraisal totals should be read through the selected appraisal rather than independently overwritten fields.
+## Inventory snapshots
 
-### Inventory snapshots
+`inventory_snapshots` stores the inventory phase, location, original text,
+capture metadata, and parse status.
 
-`inventory_snapshots` stores:
+- Phase is `before`, `after`, or `loss`.
+- Location is `cargo` or `drone`.
+- Parse status is `complete`, `partial`, or `unparsed`.
 
-- run ID;
-- phase: `before`, `after`, or `loss`;
-- location: `cargo` or `drone`;
-- original raw text;
-- capture time when known;
-- parse status: `complete`, `partial`, or `unparsed`.
+`inventory_snapshot_items` stores the parsed item name, optional EVE type ID,
+and quantity. Raw text remains available when no normalized item rows can be
+created.
 
-`inventory_snapshot_items` stores parsed item name, optional type ID, and quantity. Unparseable input keeps its raw text even when no item rows can be created.
+Item Drops statistics use only survived runs with complete before-and-after cargo
+snapshots and at least one positive cargo gain. Drone changes and appraisal values
+do not affect drop quantities.
 
-### Fits
+## Fits
 
-`fit_identities` continues to own equivalence signatures and friendly names. Equivalent modules, drones, and implants remain independent of generated ship names and slot placement.
+`fit_identities` owns canonical equivalence and optional display names. Canonical
+equivalence includes hull, modules, drones, and implants. It ignores display names,
+generated ship names, prices, and slot placement.
 
-`fit_snapshots` stores the exact historical captured setup. Runs reference a snapshot, and each snapshot references its canonical fit identity. Exact snapshots are globally deduplicated within the local database using a versioned configuration signature. The signature includes hull, module, drone, implant, quantity, and exact slot data, but excludes character, run, alias, ship name, appraisal, and price data. A snapshot is immutable and must map to exactly one canonical identity; migration fails rather than silently merging an inconsistency.
+`fit_snapshots` stores immutable captured setups. Exact snapshots are globally
+deduplicated within the local database using a versioned signature that includes
+hull, item, quantity, implant, and exact slot data. Each snapshot maps to one
+canonical identity.
 
-`fit_snapshot_items` and `fit_snapshot_implants` replace per-run fitting and implant
-rows while retaining quantity, slot, captured name, and optional type ID. Prices are
-appraisal facts and are retained as `fitted` and `implant` appraisal reference lines.
+`fit_snapshot_items` and `fit_snapshot_implants` retain captured names, optional
+type IDs, quantities, and slot metadata. Fitted and implant prices belong to
+appraisal reference lines rather than fit snapshots.
 
-### Appraisals
+## Appraisals
 
-`appraisals` stores one or more immutable pricing results per run:
+`appraisals` stores immutable pricing results. A run can have multiple revisions,
+but exactly one is current. Statistics and renderer summaries read the current
+revision.
 
-- provider and source (`janice`, `killmail`, `manual`, or migrated legacy result);
-- appraisal time;
-- survived/loss appraisal kind;
-- totals and resolution status;
-- whether this is the currently selected appraisal.
+Each appraisal records:
 
-`appraisal_lines` stores gained, consumed, lost, fitted-reference, or implant-reference
-items with quantity and captured unit prices.
+- provider and source, such as Janice, killmail, manual, or migrated data;
+- appraisal time and survived or loss kind;
+- totals, resolution status, and current-selection state.
 
-Schema v6 should continue using SQLite `REAL` for historical prices. Changing monetary representation during the same migration would add rounding risk without a current user-facing requirement.
+`appraisal_lines` stores gained, consumed, lost, fitted-reference, and
+implant-reference items with captured quantities and unit prices. Historical
+prices remain SQLite `REAL` values to avoid changing monetary representation
+during the schema migration.
 
-### Active runs
+## Active runs
 
-`active_run_state` remains versioned JSON. It is bounded recovery state rather than long-lived analytical data, and the existing ownership is simpler than relational draft tables.
+`active_run_state` stores one bounded, versioned JSON recovery payload per
+character. It is temporary UI recovery state, not analytical history. The current
+payload version is 2 and uses `hull_name`.
 
-## Migration outline
+## CSV interchange
 
-1. Checkpoint and close the v5 database.
-2. Create and verify a retained byte-for-byte pre-migration backup.
-3. Reopen the live database and begin one immediate transaction.
-4. Create schema-v6 tables and indexes alongside the v5 tables.
-5. Generate deterministic run UIDs from the existing character, start time, and run ID.
-6. Create inventory snapshots from all four raw inventory fields, retaining raw text even when parsing is incomplete.
-7. Create exact fit snapshots and link them to the existing canonical fit identities.
-8. Create one migrated appraisal per historical run from current totals and run-item rows.
-9. Verify counts, relationships, aliases, raw-text hashes, and aggregate totals.
-10. Rebuild or replace superseded tables only after all verification succeeds.
-11. Set `user_version = 6` and retain the AbyssLog application ID.
-12. Run foreign-key and integrity checks before committing.
+Import and export accept only the versioned 1.2 History format. Each row contains
+the stable run UID and JSON records for exact fits, inventory snapshots, appraisal
+history, tags, and killmail IDs.
 
-Any failure rolls back the transaction and leaves the original database plus verified backup available.
+Import validates the complete row before writing it. An existing `run_uid` is
+skipped rather than duplicated.
 
-## Verification fixtures
+## Schema-v5 migration record
 
-Migration tests must cover:
+The private `1.2.0-private.1` candidate migrated the production schema-v5 database
+to schema v6 in one transaction. The migration:
 
-- a fresh schema-v6 database;
-- the released empty and populated schema-v5 contracts;
-- a representative populated database and full backup;
-- empty, malformed, and partially parseable inventory text;
-- equivalent fits with different slots plus non-equivalent drones or implants;
-- survived, loss, killmail, unpriced-item, and re-appraised runs;
-- fault injection after each migration stage;
-- repeated open after successful migration and repeated failure without partial state;
-- schema-v5 backup restore followed by migration;
-- newer, foreign, corrupt, and structurally incomplete databases rejected without mutation.
+1. created and verified a byte-identical pre-migration backup;
+2. created schema-v6 tables and indexes beside the old tables;
+3. generated deterministic run UIDs;
+4. converted raw inventory fields into snapshots while preserving original text;
+5. created exact fit snapshots linked to existing canonical identities;
+6. created one current appraisal for each historical run;
+7. verified counts, relationships, hashes, and aggregate totals;
+8. ran foreign-key and integrity checks before commit.
 
-## Approved decisions
+After private verification, schema-v5 migration and restore code was removed.
+Current builds reject schema-v5 files without changing them.
 
-1. Appraisal history will be stored and exposed through a minimal user-visible 1.2.0 interface.
-2. Immutable exact fit snapshots will be globally deduplicated within each local database using a versioned signature; canonical fit identity and aliases remain separate.
-3. CSV import and export will support only the explicitly versioned 1.2 format.
-4. The private migration candidate upgraded and verified the production schema-v5
-   data set. Runtime schema-v5 support was then removed before public 1.2.0 preparation;
-   the candidate, checksum, retained v5 backup, and v6 recovery artifacts remain private.
+## Verification evidence
 
-## Migration evidence
+Migration and current-schema tests confirmed:
 
-The migration completed successfully against disposable fixtures and the private
-production schema-v5 database:
+- character, run, fit, credential, tag, and killmail counts were preserved;
+- every run received a current migrated appraisal and reference lines;
+- exact fits were deduplicated without changing canonical equivalence;
+- original inventory text and normalized snapshot items were retained;
+- aggregate loot, consumed, net, and loss totals were unchanged;
+- foreign-key checks and SQLite integrity checks passed;
+- the source schema-v5 database remained unchanged during validation;
+- the 1.2 CSV restored all exported normalized records into a fresh schema-v6
+  database;
+- packaged startup passed with fresh and populated schema-v6 profiles.
 
-- character, run, fit-identity, credential, tag, and killmail counts were preserved;
-- globally deduplicated exact-fit and raw-preserving inventory snapshots were created;
-- every run received one current migrated appraisal with its reference lines;
-- aggregate loot, consumed, net, and loss totals unchanged;
-- zero foreign-key violations and successful SQLite quick checks;
-- source database hashes unchanged after validation.
-
-The migrated database and its verified backups reconcile exactly. The versioned 1.2
-CSV restores every exported run and normalized record into a fresh schema-v6 database;
-optional empty system names and notes canonically normalize to `NULL`. Packaged smoke
-tests pass with both fresh and populated schema-v6 profiles.
+Optional empty system names and notes normalize to SQL `NULL` during 1.2 CSV
+round-trips.
