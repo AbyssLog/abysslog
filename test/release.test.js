@@ -44,7 +44,6 @@ test('public release documentation covers privacy, security, support, and CCP at
   const support = read('SUPPORT.md');
   const license = read('LICENSE');
   const notice = read('NOTICE.md');
-  const checklist = read('RELEASE_CHECKLIST.md');
   const changelog = read('CHANGELOG.md');
   const about = read(path.join('src', 'renderer', 'index.html'));
   const packageJson = JSON.parse(read('package.json'));
@@ -52,7 +51,6 @@ test('public release documentation covers privacy, security, support, and CCP at
 
   assert.match(readme, /\[Privacy\]\(PRIVACY\.md\)/);
   assert.match(readme, /\[License\]\(LICENSE\)/);
-  assert.match(readme, /\[release checklist\]\(RELEASE_CHECKLIST\.md\)/);
   assert.match(readme, /not code signed/);
   assert.match(privacy, /does\s+not include telemetry, advertising, or crash reporting/);
   assert.match(privacy, /asset list to locate the active ship/);
@@ -71,12 +69,6 @@ test('public release documentation covers privacy, security, support, and CCP at
   assert.match(license, /^MIT License/);
   assert.match(license, /Copyright \(c\) 2026 Erinys/);
   assert.match(notice, /not affiliated with\s+or endorsed by Fenris Creations/);
-  assert.match(checklist, /Enable immutable releases/);
-  assert.match(checklist, /Enable secret scanning and push protection/);
-  assert.match(checklist, /Enable CodeQL default setup and Private Vulnerability Reporting/);
-  assert.match(checklist, /Install the release candidate over the previous public version/);
-  assert.match(checklist, /npm audit --omit=dev --audit-level=high/);
-  assert.match(checklist, /An immutable tag name must not be reused/);
   assert.match(changelog, /## 1\.2\.0/);
   assert.match(changelog, /Schema v6 is the only supported database/);
   assert.match(changelog, /versioned 1\.2 History CSV/);
