@@ -1,10 +1,16 @@
 (function initRunDetailsController(root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./appraisal-history-view'));
+    module.exports = factory(
+      require('./appraisal-history-view'),
+      require('./encounter-detail-view')
+    );
   } else {
-    root.AbyssRunDetails = factory(root.AbyssAppraisalHistory);
+    root.AbyssRunDetails = factory(root.AbyssAppraisalHistory, root.AbyssEncounterDetail);
   }
-})(typeof globalThis !== 'undefined' ? globalThis : window, function createModule(appraisalHistoryView) {
+})(typeof globalThis !== 'undefined' ? globalThis : window, function createModule(
+  appraisalHistoryView,
+  encounterDetailView
+) {
   function createRunDetailsController({
     document,
     api,
@@ -72,6 +78,8 @@
           ${run.outcome === 'Survived' ? (run.net_isk >= 0 ? '+' : '') + fmtIsk(run.net_isk) : '−' + fmtIsk(run.total_loss)}
         </div></div>
       </div>`;
+
+      html += encounterDetailView.render(run, { fmtIsk, esc });
 
       const metadataRows = [];
       if (run.fit_display_name) metadataRows.push(['Fit name', run.fit_display_name]);

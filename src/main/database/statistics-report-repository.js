@@ -1,5 +1,6 @@
 const MAX_REPORT_ROWS = 500;
 const MAX_OPTION_ROWS = 500;
+const { combineCargoRunsByEncounter } = require('./statistics-cargo-encounters');
 
 function createStatisticsReportRepository(getConnection) {
   if (typeof getConnection !== 'function') {
@@ -40,9 +41,8 @@ function createStatisticsReportRepository(getConnection) {
 
   function runSelect() {
     return `
-      SELECT r.id, r.tier, r.weather, r.outcome, r.duration,
-        r.hull_name, r.ship_class,
-        CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END AS net_result,
+      SELECT r.id, r.encounter_id, r.tier, r.weather, r.outcome, r.duration,
+        r.hull_name, r.ship_class, a.net_isk, a.total_loss,
         fs.fit_identity_id, fi.signature_hash AS fit_key,
         fi.hull_name AS fit_hull_name, fi.display_name AS fit_display_name
       FROM runs r
@@ -115,6 +115,8 @@ function createStatisticsReportRepository(getConnection) {
       durationMin: null,
       durationMax: null,
       netTotal: 0,
+      deathLossTotal: 0,
+      encounterIds: new Set(),
     };
   }
 
@@ -126,14 +128,18 @@ function createStatisticsReportRepository(getConnection) {
       if (!groups.has(key)) groups.set(key, createRunAggregate(dimensions));
       const group = groups.get(key);
       const duration = Number(run.duration) || 0;
-      const net = Number(run.net_result) || 0;
       group.count++;
-      if (run.outcome === 'Survived') group.survived++;
-      else group.died++;
+      group.encounterIds.add(Number(run.encounter_id));
+      if (run.outcome === 'Survived') {
+        group.survived++;
+        group.netTotal += Number(run.net_isk) || 0;
+      } else {
+        group.died++;
+        group.deathLossTotal += Number(run.total_loss) || 0;
+      }
       group.durationTotal += duration;
       group.durationMin = group.durationMin == null ? duration : Math.min(group.durationMin, duration);
       group.durationMax = group.durationMax == null ? duration : Math.max(group.durationMax, duration);
-      group.netTotal += net;
       if (group.dimensions.fit) {
         group.dimensions.fit.representative_run_id = Math.max(
           group.dimensions.fit.representative_run_id,
@@ -143,6 +149,7 @@ function createStatisticsReportRepository(getConnection) {
     }
     return [...groups.values()].map(group => {
       const available = {
+        encounters: group.encounterIds.size,
         runs: group.count,
         survived: group.survived,
         died: group.died,
@@ -150,8 +157,10 @@ function createStatisticsReportRepository(getConnection) {
         duration_avg: group.count ? group.durationTotal / group.count : null,
         duration_min: group.durationMin,
         duration_max: group.durationMax,
-        net_avg: group.count ? group.netTotal / group.count : null,
+        net_avg: group.survived ? group.netTotal / group.survived : null,
         net_total: group.netTotal,
+        death_loss_avg: group.died ? group.deathLossTotal / group.died : null,
+        death_loss_total: group.deathLossTotal,
       };
       return {
         dimensions: group.dimensions,
@@ -163,7 +172,7 @@ function createStatisticsReportRepository(getConnection) {
   function loadObservedCargoRuns(request) {
     const where = buildWhere(request, { survivedOnly: true });
     const rows = database().prepare(`
-      SELECT r.id, r.tier, r.weather, r.outcome, r.duration,
+      SELECT r.id, r.encounter_id, r.tier, r.weather, r.outcome, r.duration,
         r.hull_name, r.ship_class,
         fs.fit_identity_id, fi.signature_hash AS fit_key,
         fi.hull_name AS fit_hull_name, fi.display_name AS fit_display_name,
@@ -304,7 +313,8 @@ function createStatisticsReportRepository(getConnection) {
   }
 
   function aggregateDropReport(request) {
-    const runs = loadObservedCargoRuns(request).filter(run => gainsForRun(run).length > 0);
+    const runs = combineCargoRunsByEncounter(loadObservedCargoRuns(request), request)
+      .filter(run => gainsForRun(run).length > 0);
     const groups = request.filters.item_name
       ? aggregateSelectedItem(request, runs)
       : aggregateItems(request, runs);

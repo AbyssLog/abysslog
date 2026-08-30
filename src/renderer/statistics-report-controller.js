@@ -47,13 +47,13 @@
       byId('statsReportMode').innerHTML = Object.entries(reporting.MODES)
         .map(([value, definition]) => optionHtml(value, definition.label)).join('');
       byId('statsReportTier').innerHTML = optionHtml('', 'Any tier')
-        + ['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'Unknown']
+        + reporting.RUN_DOMAIN.REPORT_TIERS
           .map(value => optionHtml(value, value)).join('');
       byId('statsReportWeather').innerHTML = optionHtml('', 'Any weather')
-        + ['Electrical', 'Dark', 'Exotic', 'Firestorm', 'Gamma', 'Unknown']
+        + reporting.RUN_DOMAIN.REPORT_WEATHERS
           .map(value => optionHtml(value, value)).join('');
       byId('statsReportOutcome').innerHTML = optionHtml('', 'Any outcome')
-        + optionHtml('Survived', 'Survived') + optionHtml('Died', 'Died');
+        + reporting.RUN_DOMAIN.OUTCOMES.map(value => optionHtml(value, value)).join('');
     }
 
     function selectedMetrics() {

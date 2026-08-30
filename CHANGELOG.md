@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.2.2 (30 August 2026)
+
+- Reworked Tracker so post-run inventory replaces the pre-run panel after a
+  survived run, with pre-run review available in a modal.
+- Moved current-session metrics from Statistics to Tracker and reduced Recent
+  Runs to three entries.
+- Removed obsolete fixed-Statistics queries, response fields, tests, styles, and
+  IPC code left behind by the report builder.
+- Consolidated Statistics scope validation and canonical run-domain values.
+- Added local outline icons and restrained color accents to Tracker and
+  Statistics tiles without adding a UI dependency.
+- Separated survived-run net metrics from average and total death-loss metrics
+  in the Statistics overview and Report Builder.
+- Expanded the Statistics overview to ten tiles grouped by general, survival,
+  and death metrics for a consistent color flow.
+- Kept net tiles in the general group while coloring positive values green and
+  negative values red.
+- Changed the Tracker Hull tile to the general blue accent.
+- Sorted saved loadout presets alphabetically in the Tracker and preset manager
+  dropdowns.
+- Added concurrent automatic tracking for every authorized character while the
+  existing dropdown remains the detailed Tracker selector.
+- Added persistent per-character tier, weather, inventory, notes, and tag
+  preparation.
+- Added confirmed shared encounters for likely group participants, with
+  participant economics, group Run Details, and encounter-aware reports.
+- Restricted group encounters to valid same-class fleets of up to three
+  frigates or two destroyers; cruisers remain solo.
+- Added atomic manual group entry with shared encounter fields and independent
+  participant inventories, outcomes, notes, tags, and appraisals.
+- Consolidated manual entry into one Tracker action with a guarded Solo or Group
+  selector in the modal.
+- Added transactional schema-v6 to schema-v7 migration with a verified
+  pre-migration backup and upgraded History CSV interchange.
+
 ## 1.2.1 (24 August 2026)
 
 - Replaced the fixed Statistics breakdown tables with a report builder.

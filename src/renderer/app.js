@@ -12,7 +12,11 @@ const loadoutHelpers = window.AbyssLoadouts;
 const shipGroups = window.AbyssShipGroups;
 const loadoutControllerHelpers = window.AbyssLoadoutController;
 const inventoryEditors = window.AbyssInventoryEditor;
+const trackerViewHelpers = window.AbyssTrackerView;
 const runSessionHelpers = window.AbyssRunSession;
+const concurrentTrackingHelpers = window.AbyssConcurrentTracking;
+const characterTrackingUiHelpers = window.AbyssCharacterTrackingUi;
+const trackingPreparationHelpers = window.AbyssTrackingPreparation;
 const navigationHelpers = window.AbyssNavigation;
 const modalHelpers = window.AbyssModals;
 const formatters = window.AbyssUiFormatters;
@@ -21,6 +25,7 @@ const supportSettingsHelpers = window.AbyssSupportSettings;
 const uiTaskHelpers = window.AbyssUiTasks;
 const runDetailsHelpers = window.AbyssRunDetails;
 const manualRunHelpers = window.AbyssManualRuns;
+const manualEncounterHelpers = window.AbyssManualEncounters;
 const characterHelpers = window.AbyssCharacters;
 const formatBytes = formatters.formatBytes;
 const fmtIsk = formatters.formatIsk;
@@ -55,6 +60,7 @@ const S = {
   pollTimeout: null,
   pollGeneration: 0,
   pollFailureCount: 0,
+  trackingStatuses: {},
 };
 const normalizeCapabilities = characterHelpers.normalizeCapabilities;
 const characterController = characterHelpers.createCharacterController({
@@ -129,6 +135,7 @@ const loadoutController = loadoutControllerHelpers.createLoadoutController({
     updatePasteHint('droneBeforeText', 'preDroneHint');
     if (droneText) setCollapsibleState('preDroneBody', 'preDroneArrow', true);
     updateFilamentInference();
+    scheduleTrackingDraftSave();
   },
 });
 const {
@@ -187,12 +194,150 @@ const manualRunController = manualRunHelpers.createManualRunController({
 });
 const {
   close: closeManualEntryModal,
+  hasUnsavedInput: hasUnsavedManualRunInput,
   invalidatePreview: invalidateManualEditAppraisalPreview,
   openEdit: openEditRunModal,
   openNew: openManualEntryModal,
   submit: submitManualEntry,
   updateOutcome: updateManualOutcomeUI,
 } = manualRunController;
+
+const manualEncounterController = manualEncounterHelpers.createManualEncounterController({
+  document,
+  api: window.api,
+  state: S,
+  appraisal: appraisalHelpers,
+  inventoryEditors,
+  parseTags: parseRunTags,
+  parseInventory: parseCargo,
+  mergeInventory: mergeDiffItems,
+  escapeHtml: esc,
+  openModal,
+  closeModal,
+  refreshSavedRunViews,
+});
+const {
+  addParticipant: addManualEncounterParticipant,
+  close: closeManualEncounterModal,
+  handleDefinitionChange: handleManualEncounterDefinitionChange,
+  hasUnsavedInput: hasUnsavedManualEncounterInput,
+  open: openManualEncounterModal,
+  removeParticipant: removeManualEncounterParticipant,
+  submit: submitManualEncounter,
+} = manualEncounterController;
+
+function switchManualEntryMode(mode) {
+  if (mode === 'group') {
+    if (document.getElementById('manualEncounterModal').getAttribute('aria-hidden') === 'false') return;
+    if (hasUnsavedManualRunInput()
+      && !confirm('Switching to Group clears the current Solo form. Continue?')) return;
+    closeManualEntryModal(true);
+    openManualEncounterModal();
+  } else if (mode === 'solo') {
+    if (document.getElementById('manualEntryModal').getAttribute('aria-hidden') === 'false') return;
+    if (hasUnsavedManualEncounterInput()
+      && !confirm('Switching to Solo clears the current Group form. Continue?')) return;
+    closeManualEncounterModal(true);
+    openManualEntryModal();
+  }
+}
+
+const trackerViewController = trackerViewHelpers.createTrackerViewController({
+  document,
+  api: window.api,
+  inventoryEditors,
+  formatDuration: fmtDuration,
+  formatIsk: fmtIsk,
+  escapeHtml: esc,
+  getActiveCharacterId: () => S.activeCharId,
+  getActiveRun: () => S.activeRun,
+  getRunState: () => S.runState,
+  openModal,
+});
+
+const characterTrackingUi = characterTrackingUiHelpers
+  .createCharacterTrackingUiController({
+    document,
+    state: S,
+    parseTags: parseRunTags,
+    setInventoryText,
+  });
+
+const concurrentTrackingController = concurrentTrackingHelpers
+  .createConcurrentTrackingController({
+    api: window.api,
+    runTracking,
+    getCharacters: () => S.characters,
+    getCapabilities: characterId => normalizeCapabilities(
+      S.characterCapabilities[characterId]
+    ),
+    getSelectedCharacterId: () => S.activeCharId,
+    getForegroundRun: () => S.activeRun,
+    getSettings: () => S.settings,
+    classifyShip,
+    onStatusChange: (characterId, status) => {
+      S.trackingStatuses[characterId] = status;
+      renderCharacterTrackingStatus();
+      renderActiveEncounterStatus();
+    },
+  });
+
+function renderCharacterTrackingStatus() {
+  characterTrackingUi.renderStatuses(characterId => (
+    concurrentTrackingController.statusFor(characterId)
+  ));
+}
+
+function renderActiveEncounterStatus() {
+  characterTrackingUi.renderEncounter(
+    run => concurrentTrackingController.groupForRun(run),
+    run => concurrentTrackingController.candidateGroupForRun(run)
+  );
+}
+
+async function confirmEncounterGroup() {
+  if (!S.activeRun) return;
+  const participants = await concurrentTrackingController.confirmGroupCandidate(S.activeRun);
+  if (participants.length < 2) return;
+  await persistActiveRun();
+  renderActiveEncounterStatus();
+}
+
+function dismissEncounterGroup() {
+  if (S.activeRun) concurrentTrackingController.dismissGroupCandidate(S.activeRun);
+  renderActiveEncounterStatus();
+}
+
+const trackingPreparationController = trackingPreparationHelpers
+  .createTrackingPreparationController({
+    api: window.api,
+    state: S,
+    trackingUi: characterTrackingUi,
+    restoreBaseline: restoreInventoryBaseline,
+    afterRestore: usedStoredDraft => {
+      if (usedStoredDraft) {
+        inventoryBaselineRunId = null;
+        hideInventoryBaselineStatus();
+      }
+      updatePasteHint('cargoBeforeText', 'preCargoHint');
+      updatePasteHint('droneBeforeText', 'preDroneHint');
+      if (document.getElementById('droneBeforeText').value.trim()) {
+        setCollapsibleState('preDroneBody', 'preDroneArrow', true);
+      }
+      updateFilamentInference();
+    },
+    onSaved: draft => concurrentTrackingController.updateDraft(draft),
+    onError: error => reportUiError(
+      'Could not save the character preparation',
+      error,
+      'checkpoint-error'
+    ),
+  });
+const {
+  persist: persistTrackingDraft,
+  restore: restoreTrackingDraft,
+  schedule: scheduleTrackingDraftSave,
+} = trackingPreparationController;
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -234,6 +379,10 @@ async function init() {
     showNoCharPrompt();
   }
 
+  await concurrentTrackingController.start();
+  renderCharacterTrackingStatus();
+  renderActiveEncounterStatus();
+
 }
 
 function initializeTrackerLayout() {
@@ -242,7 +391,6 @@ function initializeTrackerLayout() {
   if (!runSetup || !recentRunsPanel) return;
   recentRunsPanel.after(runSetup);
 }
-
 
 // ── Navigation ────────────────────────────────────────────────────────────
 const navigationController = navigationHelpers.createNavigationController({
@@ -272,6 +420,10 @@ async function performCharacterSwitch(charId, save = true) {
     document.getElementById('charSelect').value = S.activeCharId || '';
     return;
   }
+  const previousCharacterId = S.activeCharId;
+  if (previousCharacterId && !S.activeRun && S.runState === 'awaiting') {
+    await persistTrackingDraft();
+  }
   stopESIPoll();
   if (S.activeRun) {
     const run = S.activeRun;
@@ -296,9 +448,14 @@ async function performCharacterSwitch(charId, save = true) {
   S.activeCharId = normalizedCharacterId;
   document.getElementById('charSelect').value = normalizedCharacterId || '';
 
+  if (previousCharacterId && Number(previousCharacterId) !== normalizedCharacterId) {
+    await concurrentTrackingController.refreshCharacter(previousCharacterId);
+  }
+
   if (!normalizedCharacterId) {
     S.hasAuth = false;
     S.capabilities = normalizeCapabilities(null);
+    trackerViewController.setSession(null);
     showNoCharPrompt();
     if (document.getElementById('page-history').classList.contains('active')) await renderHistory();
     if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
@@ -317,10 +474,11 @@ async function performCharacterSwitch(charId, save = true) {
   document.getElementById('tracker-ui').style.display = 'block';
 
   loadDefaultSelects();
-  await updateRecentRuns();
+  await trackerViewController.refreshRecentRuns();
   const restored = await restoreActiveRun(normalizedCharacterId);
-  if (!restored) await restoreInventoryBaseline(normalizedCharacterId);
+  if (!restored) await restoreTrackingDraft(normalizedCharacterId);
   resetTransitionTracker(restored?.state === 'in-abyss' ? 'inside' : 'outside');
+  await trackerViewController.refreshSession();
 
   if (S.capabilities.tracking) {
     startESIPoll();
@@ -334,6 +492,8 @@ async function performCharacterSwitch(charId, save = true) {
   }
 
   renderCharList();
+  renderCharacterTrackingStatus();
+  renderActiveEncounterStatus();
   if (document.getElementById('page-history').classList.contains('active')) await renderHistory();
   if (document.getElementById('page-stats').classList.contains('active')) await renderStats();
 }
@@ -593,6 +753,7 @@ async function restoreInventoryBaseline(characterId) {
   showInventoryBaselineStatus(latestRun.started_at);
 }
 
+
 async function clearInventoryBaseline() {
   const characterId = S.activeCharId;
   const runId = inventoryBaselineRunId;
@@ -643,10 +804,11 @@ function activeRunSnapshot() {
     : S.runState === 'in-abyss' ? 'in-abyss' : 'awaiting-cargo';
   const run = S.activeRun;
   return window.AbyssSecurity.validateActiveRunSnapshot({
-    version: 2,
+    version: 3,
     state,
     run: {
       character_id: run.character_id,
+      encounter_uid: run.encounter_uid,
       started_at: run.started_at,
       duration: run.duration || 0,
       tier: run.tier,
@@ -736,9 +898,11 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
   const notes = document.getElementById('activeRunNotes').value;
   const tags = parseRunTags(document.getElementById('activeRunTags').value);
   const shipTypeId = lastShipTypeId;
+  const encounterUid = concurrentTrackingController.assignEncounter(lastSystemId, startedAt);
 
   S.activeRun = {
     character_id: S.activeCharId,
+    encounter_uid: encounterUid,
     started_at: startedAt,
     duration: 0,
     tier: tier || 'Unknown',
@@ -761,10 +925,14 @@ function startRun(startedAt = Math.floor(Date.now() / 1000)) {
     killmailIds: [],
   };
 
+  void trackerViewController.refreshSession().catch(() => {});
+
   document.getElementById('recoveryStatus').style.display = 'none';
   setRunState('in-abyss');
   startTimer();
   updateRunInfo();
+  renderCharacterTrackingStatus();
+  renderActiveEncounterStatus();
   void persistActiveRun().catch(reportActiveRunCheckpointError);
   void captureActiveRunDetails(S.activeRun, shipTypeId);
 }
@@ -789,6 +957,7 @@ async function captureActiveRunDetails(run, shipTypeId) {
     const resolvedShipTypeId = fitData?.ship_type_id || shipTypeId;
     run.ship_class = await classifyShip(resolvedShipTypeId);
     if (S.activeRun !== run || run.finalizing || run.suspended) return;
+    renderActiveEncounterStatus();
 
     const typeIds = [
       ...(fitData
@@ -1251,6 +1420,7 @@ async function saveCurrentRun() {
 
   const runData = {
     character_id: run.character_id,
+    encounter_uid: run.encounter_uid,
     started_at: run.started_at,
     duration: run.duration || 0,
     tier: run.tier,
@@ -1306,6 +1476,7 @@ async function saveCurrentRun() {
 
   S.activeRun = null;
   resetRunUI();
+  await concurrentTrackingController.refreshCharacter(run.character_id);
   if (run.outcome === 'Survived') {
     clearFilamentInference();
     if (
@@ -1317,7 +1488,10 @@ async function saveCurrentRun() {
   } else {
     hideInventoryBaselineStatus();
   }
-  await runUiTask('Run saved, but recent runs could not be refreshed', () => updateRecentRuns());
+  await persistTrackingDraft();
+  await runUiTask('Run saved, but Tracker summaries could not be refreshed', () => (
+    trackerViewController.refresh()
+  ));
 }
 
 async function saveCurrentRunSafely() {
@@ -1417,7 +1591,7 @@ function updatePasteHint(textareaId, hintId) {
 async function refreshSavedRunViews() {
   const tasks = [
     runUiTask('Could not refresh run history', () => renderHistory()),
-    runUiTask('Could not refresh recent runs', () => updateRecentRuns()),
+    runUiTask('Could not refresh Tracker summaries', () => trackerViewController.refresh()),
   ];
   if (document.getElementById('page-stats').classList.contains('active')) {
     tasks.push(runUiTask('Could not refresh Statistics', () => renderStats()));
@@ -1438,6 +1612,7 @@ async function cancelRun() {
   }
   if (S.activeRun === run) S.activeRun = null;
   resetRunUI();
+  await concurrentTrackingController.refreshCharacter(run.character_id);
 }
 
 function backToAppraise() {
@@ -1481,6 +1656,11 @@ function setRunState(state) {
     const el = document.getElementById('state-' + s);
     if (el) el.style.display = s === state ? 'block' : 'none';
   }
+  trackerViewController.setState(state);
+  if (state === 'in-abyss') {
+    setCollapsibleState('preCargoBody', 'preCargoArrow', false);
+    setCollapsibleState('preDroneBody', 'preDroneArrow', false);
+  }
   // Reset died sub-state
   if (state === 'died') {
     document.getElementById('loss-loading').style.display = 'block';
@@ -1488,6 +1668,8 @@ function setRunState(state) {
     document.getElementById('loss-actions').style.display = 'none';
   }
   updateLoadoutControls();
+  renderCharacterTrackingStatus();
+  renderActiveEncounterStatus();
 }
 
 function updateRunInfo() {
@@ -1505,6 +1687,7 @@ function startTimer() {
     if (!S.activeRun) return;
     const elapsed = Math.floor(Date.now() / 1000) - S.activeRun.started_at;
     document.getElementById('timerDisplay').textContent = fmtDuration(elapsed);
+    trackerViewController.renderSession();
   }, 500);
 }
 
@@ -1640,33 +1823,6 @@ function renderStats() {
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────
-let recentRunsRenderGeneration = 0;
-
-async function updateRecentRuns() {
-  const generation = ++recentRunsRenderGeneration;
-  const characterId = S.activeCharId;
-  const el = document.getElementById('recentRunsList');
-  if (!characterId) {
-    el.textContent = 'No runs yet';
-    return;
-  }
-  const runs = await window.api.runs.getAll({ character_id: characterId, limit: 5 });
-  if (generation !== recentRunsRenderGeneration || S.activeCharId !== characterId) return;
-  if (!runs.length) { el.textContent = 'No runs yet'; return; }
-  el.innerHTML = runs.map(r => {
-    const col = r.outcome === 'Survived' && r.net_isk >= 0 ? 'var(--green)' : 'var(--red)';
-    const val = r.outcome === 'Survived' ? fmtIsk(r.net_isk) : '−' + fmtIsk(r.total_loss);
-    return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
-      <span>${esc(r.tier)} ${esc(r.weather)} <span class="badge ${r.outcome === 'Survived' ? 'survived' : 'died'}" style="font-size:9px">${r.outcome === 'Survived' ? '✓' : '✗'}</span></span>
-      <span style="color:${col};font-family:var(--font-mono)">${val}</span>
-    </div>`;
-  }).join('');
-}
-
-// Run value rendering uses the shared aliases initialized above.
-
-
-
 function esc(str) {
   return window.AbyssSecurity.escapeHtml(str);
 }
@@ -1679,11 +1835,13 @@ const modalController = modalHelpers.createModalController({
   document,
   onRequestClose: (id, close) => {
     if (id === 'manualEntryModal') return closeManualEntryModal();
+    if (id === 'manualEncounterModal') return closeManualEncounterModal();
     if (id === 'shipSetupModal') return closeShipSetupModal();
     return close(id);
   },
   onDidClose: id => {
     if (id === 'runDetailModal') runDetailsController.clearPendingReappraisal();
+    if (id === 'preRunReviewModal') trackerViewController.restorePreRunFields();
   },
 });
 
@@ -1714,7 +1872,16 @@ const fitNameController = fitNameHelpers.createFitNameController({
 
 const clickActions = {
   'dismiss-global-error': () => dismissGlobalError(),
+  'confirm-encounter-group': () => confirmEncounterGroup(),
+  'dismiss-encounter-group': () => dismissEncounterGroup(),
   'show-page': element => showPage(element.dataset.page),
+  'switch-manual-entry-mode': element => switchManualEntryMode(element.dataset.manualMode),
+  'close-manual-encounter': () => closeManualEncounterModal(),
+  'add-manual-encounter-participant': () => addManualEncounterParticipant(),
+  'remove-manual-encounter-participant': element => (
+    removeManualEncounterParticipant(element.dataset.participantIndex)
+  ),
+  'submit-manual-encounter': () => submitManualEncounter(),
   'toggle-collapsible': element =>
     toggleCollapsible(element.dataset.body, element.dataset.arrow),
   'manual-start': () => manualStart(),
@@ -1757,6 +1924,7 @@ const clickActions = {
   'reset-statistics-report': () => statisticsReportController.reset(),
   'stats-report-sort': element => statisticsReportController.sort(element),
   'stats-report-drill-through': element => statisticsReportController.openHistory(element),
+  'review-pre-run': () => trackerViewController.openPreRunReview(),
   'show-run-detail': element => showRunDetail(Number(element.dataset.runId)),
   'show-ship-setup': element => showShipSetup(
     Number(element.dataset.runId),
@@ -1780,6 +1948,8 @@ const actionFailureContexts = Object.freeze({
   'show-page': 'Could not open the requested page',
   'manual-start': 'Could not start the run',
   'open-manual-entry': 'Could not open manual run entry',
+  'switch-manual-entry-mode': 'Could not switch the manual entry type',
+  'submit-manual-encounter': 'Could not save the manual group encounter',
   'manual-end-survived': 'Could not complete the run',
   'manual-end-died': 'Could not record the ship loss',
   'appraise-run': 'Could not appraise the run',
@@ -1808,10 +1978,14 @@ const actionFailureContexts = Object.freeze({
   'new-loadout': 'Could not start a new loadout preset',
   'save-loadout': 'Could not save the loadout preset',
   'delete-loadout': 'Could not delete the loadout preset',
+  'confirm-encounter-group': 'Could not group the character runs',
   'start-sso': 'Could not start EVE sign-in',
   'submit-manual-entry': 'Could not save the manual run',
-  'stats-drill-through': 'Could not open filtered run history',
   'sort-history': 'Could not sort run history',
+  'run-statistics-report': 'Could not build the statistics report',
+  'reset-statistics-report': 'Could not reset the statistics report',
+  'stats-report-sort': 'Could not sort the statistics report',
+  'stats-report-drill-through': 'Could not open filtered run history',
   'show-run-detail': 'Could not open the run details',
   'show-ship-setup': 'Could not open the captured ship setup',
   'copy-run-fitting': 'Could not copy the fitting',
@@ -1878,7 +2052,10 @@ document.addEventListener('change', event => {
     statisticsReportController.handleDefinitionChange(element);
   } else if (element.dataset.changeAction === 'manual-outcome') {
     void runUiTask('Could not update the manual run form', () => updateManualOutcomeUI());
+  } else if (element.dataset.changeAction === 'manual-encounter-definition') {
+    handleManualEncounterDefinitionChange(element);
   }
+  if (['tierSelect', 'weatherSelect'].includes(element.id)) scheduleTrackingDraftSave();
 });
 
 document.addEventListener('input', event => {
@@ -1905,6 +2082,8 @@ document.addEventListener('input', event => {
     if (S.activeRun) {
       syncActiveRunInputs();
       scheduleActiveRunCheckpoint();
+    } else {
+      scheduleTrackingDraftSave();
     }
   }
   if (['cargoBeforeText', 'droneBeforeText'].includes(element.id)) {

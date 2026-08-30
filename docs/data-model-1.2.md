@@ -1,7 +1,7 @@
 # AbyssLog 1.2 data model
 
-Status: implemented in schema v6. Schema v6 is the only runtime and full-backup
-contract supported by AbyssLog 1.2.
+Status: historical schema-v6 reference for AbyssLog 1.2.0 and 1.2.1. Schema v7
+supersedes this runtime contract in AbyssLog 1.2.2.
 
 ## Design goals
 

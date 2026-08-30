@@ -19,6 +19,11 @@ function createRunQueryRepository(getDb) {
   function baseRunSelect() {
     return `
       SELECT r.*, c.name AS character_name,
+        encounter.encounter_uid,
+        encounter.started_at AS encounter_started_at,
+        encounter.duration AS encounter_duration,
+        (SELECT COUNT(*) FROM runs participant
+          WHERE participant.encounter_id = r.encounter_id) AS encounter_participant_count,
         fs.fit_identity_id,
         fi.signature_hash AS fit_key,
         fi.display_name AS fit_display_name,
@@ -29,6 +34,7 @@ function createRunQueryRepository(getDb) {
         a.loot_value, a.consumed_cost, a.net_isk, a.total_loss, a.appraised_at
       FROM runs r
       JOIN characters c ON r.character_id = c.id
+      JOIN encounters encounter ON encounter.id = r.encounter_id
       JOIN appraisals a ON a.run_id = r.id AND a.is_current = 1
       LEFT JOIN fit_snapshots fs ON fs.id = r.fit_snapshot_id
       LEFT JOIN fit_identities fi ON fi.id = fs.fit_identity_id
@@ -241,6 +247,19 @@ function createRunQueryRepository(getDb) {
     run.killmail_ids = connection.prepare(`
       SELECT killmail_id FROM run_killmails WHERE run_id = ? ORDER BY killmail_id
     `).all(runId).map(row => row.killmail_id);
+    run.encounter_participants = connection.prepare(`
+      SELECT participant.id, participant.character_id, character.name AS character_name,
+        participant.outcome, participant.hull_name, participant.ship_class,
+        appraisal.loot_value, appraisal.consumed_cost, appraisal.net_isk,
+        appraisal.total_loss
+      FROM runs participant
+      JOIN characters character ON character.id = participant.character_id
+      JOIN appraisals appraisal
+        ON appraisal.run_id = participant.id AND appraisal.is_current = 1
+      WHERE participant.encounter_id = ?
+      ORDER BY participant.character_id
+      LIMIT 50
+    `).all(run.encounter_id);
     return run;
   }
 

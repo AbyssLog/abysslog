@@ -37,7 +37,10 @@
       emptyOption.value = '';
       emptyOption.textContent = emptyLabel;
       select.append(emptyOption);
-      for (const preset of state.loadoutPresets) {
+      const sortedPresets = [...state.loadoutPresets].sort((left, right) => (
+        left.name.localeCompare(right.name, undefined, { sensitivity: 'base', numeric: true })
+      ));
+      for (const preset of sortedPresets) {
         const option = document.createElement('option');
         option.value = preset.id;
         option.textContent = preset.name;

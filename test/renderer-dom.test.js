@@ -9,6 +9,7 @@ const { version: packageVersion } = require('../package.json');
 const projectRoot = path.join(__dirname, '..');
 const rendererScripts = [
   'src/shared/fitting.js',
+  'src/shared/run-domain.js',
   'src/shared/security.js',
   'src/shared/run-tracking.js',
   'src/shared/appraisal.js',
@@ -23,7 +24,12 @@ const rendererScripts = [
   'src/renderer/history-view.js',
   'src/shared/ship-groups.js',
   'src/renderer/inventory-editor.js',
+  'src/renderer/tracker-view-markup.js',
+  'src/renderer/tracker-view-controller.js',
   'src/renderer/run-session-controller.js',
+  'src/renderer/concurrent-tracking-controller.js',
+  'src/renderer/character-tracking-ui-controller.js',
+  'src/renderer/tracking-preparation-controller.js',
   'src/renderer/navigation-controller.js',
   'src/renderer/modal-controller.js',
   'src/renderer/ui-formatters.js',
@@ -31,9 +37,12 @@ const rendererScripts = [
   'src/renderer/ui-task-controller.js',
   'src/renderer/support-settings-controller.js',
   'src/renderer/appraisal-history-view.js',
+  'src/renderer/encounter-detail-view.js',
   'src/renderer/run-details-controller.js',
   'src/renderer/fit-name-controller.js',
   'src/renderer/manual-run-controller.js',
+  'src/renderer/manual-encounter-markup.js',
+  'src/renderer/manual-encounter-controller.js',
   'src/renderer/character-controller.js',
   'src/renderer/app.js',
 ];
@@ -158,15 +167,23 @@ async function createRendererHarness() {
         first_run: firstRun,
         last_run: lastRun,
       },
-      byTier: [],
-      byWeather: [],
       iskPerHour: 1000,
+      daily: [
+        { day: '2026-08-01', total_runs: 1, survived: 1, net_isk: 1000, total_loss: 0 },
+        { day: '2026-08-02', total_runs: 1, survived: 0, net_isk: -500, total_loss: 500 },
+      ],
     },
     statisticsReportHandler: null,
-    daily: [
-      { day: '2026-08-01', total_runs: 1, survived: 1, net_isk: 1000, total_loss: 0 },
-      { day: '2026-08-02', total_runs: 1, survived: 0, net_isk: -500, total_loss: 500 },
-    ],
+    session: {
+      started_at: Math.floor(Date.now() / 1000) - 1800,
+      ended_at: Math.floor(Date.now() / 1000),
+      total_runs: 2,
+      survived: 1,
+      died: 1,
+      total_duration: 1800,
+      total_net_isk: 500,
+      gap_seconds: 3600,
+    },
   };
 
   window.api = {
@@ -251,8 +268,14 @@ async function createRendererHarness() {
         if (state.completeActiveGate) return state.completeActiveGate.promise;
         return state.completedRuns.length;
       },
+      saveEncounter: async encounter => {
+        state.manualSaves.push(encounter);
+        return encounter.participants.map((_, index) => index + 1);
+      },
+      getTrackingDraft: async () => null,
+      saveTrackingDraft: async draft => draft,
+      getSessionStats: async () => state.session,
       getStats: async () => state.stats,
-      getDailyStats: async () => state.daily,
       getStatisticsReportOptions: async () => ({
         items: [], hulls: [], fits: [], truncated: false,
       }),
@@ -348,6 +371,42 @@ test('renderer async workflows execute against the real DOM', async t => {
   } = harness;
 
   try {
+    await t.test('manual entry uses one action with guarded Solo and Group modes', async () => {
+      document.querySelector('[data-page="tracker"]').click();
+      assert.equal(document.querySelector('[data-action="open-manual-encounter"]'), null);
+      document.querySelector('[data-action="open-manual-entry"]').click();
+      await waitFor(
+        () => document.getElementById('manualEntryModal').getAttribute('aria-hidden') === 'false',
+        'solo manual entry'
+      );
+      document.querySelector(
+        '#manualEntryModal [data-action="switch-manual-entry-mode"][data-manual-mode="group"]'
+      ).click();
+      await waitFor(
+        () => document.getElementById('manualEncounterModal').getAttribute('aria-hidden') === 'false',
+        'group manual entry'
+      );
+      document.getElementById('manualEncounterDuration').value = '10:00';
+      window.confirm = () => false;
+      document.querySelector(
+        '#manualEncounterModal [data-action="switch-manual-entry-mode"][data-manual-mode="solo"]'
+      ).click();
+      await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(
+        document.getElementById('manualEncounterModal').getAttribute('aria-hidden'),
+        'false'
+      );
+      window.confirm = () => true;
+      document.querySelector(
+        '#manualEncounterModal [data-action="switch-manual-entry-mode"][data-manual-mode="solo"]'
+      ).click();
+      await waitFor(
+        () => document.getElementById('manualEntryModal').getAttribute('aria-hidden') === 'false',
+        'return to solo manual entry'
+      );
+      document.querySelector('[data-action="close-manual-entry"]').click();
+    });
+
     await t.test('character switches refresh visible history', async () => {
       document.querySelector('[data-page="history"]').click();
       await waitFor(
@@ -405,10 +464,10 @@ test('renderer async workflows execute against the real DOM', async t => {
     await t.test('late recent-run responses cannot replace the selected character summary', async () => {
       const staleRecentRuns = createDeferred();
       state.runQueryHandler = query => {
-        if (query.limit === 5 && query.character_id === characters[0].id) {
+        if (query.limit === 3 && query.character_id === characters[0].id) {
           return staleRecentRuns.promise;
         }
-        if (query.limit === 5 && query.character_id === characters[1].id) {
+        if (query.limit === 3 && query.character_id === characters[1].id) {
           return [{
             ...createHistoryRun(2, 'Current Second Pilot Ship'),
             tier: 'T2',
@@ -422,7 +481,7 @@ test('renderer async workflows execute against the real DOM', async t => {
       document.querySelector('[data-action="import-csv"]').click();
       await waitFor(
         () => state.runQueries.some(query =>
-          query.character_id === characters[0].id && query.limit === 5),
+          query.character_id === characters[0].id && query.limit === 3),
         'pending recent runs for the previous character'
       );
 
@@ -444,14 +503,14 @@ test('renderer async workflows execute against the real DOM', async t => {
     });
 
     await t.test('negative survived-run values are red in Recent Runs', async () => {
-      state.runQueryHandler = query => query.limit === 5
+      state.runQueryHandler = query => query.limit === 3
         ? [{ ...createHistoryRun(3, 'Gila'), net_isk: -500 }]
         : [];
 
-      await evaluate('updateRecentRuns()');
+      await evaluate('trackerViewController.refreshRecentRuns()');
 
       const value = document.querySelector('#recentRunsList > div > span:last-child');
-      assert.match(value.getAttribute('style'), /color:var\(--red\)/);
+      assert.equal(value.classList.contains('negative'), true);
       state.runQueryHandler = null;
     });
     await t.test('manual submission is single-flight and unlocks after saving', async () => {
@@ -677,6 +736,18 @@ test('renderer async workflows execute against the real DOM', async t => {
         ],
         implants: [],
         items: [],
+        encounter_participants: [
+          {
+            id: 7, character_id: 1001, character_name: 'First Pilot',
+            outcome: 'Survived', hull_name: 'Gila', ship_class: 'Cruiser',
+            net_isk: 1000, total_loss: 0,
+          },
+          {
+            id: 8, character_id: 1002, character_name: 'Second Pilot',
+            outcome: 'Survived', hull_name: 'Ishtar', ship_class: 'Cruiser',
+            net_isk: -100, total_loss: 0,
+          },
+        ],
       };
       state.runDetails.set(detailRun.id, detailRun);
       state.runQueryHandler = query => query.limit === undefined ? [detailRun] : [];
@@ -697,6 +768,8 @@ test('renderer async workflows execute against the real DOM', async t => {
       );
 
       assert.equal(document.querySelectorAll('#runDetailContent .inventory-editor').length, 4);
+      assert.match(document.getElementById('runDetailContent').textContent, /Group Abyssal/);
+      assert.match(document.getElementById('runDetailContent').textContent, /2 ship entries/);
       assert.match(document.getElementById('runDetailContent').textContent, /Unchanged/);
       assert.equal(document.getElementById('detailDroneAfter').value, 'Vespa II\t5');
       document.querySelector(

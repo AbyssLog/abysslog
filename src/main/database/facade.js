@@ -3,6 +3,7 @@ const { createCharacterSettingsRepository } = require('./character-settings-repo
 const { createCredentialRepository } = require('./credential-repository');
 const { createDatabaseLifecycle } = require('./lifecycle-service');
 const { createInventoryBaselineRepository } = require('./inventory-baseline-repository-v6');
+const { createTrackingDraftRepository } = require('./tracking-draft-repository');
 const { createRunCsvRepository } = require('./run-csv-repository-v6');
 const { createRunRepository } = require('./run-repository-v6');
 const { createStatisticsRepository } = require('./statistics-repository-v6');
@@ -14,6 +15,7 @@ const getConnection = () => lifecycle.getConnection();
 const characterSettings = createCharacterSettingsRepository(getConnection);
 const credentials = createCredentialRepository(getConnection);
 const inventoryBaselines = createInventoryBaselineRepository(getConnection, characterSettings);
+const trackingDrafts = createTrackingDraftRepository(getConnection);
 const runRepository = createRunRepository(getConnection);
 const statisticsRepository = createStatisticsRepository(getConnection);
 const statisticsReports = createStatisticsReportRepository(getConnection);
@@ -52,10 +54,13 @@ module.exports = Object.freeze({
   getInventoryBaseline: inventoryBaselines.getInventoryBaseline,
   clearInventoryBaseline: inventoryBaselines.clearInventoryBaseline,
   saveRun: runRepository.saveRun,
+  saveEncounter: runRepository.saveEncounter,
   saveActiveRun: runRepository.saveActiveRun,
   getActiveRun: runRepository.getActiveRun,
+  getTrackingDraft: trackingDrafts.get,
   clearActiveRun: runRepository.clearActiveRun,
   completeActiveRun: runRepository.completeActiveRun,
+  saveTrackingDraft: trackingDrafts.save,
   setFitDisplayName: runRepository.setFitDisplayName,
   updateAppraisal: runRepository.updateAppraisal,
   updateRun: runRepository.updateRun,
@@ -63,8 +68,8 @@ module.exports = Object.freeze({
   getRunById: runRepository.getRunById,
   getAppraisalHistory: runRepository.getAppraisalHistory,
   deleteRun: runRepository.deleteRun,
+  getSessionStats: statisticsRepository.getSessionStats,
   getStats: statisticsRepository.getStats,
-  getDailyStats: statisticsRepository.getDailyStats,
   getStatisticsReport: statisticsReports.getReport,
   getStatisticsReportOptions: statisticsReports.getOptions,
   exportRunsCSV: runCsvRepository.exportRunsCSV,

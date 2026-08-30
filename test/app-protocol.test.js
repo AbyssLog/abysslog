@@ -32,6 +32,10 @@ test('application protocol resolves only packaged renderer and image assets', ()
     resolveAppAssetPath(appRoot, 'abysslog-app://bundle/assets/logo.png'),
     path.join(appRoot, 'assets', 'logo.png')
   );
+  assert.equal(
+    resolveAppAssetPath(appRoot, 'abysslog-app://bundle/assets/icons/location.svg'),
+    path.join(appRoot, 'assets', 'icons', 'location.svg')
+  );
 });
 
 test('application protocol rejects other origins and traversal attempts', () => {

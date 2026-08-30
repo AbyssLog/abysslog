@@ -18,6 +18,10 @@ function registerRunHandlers({
 }) {
   secureHandle('runs:save', runData =>
     database.saveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
+  secureHandle('runs:save-encounter', encounter =>
+    database.saveEncounter(security.validateEncounterData(
+      validateObjectPayload(encounter, 'Manual encounter', 8 * 1024 * 1024)
+    ).participants));
   secureHandle('runs:complete-active', runData =>
     database.completeActiveRun(security.validateRunData(validateObjectPayload(runData, 'Run'))));
   secureHandle('runs:get-active', characterId => {
@@ -39,6 +43,22 @@ function registerRunHandlers({
     );
     return database.saveActiveRun(validated);
   });
+  secureHandle('runs:get-tracking-draft', characterId => {
+    const id = security.requireInteger(characterId, 'Character ID');
+    const draft = database.getTrackingDraft(id);
+    if (!draft) return null;
+    try {
+      const validated = security.validateTrackingDraft(draft);
+      if (validated.character_id !== id) throw new TypeError('Tracking draft character mismatch');
+      return validated;
+    } catch {
+      return null;
+    }
+  });
+  secureHandle('runs:save-tracking-draft', draft =>
+    database.saveTrackingDraft(security.validateTrackingDraft(
+      validateObjectPayload(draft, 'Tracking draft', 1024 * 1024)
+    )));
   secureHandle('runs:clear-active', characterId =>
     database.clearActiveRun(security.requireInteger(characterId, 'Character ID')));
   secureHandle('runs:get-all', filters => {
@@ -90,8 +110,12 @@ function registerRunHandlers({
       security.requireInteger(runId, 'Run ID')
     ));
   secureHandle('runs:get-stats', filters =>
-    database.getStats(security.validateStatsFilters(
-      filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
+    database.getStats(statisticsReport.validateScope(
+      filters === undefined ? {} : validateObjectPayload(filters, 'Statistics scope', 4096)
+    )));
+  secureHandle('runs:get-session-stats', scope =>
+    database.getSessionStats(statisticsReport.validateScope(
+      scope === undefined ? {} : validateObjectPayload(scope, 'Session scope', 4096)
     )));
   secureHandle('runs:get-statistics-report-options', scope =>
     database.getStatisticsReportOptions(statisticsReport.validateScope(
@@ -111,11 +135,6 @@ function registerRunHandlers({
       security.requireInteger(runId, 'Run ID'),
       security.validateRunEdit(validateObjectPayload(data, 'Run edit'))
     ));
-  secureHandle('runs:get-daily-stats', filters =>
-    database.getDailyStats(security.validateStatsFilters(
-      filters === undefined ? {} : validateObjectPayload(filters, 'Statistics filters', 4096)
-    )));
-
   secureHandle('runs:export-csv', async filters => {
     const validatedFilters = security.validateRunFilters(
       filters === undefined ? {} : validateObjectPayload(filters, 'Run filters', 4096)

@@ -11,6 +11,7 @@ const {
   SCHEMA_VERSION,
   createSchema,
 } = require('../src/main/database/schema');
+const { createFreshSchemaV6 } = require('../src/main/database/schema-v6');
 
 function withLifecycle(setup, assertion) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'abysslog-lifecycle-test-'));
@@ -66,12 +67,68 @@ test('schema v5 is rejected without mutation or migration backup', () => {
   withLifecycle(
     connection => connection.exec('CREATE TABLE marker (value TEXT); PRAGMA user_version = 5;'),
     (lifecycle, databasePath) => {
-      assert.throws(() => lifecycle.init(), /schema v5 is not supported.*requires schema v6/i);
+      assert.throws(() => lifecycle.init(), /schema v5 is not supported.*requires schema v7/i);
       const rejected = new Database(databasePath, { readonly: true, fileMustExist: true });
       assert.equal(rejected.pragma('user_version', { simple: true }), 5);
       assert.ok(rejected.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'marker'").get());
       rejected.close();
       assert.equal(fs.existsSync(path.join(path.dirname(databasePath), 'backups')), false);
+    }
+  );
+});
+
+test('schema v6 migrates transactionally with a verified pre-migration backup', () => {
+  withLifecycle(
+    connection => {
+      connection.pragma('foreign_keys = ON');
+      createFreshSchemaV6(connection);
+      connection.pragma('user_version = 6');
+      connection.pragma(`application_id = ${ABYSSLOG_APPLICATION_ID}`);
+      connection.prepare('INSERT INTO characters (id, name) VALUES (?, ?)')
+        .run(9001, 'Migration Pilot');
+      connection.prepare(`
+        INSERT INTO runs (run_uid, character_id, started_at, duration, tier, weather, outcome)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        '550e8400-e29b-41d4-a716-446655440000',
+        9001,
+        1_800_000_000,
+        600,
+        'T2',
+        'Dark',
+        'Survived'
+      );
+      connection.prepare(`
+        INSERT INTO active_run_state (character_id, snapshot) VALUES (?, ?)
+      `).run(9001, JSON.stringify({
+        version: 2,
+        state: 'in-abyss',
+        run: { character_id: 9001 },
+      }));
+    },
+    (lifecycle, databasePath) => {
+      lifecycle.init();
+      const migrated = lifecycle.getConnection();
+      assert.equal(migrated.pragma('user_version', { simple: true }), 7);
+      assert.equal(migrated.prepare('SELECT COUNT(*) AS count FROM encounters').get().count, 1);
+      assert.ok(migrated.prepare('SELECT encounter_id FROM runs').get().encounter_id);
+      const snapshot = JSON.parse(
+        migrated.prepare('SELECT snapshot FROM active_run_state').get().snapshot
+      );
+      assert.equal(snapshot.version, 3);
+      assert.match(snapshot.run.encounter_uid, /^[0-9a-f-]{36}$/);
+
+      const backupDirectory = path.join(path.dirname(databasePath), 'backups');
+      const backups = fs.readdirSync(backupDirectory)
+        .filter(name => name.startsWith('abysslog-before-schema-v7-') && name.endsWith('.db'));
+      assert.equal(backups.length, 1);
+      const backup = new Database(path.join(backupDirectory, backups[0]), {
+        readonly: true,
+        fileMustExist: true,
+      });
+      assert.equal(backup.pragma('user_version', { simple: true }), 6);
+      assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM runs').get().count, 1);
+      backup.close();
     }
   );
 });

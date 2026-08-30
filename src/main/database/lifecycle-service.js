@@ -8,6 +8,7 @@ const {
   getCurrentSchemaIssues,
 } = require('./schema');
 const { runInTransaction } = require('./transaction');
+const { migrateFromSchemaV6 } = require('./schema-v7-migration-service');
 
 function assertConnectionIntegrity(connection) {
   const results = connection.pragma('quick_check');
@@ -92,7 +93,7 @@ function createDatabaseLifecycle() {
       if (applicationId !== 0 && applicationId !== ABYSSLOG_APPLICATION_ID) {
         throw new Error('Database belongs to another application');
       }
-      if (!isFresh && currentVersion !== SCHEMA_VERSION) {
+      if (!isFresh && currentVersion !== SCHEMA_VERSION && currentVersion !== 6) {
         throw new Error(
           `Database schema v${currentVersion} is not supported; `
           + `this version requires schema v${SCHEMA_VERSION}`
@@ -100,6 +101,16 @@ function createDatabaseLifecycle() {
       }
       if (!isFresh && applicationId !== ABYSSLOG_APPLICATION_ID) {
         throw new Error('Database identity is invalid');
+      }
+
+      if (currentVersion === 6) {
+        migrateFromSchemaV6({
+          connection,
+          databasePath,
+          backupDirectory,
+          openConnection,
+          assertConnectionIntegrity,
+        });
       }
 
       if (isFresh) {

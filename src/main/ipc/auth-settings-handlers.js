@@ -1,5 +1,4 @@
 const loadouts = require('../../shared/loadouts');
-const { registerCharacterDeletionHandler } = require('../character-handlers');
 
 const LOADOUT_PRESETS_KEY = 'loadout_presets_v1';
 
@@ -23,11 +22,8 @@ function registerAuthSettingsHandlers({
   secureHandle('auth:get-capabilities', characterId =>
     getCharacterCapabilities(security.requireInteger(characterId, 'Character ID')));
   secureHandle('auth:start-sso', selectedCapabilities => startSso(selectedCapabilities));
-  registerCharacterDeletionHandler({
-    secureHandle,
-    database,
-    requireInteger: security.requireInteger,
-  });
+  secureHandle('auth:delete-character', characterId =>
+    database.deleteCharacter(security.requireInteger(characterId, 'Character ID')));
 
   secureHandle('settings:get', key => {
     security.requireString(key, 'Setting key', 64);

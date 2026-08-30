@@ -30,27 +30,6 @@ function createStatisticsRepository(getConnection) {
       JOIN appraisals a ON a.run_id = r.id AND a.is_current = 1`;
   }
 
-  function getFitStats(db, filters) {
-    const { where, params } = buildStatsWhere(filters);
-    return db.prepare([
-      'SELECT fi.id AS fit_identity_id, fi.signature_hash AS fit_key,',
-      '  MAX(r.id) AS representative_run_id, fi.hull_name, fi.display_name,',
-      "  COALESCE(NULLIF(MAX(r.ship_class), ''), 'Unknown') AS ship_class,",
-      '  COUNT(*) AS total_runs,',
-      "  SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,",
-      "  AVG(CASE WHEN r.outcome = 'Survived' THEN r.duration END) AS avg_duration,",
-      "  AVG(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END)",
-      '    AS avg_net_isk',
-      runAppraisalFrom(),
-      'JOIN fit_snapshots fs ON fs.id = r.fit_snapshot_id',
-      'JOIN fit_identities fi ON fi.id = fs.fit_identity_id',
-      where,
-      'GROUP BY fi.id, fi.signature_hash, fi.hull_name, fi.display_name',
-      'ORDER BY total_runs DESC, avg_net_isk DESC',
-      'LIMIT 20',
-    ].filter(Boolean).join('\n')).all(...params);
-  }
-
   function getLatestSession(db, filters) {
     const { where, params } = buildStatsWhere(filters);
     const rows = db.prepare([
@@ -96,102 +75,47 @@ function createStatisticsRepository(getConnection) {
     const overall = db.prepare(`
       SELECT
         COUNT(*) AS total_runs,
+        COUNT(DISTINCT r.encounter_id) AS total_encounters,
         SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,
         SUM(CASE WHEN r.outcome = 'Died' THEN 1 ELSE 0 END) AS died,
         AVG(CASE WHEN r.outcome = 'Survived' THEN r.duration END) AS avg_duration_survived,
-        AVG(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS avg_net_isk,
-        SUM(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS total_net_isk,
+        AVG(CASE WHEN r.outcome = 'Survived' THEN a.net_isk END) AS avg_net_isk,
+        SUM(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE 0 END) AS total_net_isk,
         AVG(CASE WHEN r.outcome = 'Died' THEN a.total_loss END) AS avg_loss,
         SUM(CASE WHEN r.outcome = 'Died' THEN a.total_loss ELSE 0 END) AS total_loss,
+        SUM(CASE WHEN r.outcome = 'Survived' AND r.duration > 0 THEN a.net_isk ELSE 0 END)
+          AS hourly_net_isk,
+        SUM(CASE WHEN r.outcome = 'Survived' AND r.duration > 0 THEN r.duration ELSE 0 END)
+          AS hourly_duration,
         MIN(r.started_at) AS first_run,
         MAX(r.started_at) AS last_run
       ${runAppraisalFrom()} ${where}
     `).get(...params);
-
-    const byTier = db.prepare(`
-      SELECT r.tier,
-        COUNT(*) AS total_runs,
-        SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,
-        AVG(CASE WHEN r.outcome = 'Survived' THEN r.duration END) AS avg_duration,
-        AVG(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS avg_net_isk
-      ${runAppraisalFrom()} ${where}
-      GROUP BY r.tier ORDER BY r.tier
-    `).all(...params);
-
-    const byWeather = db.prepare(`
-      SELECT r.weather,
-        COUNT(*) AS total_runs,
-        SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,
-        AVG(CASE WHEN r.outcome = 'Survived' THEN r.duration END) AS avg_duration,
-        AVG(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS avg_net_isk
-      ${runAppraisalFrom()} ${where}
-      GROUP BY r.weather ORDER BY r.weather
-    `).all(...params);
-
-    const hourly = db.prepare(`
-      SELECT
-        SUM(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS profit,
-        SUM(r.duration) AS duration
-      ${runAppraisalFrom()}
-      ${where ? where + ' AND' : 'WHERE'} r.duration > 0
-    `).get(...params);
-    const iskPerHour = hourly?.duration > 0 ? hourly.profit / (hourly.duration / 3600) : 0;
-
-    const byHull = db.prepare([
-      "SELECT COALESCE(NULLIF(r.hull_name, ''), 'Unknown ship') AS hull_name,",
-      "  COALESCE(NULLIF(r.ship_class, ''), 'Unknown') AS ship_class,",
-      '  COUNT(*) AS total_runs,',
-      "  SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,",
-      "  AVG(CASE WHEN r.outcome = 'Survived' THEN r.duration END) AS avg_duration,",
-      "  AVG(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS avg_net_isk",
-      runAppraisalFrom(),
-      where,
-      "GROUP BY COALESCE(NULLIF(r.hull_name, ''), 'Unknown ship'),",
-      "  COALESCE(NULLIF(r.ship_class, ''), 'Unknown')",
-      'ORDER BY total_runs DESC, avg_net_isk DESC',
-      'LIMIT 20',
-    ].filter(Boolean).join('\n')).all(...params);
-
-    const itemRows = db.prepare([
-      'SELECT al.disposition AS type, al.item_name,',
-      '  COUNT(DISTINCT a.run_id) AS runs_containing,',
-      '  SUM(al.qty) AS total_qty,',
-      "  SUM(al.qty * CASE WHEN al.disposition = 'gained'",
-      '    THEN al.unit_price_buy ELSE al.unit_price_sell END) AS total_value',
-      'FROM appraisal_lines al',
-      'JOIN appraisals a ON a.id = al.appraisal_id AND a.is_current = 1',
-      'JOIN runs r ON r.id = a.run_id',
-      where,
-      "  " + (where ? 'AND' : 'WHERE') + " al.disposition IN ('gained', 'consumed', 'lost')",
-      'GROUP BY al.disposition, al.item_name',
-      'ORDER BY total_value DESC, total_qty DESC, al.item_name COLLATE NOCASE',
-    ].filter(Boolean).join('\n')).all(...params);
-    const items = { gained: [], consumed: [], lost: [] };
-    for (const item of itemRows) {
-      if (items[item.type].length < 15) items[item.type].push(item);
-    }
+    const { hourly_net_isk, hourly_duration, ...rendererOverall } = overall;
+    const iskPerHour = hourly_duration > 0
+      ? hourly_net_isk / (hourly_duration / 3600)
+      : 0;
 
     return {
-      overall,
-      byTier,
-      byWeather,
-      byHull,
-      byFit: getFitStats(db, filters),
-      items,
-      latestSession: getLatestSession(db, filters),
+      overall: rendererOverall,
       iskPerHour,
+      daily: getDailyStats(db, filters),
     };
   }
 
-  function getDailyStats(filters = {}) {
-    const db = getConnection();
+  function getSessionStats(filters = {}) {
+    return getLatestSession(getConnection(), filters);
+  }
+
+  function getDailyStats(db, filters) {
     const { where, params } = buildStatsWhere(filters);
     return db.prepare(`
       SELECT
         date(r.started_at, 'unixepoch', 'localtime') AS day,
         COUNT(*) AS total_runs,
+        COUNT(DISTINCT r.encounter_id) AS total_encounters,
         SUM(CASE WHEN r.outcome = 'Survived' THEN 1 ELSE 0 END) AS survived,
-        SUM(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE -a.total_loss END) AS net_isk,
+        SUM(CASE WHEN r.outcome = 'Survived' THEN a.net_isk ELSE 0 END) AS net_isk,
         SUM(CASE WHEN r.outcome = 'Died' THEN a.total_loss ELSE 0 END) AS total_loss
       ${runAppraisalFrom()} ${where}
       GROUP BY day
@@ -199,7 +123,7 @@ function createStatisticsRepository(getConnection) {
     `).all(...params);
   }
 
-  return Object.freeze({ getStats, getDailyStats });
+  return Object.freeze({ getSessionStats, getStats });
 }
 
 module.exports = { createStatisticsRepository };

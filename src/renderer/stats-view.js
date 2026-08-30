@@ -71,6 +71,14 @@
     return filters;
   }
 
+  function statCard(icon, tone, label, value, valueClass = '') {
+    return `<div class="stat-card tile-tone tone-${tone}">`
+      + `<div class="stat-card-label"><span class="ui-icon icon-${icon}" `
+      + `aria-hidden="true"></span>${escapeHtml(label)}</div>`
+      + `<div class="stat-card-value${valueClass ? ` ${valueClass}` : ''}">`
+      + `${escapeHtml(value)}</div></div>`;
+  }
+
   async function renderStats() {
     const generation = ++statsRenderGeneration;
     const characterId = getActiveCharacterId();
@@ -97,10 +105,7 @@
       },
       label: range.preset === 'all' ? null : 'Date range: ' + range.label,
     };
-    const [stats, daily] = await Promise.all([
-      api.runs.getStats(filters),
-      api.runs.getDailyStats(filters)
-    ]);
+    const stats = await api.runs.getStats(filters);
     if (generation !== statsRenderGeneration || getActiveCharacterId() !== characterId) return;
     const o = stats.overall;
 
@@ -113,7 +118,7 @@
     }
 
     const survRate = o.total_runs > 0 ? Math.round(o.survived / o.total_runs * 100) : 0;
-    const chart = statistics.createChartSeries(daily, {
+    const chart = statistics.createChartSeries(stats.daily, {
       start: range.start,
       end: range.end,
       firstRun: o.first_run,
@@ -126,35 +131,23 @@
       ? 'Daily totals; inactive days are shown as zero'
       : `${chart.bucketDays}-day totals; inactive days are included`;
 
-    let html = `<div class="stat-grid">
-      <div class="stat-card"><div class="stat-card-label">Total Runs</div><div class="stat-card-value cyan">${o.total_runs}</div></div>
-      <div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">${survRate}%</div></div>
-      <div class="stat-card"><div class="stat-card-label">Avg Survival Duration</div><div class="stat-card-value">${formatDuration(Math.round(o.avg_duration_survived || 0))}</div></div>
-      <div class="stat-card"><div class="stat-card-label">Net / Hour</div><div class="stat-card-value ${stats.iskPerHour >= 0 ? 'gold' : 'red'}">${formatIsk(stats.iskPerHour)}</div></div>
-      <div class="stat-card"><div class="stat-card-label">Total Net</div><div class="stat-card-value ${o.total_net_isk >= 0 ? 'green' : 'red'}">${formatIsk(o.total_net_isk || 0)}</div></div>
-      <div class="stat-card"><div class="stat-card-label">Avg Net / Run</div><div class="stat-card-value ${(o.avg_net_isk || 0) >= 0 ? 'green' : 'red'}">${formatIsk(o.avg_net_isk || 0)}</div></div>
-      <div class="stat-card"><div class="stat-card-label">Avg Death Loss</div><div class="stat-card-value red">${formatIsk(o.avg_loss || 0)}</div></div>
-      <div class="stat-card"><div class="stat-card-label">Total Death Losses</div><div class="stat-card-value red">${formatIsk(o.total_loss || 0)}</div></div>
-    </div>`;
-
-    if (stats.latestSession) {
-      const session = stats.latestSession;
-      const sessionRate = Math.round(session.survived / session.total_runs * 100);
-      const sessionStart = new Date(session.started_at * 1000).toLocaleString();
-      html += '<div class="section-title">Latest Session</div>'
-        + '<div class="stats-chart-note">Automatically groups consecutive runs separated by no more than one hour · started '
-        + escapeHtml(sessionStart) + '</div>'
-        + '<div class="stat-grid session-stat-grid">'
-        + '<div class="stat-card"><div class="stat-card-label">Runs</div><div class="stat-card-value cyan">'
-        + session.total_runs + '</div></div>'
-        + '<div class="stat-card"><div class="stat-card-label">Survival Rate</div><div class="stat-card-value green">'
-        + sessionRate + '%</div></div>'
-        + '<div class="stat-card"><div class="stat-card-label">Run Time</div><div class="stat-card-value">'
-        + formatDuration(session.total_duration) + '</div></div>'
-        + '<div class="stat-card"><div class="stat-card-label">Session Net</div><div class="stat-card-value '
-        + (session.total_net_isk >= 0 ? 'green' : 'red') + '">'
-        + formatIsk(session.total_net_isk) + '</div></div></div>';
-    }
+    const netValueClass = value => value > 0 ? 'green' : value < 0 ? 'red' : 'cyan';
+    let html = '<div class="stat-grid">'
+      + statCard('runs', 'cyan', 'Total Runs', o.total_runs, 'cyan')
+      + statCard('stopwatch', 'cyan', 'Avg Run Duration',
+        formatDuration(Math.round(o.avg_duration_survived || 0)))
+      + statCard('isk', 'cyan', 'Total Net', formatIsk(o.total_net_isk || 0),
+        netValueClass(o.total_net_isk || 0))
+      + statCard('isk', 'cyan', 'Avg Net / Run', formatIsk(o.avg_net_isk || 0),
+        netValueClass(o.avg_net_isk || 0))
+      + statCard('isk', 'cyan', 'Net / Hour', formatIsk(stats.iskPerHour),
+        netValueClass(stats.iskPerHour))
+      + statCard('survival', 'green', 'Survived', o.survived || 0, 'green')
+      + statCard('survival', 'green', 'Survival Rate', `${survRate}%`, 'green')
+      + statCard('loss', 'red', 'Deaths', o.died || 0, 'red')
+      + statCard('loss', 'red', 'Total Death Losses', formatIsk(o.total_loss || 0), 'red')
+      + statCard('loss', 'red', 'Avg Death Loss', formatIsk(o.avg_loss || 0), 'red')
+      + '</div>';
 
     // Daily chart - always shown
     html += `<div class="section-title">${chartTitle}</div>

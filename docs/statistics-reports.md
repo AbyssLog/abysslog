@@ -1,8 +1,8 @@
 # Statistics reports
 
-The Statistics page keeps its overview tiles, latest session, date controls, and
-activity chart above the Report Builder. The selected Statistics date range also
-applies to reports and History drill-through.
+The Statistics page keeps its overview tiles, date controls, and activity chart
+above the Report Builder. Current-session metrics are shown on Tracker. The
+selected Statistics date range also applies to reports and History drill-through.
 
 ## Run Performance
 
@@ -11,14 +11,19 @@ report can group by up to two of these dimensions.
 
 Available columns:
 
-- Runs, Survived, and Died
+- Abyssal Runs, Ship Entries, Survived, and Died
 - Survival %
 - Avg, Min, and Max Duration
 - Avg Net and Total Net
+- Avg Death Loss and Total Death Losses
 
 Duration uses every run in the filtered population. Select `Outcome = Survived`
-for survival-only duration figures. A death contributes its negative total loss
-to net metrics, matching the Statistics overview.
+for survival-only duration figures. Net metrics use survived runs only. Death
+losses are available as separate metrics, matching the Statistics overview.
+
+An Abyssal Run is one encounter. Ship Entries count the participating character
+runs. Hull, fit, outcome, and survival figures remain participant-based. Net
+totals combine the captured economics of the matching participants.
 
 ## Item Drops
 
@@ -52,6 +57,9 @@ net values, and older appraisal revisions do not affect Item Drops reports.
 - **Min Drop and Max Drop:** smallest and largest positive increase in one run.
 
 Item names are compared case-insensitively against the exact EVE item name.
+When an unscoped report includes a group encounter, participant cargo changes
+are combined and the encounter contributes one loot observation. Character,
+hull, or fit scoped reports retain participant-level inventory semantics.
 
 ## Building a report
 
