@@ -35,7 +35,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   database.hardenSensitiveStorage();
 
   const exitStatus = database.createExitBackup();
-  assert.equal(exitStatus.schemaVersion, 6);
+  assert.equal(exitStatus.schemaVersion, 7);
   assert.equal(exitStatus.automaticBackupRetention, 7);
   assert.ok(exitStatus.latestBackup);
   assert.equal(fs.existsSync(exitStatus.latestBackup.filePath), true);
@@ -164,7 +164,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   assert.equal(fs.existsSync(manualStatus.filePath), true);
   assert.equal(backupDirectoryEntries().filter(name => name.includes('-manual-')).length, 1);
   assert.deepEqual(database.inspectBackup(manualStatus.filePath), {
-    schemaVersion: 6,
+    schemaVersion: 7,
     characterCount: 3,
     runCount: 2,
     size: fs.statSync(manualStatus.filePath).size,
@@ -201,7 +201,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   newerDatabase.close();
   assert.throws(
     () => database.inspectBackup(newerRestorePath),
-    /schema v999.*requires schema v6/i
+    /schema v999.*requires schema v7/i
   );
 
   const foreignRestorePath = path.join(userDataDirectory, 'foreign-restore.db');
@@ -257,7 +257,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   lookalikeDatabase.close();
   assert.throws(
     () => database.inspectBackup(lookalikeRestorePath),
-    /schema v2.*requires schema v6/i
+    /schema v2.*requires schema v7/i
   );
   assert.throws(
     () => database.restoreBackup(database.getDataStatus().databasePath),
@@ -265,7 +265,7 @@ test('database backup lifecycle round-trips current data safely', () => {
   );
 
   const restoreResult = database.restoreBackup(manualStatus.filePath);
-  assert.equal(restoreResult.schemaVersion, 6);
+  assert.equal(restoreResult.schemaVersion, 7);
   assert.equal(restoreResult.characterCount, 3);
   assert.equal(restoreResult.runCount, 2);
   assert.equal(fs.existsSync(restoreResult.safetyBackupPath), true);
@@ -280,10 +280,11 @@ test('database backup lifecycle round-trips current data safely', () => {
   );
 
   const activeSnapshot = {
-    version: 2,
+    version: 3,
     state: 'in-abyss',
     run: {
       character_id: 9003,
+      encounter_uid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       started_at: 1_800_000_000,
       duration: 0,
       tier: 'T5',
@@ -306,6 +307,7 @@ test('database backup lifecycle round-trips current data safely', () => {
 
   const completedRun = {
     character_id: 9003,
+    encounter_uid: activeSnapshot.run.encounter_uid,
     started_at: 1_800_000_000,
     duration: 1_000,
     tier: 'T5',
@@ -587,7 +589,7 @@ test('history search finds rich metadata and all item names', () => {
   assert.deepEqual(detail.tags, ['Farm', 'New Fit']);
   assert.deepEqual(detail.killmail_ids, [9_050_001]);
 });
-test('statistics include death losses and apply consistent date ranges', () => {
+test('statistics separate survived net from death losses and apply consistent ranges', () => {
   database.saveCharacter({
     id: 9010,
     name: 'Profit Pilot',
@@ -631,7 +633,7 @@ test('statistics include death losses and apply consistent date ranges', () => {
       { type_id: 12_345, type_name: 'Rapid Light Missile Launcher II', qty: 4, slot: 'HiSlot0' },
     ],
   });
-  const representativeFitRunId = database.saveRun({
+  database.saveRun({
     ...baseRun,
     started_at: baseRun.started_at + 300,
     outcome: 'Died',
@@ -650,28 +652,18 @@ test('statistics include death losses and apply consistent date ranges', () => {
   });
 
   const stats = database.getStats({ character_id: 9010 });
-  assert.equal(stats.overall.total_net_isk, 50);
-  assert.equal(stats.overall.avg_net_isk, 25);
-  assert.equal(stats.byTier[0].avg_net_isk, 25);
-  assert.equal(stats.byTier[0].avg_duration, 100);
-  assert.equal(stats.byWeather[0].avg_net_isk, 25);
-  assert.equal(stats.byWeather[0].avg_duration, 100);
-  assert.equal(stats.byHull[0].hull_name, 'Gila');
-  assert.equal(stats.byHull[0].total_runs, 2);
-  assert.equal(stats.byHull[0].avg_duration, 100);
-  assert.equal(stats.byFit[0].total_runs, 2);
-  assert.equal(stats.byFit[0].avg_duration, 100);
-  assert.equal(Number(stats.byFit[0].representative_run_id), Number(representativeFitRunId));
-  assert.equal(stats.items.gained[0].item_name, 'Triglavian Survey Database');
-  assert.equal(stats.items.lost[0].item_name, 'Vespa II');
-  assert.equal(stats.latestSession.total_runs, 2);
-  assert.equal(stats.latestSession.total_net_isk, 50);
-  assert.equal(stats.iskPerHour, 900);
-  assert.deepEqual(database.getDailyStats({ character_id: 9010 }), [{
+  assert.equal(stats.overall.total_net_isk, 100);
+  assert.equal(stats.overall.avg_net_isk, 100);
+  const session = database.getSessionStats({ character_id: 9010 });
+  assert.equal(session.total_runs, 2);
+  assert.equal(session.total_net_isk, 50);
+  assert.equal(stats.iskPerHour, 3600);
+  assert.deepEqual(stats.daily, [{
     day: '2025-01-01',
-    total_runs: 2,
+      total_runs: 2,
+      total_encounters: 2,
     survived: 1,
-    net_isk: 50,
+    net_isk: 100,
     total_loss: 50,
   }]);
 
@@ -691,11 +683,12 @@ test('statistics include death losses and apply consistent date ranges', () => {
     });
   }
 
-  const daily = database.getDailyStats({ character_id: 9011 });
+  const allTime = database.getStats({ character_id: 9011 });
+  const daily = allTime.daily;
   assert.equal(daily.length, 70);
   assert.equal(daily[0].day, '2025-01-01');
   assert.equal(daily.at(-1).day, '2025-03-11');
-  assert.equal(database.getStats({ character_id: 9011 }).iskPerHour, 1242);
+  assert.equal(allTime.iskPerHour, 1242);
 
   const range = {
     character_id: 9011,
@@ -704,12 +697,10 @@ test('statistics include death losses and apply consistent date ranges', () => {
   };
   const filtered = database.getStats(range);
   assert.equal(filtered.overall.total_runs, 3);
-  assert.equal(filtered.byTier[0].total_runs, 3);
   assert.equal(filtered.overall.total_net_isk, 33);
   assert.equal(filtered.iskPerHour, 396);
-  const filteredDaily = database.getDailyStats(range);
   assert.deepEqual(
-    filteredDaily.map(day => [day.day, day.net_isk]),
+    filtered.daily.map(day => [day.day, day.net_isk]),
     [['2025-01-11', 10], ['2025-01-12', 11], ['2025-01-13', 12]]
   );
 });
@@ -778,7 +769,7 @@ test('cleared inventory baselines stay cleared until a newer survived run', () =
   assert.equal(database.getInventoryBaseline(9040).id, secondRunId);
 });
 
-test('fit statistics merge equivalent module layouts and captured hulls', () => {
+test('fit reports merge equivalent module layouts and captured hulls', () => {
   database.saveCharacter(buildCharacter({
     id: 9012,
     name: 'Fit Pilot',
@@ -837,25 +828,36 @@ test('fit statistics merge equivalent module layouts and captured hulls', () => 
       { type_id: 21_638, type_name: 'Vespa II', qty: 5, slot: 'DroneBay' },
     ],
   });
-
-
-
-  const fits = database.getStats({ character_id: 9012 }).byFit;
-  assert.equal(fits.length, 2);
-  assert.equal(fits[0].total_runs, 2);
-  assert.equal(fits[0].avg_duration, 600);
-  assert.equal(fits[0].hull_name, 'Gila');
-  assert.equal(Number(fits[0].representative_run_id), Number(latestRunId));
-  const renamed = database.setFitDisplayName(fits[0].fit_identity_id, 'Gamma Gila');
+  const reportRequest = {
+    version: 1,
+    mode: 'runs',
+    character_id: 9012,
+    filters: {},
+    group_by: ['fit'],
+    metrics: ['runs', 'duration_avg'],
+    sort: { key: 'runs', direction: 'desc' },
+  };
+  const rows = database.getStatisticsReport(reportRequest).rows;
+  const groupedFit = rows[0].dimensions.fit;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].values.runs, 2);
+  assert.equal(rows[0].values.duration_avg, 600);
+  assert.equal(groupedFit.hull_name, 'Gila');
+  assert.equal(Number(groupedFit.representative_run_id), Number(latestRunId));
+  const renamed = database.setFitDisplayName(groupedFit.fit_identity_id, 'Gamma Gila');
   assert.equal(renamed.display_name, 'Gamma Gila');
-  const namedFit = database.getStats({ character_id: 9012 }).byFit
-    .find(fit => fit.fit_identity_id === fits[0].fit_identity_id);
+  const namedFit = database.getStatisticsReport(reportRequest).rows
+    .map(row => row.dimensions.fit)
+    .find(fit => fit.fit_identity_id === groupedFit.fit_identity_id);
   assert.equal(namedFit.display_name, 'Gamma Gila');
-  assert.ok(database.getRuns({ fit_identity_id: fits[0].fit_identity_id })
+  assert.ok(database.getRuns({ fit_identity_id: groupedFit.fit_identity_id })
     .every(run => run.fit_display_name === 'Gamma Gila'));
 
   assert.deepEqual(
-    database.getRuns({ character_id: 9012, fit_identity_id: fits[0].fit_identity_id }).map(run => run.id),
+    database.getRuns({
+      character_id: 9012,
+      fit_identity_id: groupedFit.fit_identity_id,
+    }).map(run => run.id),
     [latestRunId, firstRunId]
   );
 });
@@ -935,7 +937,7 @@ test('versioned CSV round-trips exact snapshots and appraisal history', () => {
   assert.deepEqual(history.map(appraisal => appraisal.is_current), [1, 0]);
 });
 
-test('CSV import accepts only the versioned 1.2 history format', () => {
+test('CSV import accepts only the versioned 1.2.2 history format', () => {
   database.saveCharacter({
     id: 9013,
     name: 'CSV Pilot',
@@ -948,7 +950,7 @@ test('CSV import accepts only the versioned 1.2 history format', () => {
   ].join('\n');
   assert.throws(
     () => database.importRunsCSV(legacyCsv, 9013),
-    /supported AbyssLog 1\.2 history format/
+    /supported AbyssLog 1\.2\.2 history format/
   );
 
   database.saveRun({
@@ -965,6 +967,49 @@ test('CSV import accepts only the versioned 1.2 history format', () => {
   const headers = parseCsv(database.exportRunsCSV({ character_id: 9013 }).csv)[0];
   assert.equal(headers.includes('format_version'), true);
   assert.equal(headers.includes('run_uid'), true);
+  assert.equal(headers.includes('encounter_uid'), true);
   assert.equal(headers.includes('hull_name'), true);
   assert.equal(headers.includes('ship_name'), false);
+});
+
+test('shared encounters expose every participant and keep preparation drafts per character', () => {
+  for (const [id, name] of [[9060, 'Group One'], [9061, 'Group Two'], [9062, 'Group Three']]) {
+    database.saveCharacter({ id, name, portrait_url: '', client_id: `group-${id}` });
+  }
+  const encounterUid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const runIds = [9060, 9061, 9062].map((characterId, index) => database.saveRun({
+    character_id: characterId,
+    encounter_uid: encounterUid,
+    started_at: 1_760_000_000,
+    duration: 700,
+    tier: 'T2',
+    weather: 'Dark',
+    outcome: 'Survived',
+    hull_name: 'Hawk',
+    ship_class: 'Frigate',
+    loot_value: index === 0 ? 100 : 0,
+    consumed_cost: index + 1,
+    net_isk: index === 0 ? 99 : -(index + 1),
+  }));
+
+  const detail = database.getRunById(runIds[0]);
+  assert.equal(detail.encounter_uid, encounterUid);
+  assert.equal(detail.encounter_participant_count, 3);
+  assert.deepEqual(
+    detail.encounter_participants.map(participant => participant.character_name),
+    ['Group One', 'Group Two', 'Group Three']
+  );
+
+  const draft = {
+    version: 1,
+    character_id: 9061,
+    tier: 'T2',
+    weather: 'Dark',
+    cargo_before: 'Inferno Rocket\t1000',
+    drone_before: '',
+    notes: 'Group draft',
+    tags: ['Multibox'],
+  };
+  assert.deepEqual(database.saveTrackingDraft(draft), draft);
+  assert.deepEqual(database.getTrackingDraft(9061), draft);
 });

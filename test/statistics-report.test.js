@@ -3,6 +3,20 @@ const test = require('node:test');
 
 const reporting = require('../src/shared/statistics-report');
 
+test('statistics scope validates shared overview and report ranges', () => {
+  assert.deepEqual(reporting.validateScope({
+    character_id: '123',
+    range_start: 1_700_000_000,
+    range_end: 1_700_086_400,
+  }), {
+    character_id: 123,
+    range_start: 1_700_000_000,
+    range_end: 1_700_086_400,
+  });
+  assert.throws(() => reporting.validateScope({ range_start: 20, range_end: 20 }));
+  assert.throws(() => reporting.validateScope({ unexpected: true }));
+});
+
 test('statistics report validates mixed run groupings and metrics', () => {
   assert.deepEqual(reporting.validateReportRequest({
     version: 1,
@@ -12,8 +26,8 @@ test('statistics report validates mixed run groupings and metrics', () => {
     range_end: 200,
     filters: { weather: 'Gamma', outcome: 'Survived' },
     group_by: ['tier', 'fit'],
-    metrics: ['runs', 'duration_avg', 'duration_max', 'net_avg'],
-    sort: { key: 'net_avg', direction: 'desc' },
+    metrics: ['runs', 'duration_avg', 'net_avg', 'death_loss_total'],
+    sort: { key: 'death_loss_total', direction: 'desc' },
   }), {
     version: 1,
     mode: 'runs',
@@ -22,8 +36,8 @@ test('statistics report validates mixed run groupings and metrics', () => {
     range_end: 200,
     filters: { weather: 'Gamma', outcome: 'Survived' },
     group_by: ['tier', 'fit'],
-    metrics: ['runs', 'duration_avg', 'duration_max', 'net_avg'],
-    sort: { key: 'net_avg', direction: 'desc' },
+    metrics: ['runs', 'duration_avg', 'net_avg', 'death_loss_total'],
+    sort: { key: 'death_loss_total', direction: 'desc' },
   });
 });
 

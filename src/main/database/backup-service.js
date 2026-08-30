@@ -7,6 +7,8 @@ const {
   SCHEMA_VERSION,
   getCurrentSchemaIssues,
 } = require('./schema');
+const { CURRENT_SCHEMA_CONTRACT: V6_SCHEMA_CONTRACT } = require('./schema-contract-v6');
+const { getSchemaIssues } = require('./schema-validator');
 
 const AUTOMATIC_BACKUP_RETENTION = 7;
 
@@ -33,7 +35,7 @@ function createBackupService(lifecycle) {
     }
   }
 
-  function inspectBackup(filePath) {
+  function inspectBackup(filePath, { allowSchemaV6 = false } = {}) {
     if (typeof filePath !== 'string' || filePath.length === 0) {
       throw new TypeError('Backup path is invalid');
     }
@@ -56,7 +58,7 @@ function createBackupService(lifecycle) {
       if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 0) {
         throw new Error('The selected backup has an invalid schema version');
       }
-      if (schemaVersion !== SCHEMA_VERSION) {
+      if (schemaVersion !== SCHEMA_VERSION && !(allowSchemaV6 && schemaVersion === 6)) {
         throw new Error(
           `The selected backup uses schema v${schemaVersion}; `
           + `this version requires schema v${SCHEMA_VERSION}`
@@ -66,7 +68,9 @@ function createBackupService(lifecycle) {
         throw new Error('The selected backup does not have a valid AbyssLog database identity');
       }
 
-      const schemaIssues = getCurrentSchemaIssues(backupDb);
+      const schemaIssues = schemaVersion === SCHEMA_VERSION
+        ? getCurrentSchemaIssues(backupDb)
+        : getSchemaIssues(backupDb, V6_SCHEMA_CONTRACT);
       if (schemaIssues.length) {
         throw new Error(
           `The selected file is not an AbyssLog full backup: ${schemaIssues.join('; ')}`
@@ -90,9 +94,9 @@ function createBackupService(lifecycle) {
     }
   }
 
-  function verifyBackup(filePath) {
+  function verifyBackup(filePath, options) {
     try {
-      inspectBackup(filePath);
+      inspectBackup(filePath, options);
     } finally {
       // AbyssLog-created copies are standalone and must not retain WAL state.
       removeDatabaseSidecars(filePath);
@@ -169,7 +173,7 @@ function createBackupService(lifecycle) {
       throw new Error('The active AbyssLog database cannot be selected as its own backup');
     }
 
-    const inspection = inspectBackup(sourcePath);
+    const inspection = inspectBackup(sourcePath, { allowSchemaV6: true });
     const operationId = `${process.pid}-${Date.now()}`;
     const stagedPath = path.join(path.dirname(databasePath), `.abysslog-restore-${operationId}.tmp`);
     const displacedPath = path.join(
@@ -182,7 +186,7 @@ function createBackupService(lifecycle) {
 
     try {
       fs.copyFileSync(sourcePath, stagedPath, fs.constants.COPYFILE_EXCL);
-      verifyBackup(stagedPath);
+      verifyBackup(stagedPath, { allowSchemaV6: true });
       safetyBackupPath = copyDatabaseToBackup(
         `abysslog-before-restore-${backupTimestamp()}.db`
       );
@@ -249,7 +253,7 @@ function createBackupService(lifecycle) {
     const { backupDirectory } = lifecycle.getPaths();
     fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
     return fs.readdirSync(backupDirectory, { withFileTypes: true })
-      .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z|before-restore-\d+T\d+Z)\.db$/.test(entry.name))
+      .filter(entry => entry.isFile() && /^abysslog-(?:auto-\d{4}-\d{2}-\d{2}|manual-\d+T\d+Z|before-(?:restore|schema-v7)-\d+T\d+Z)\.db$/.test(entry.name))
       .map(entry => {
         const filePath = path.join(backupDirectory, entry.name);
         const stat = fs.statSync(filePath);

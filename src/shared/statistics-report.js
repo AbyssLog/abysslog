@@ -1,21 +1,23 @@
 (function exposeStatisticsReport(root, factory) {
-  const api = factory();
+  const api = typeof module === 'object' && module.exports
+    ? factory(require('./run-domain'))
+    : factory(root.AbyssRunDomain);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.AbyssStatisticsReport = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, () => {
+})(typeof globalThis !== 'undefined' ? globalThis : this, runDomain => {
+  if (!runDomain) throw new Error('Statistics reports require the run domain');
   const REPORT_VERSION = 1;
-  const RUN_TIERS = new Set(['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'Unknown']);
-  const RUN_WEATHERS = new Set([
-    'Electrical', 'Dark', 'Exotic', 'Firestorm', 'Gamma', 'Unknown',
-  ]);
-  const RUN_OUTCOMES = new Set(['Survived', 'Died']);
+  const RUN_TIERS = new Set(runDomain.REPORT_TIERS);
+  const RUN_WEATHERS = new Set(runDomain.REPORT_WEATHERS);
+  const RUN_OUTCOMES = new Set(runDomain.OUTCOMES);
   const MODES = Object.freeze({
     runs: Object.freeze({
       label: 'Run Performance',
       dimensions: Object.freeze(['tier', 'weather', 'hull', 'fit', 'outcome']),
       metrics: Object.freeze([
-        'runs', 'survived', 'died', 'survival_pct',
+        'encounters', 'runs', 'survived', 'died', 'survival_pct',
         'duration_avg', 'duration_min', 'duration_max', 'net_avg', 'net_total',
+        'death_loss_avg', 'death_loss_total',
       ]),
     }),
     drops: Object.freeze({
@@ -36,7 +38,8 @@
     outcome: Object.freeze({ label: 'Outcome' }),
   });
   const METRICS = Object.freeze({
-    runs: Object.freeze({ label: 'Runs', format: 'integer' }),
+    encounters: Object.freeze({ label: 'Abyssal Runs', format: 'integer' }),
+    runs: Object.freeze({ label: 'Ship Entries', format: 'integer' }),
     survived: Object.freeze({ label: 'Survived', format: 'integer' }),
     died: Object.freeze({ label: 'Died', format: 'integer' }),
     survival_pct: Object.freeze({ label: 'Survival %', format: 'percent' }),
@@ -45,6 +48,8 @@
     duration_max: Object.freeze({ label: 'Max Duration', format: 'duration' }),
     net_avg: Object.freeze({ label: 'Avg Net', format: 'isk' }),
     net_total: Object.freeze({ label: 'Total Net', format: 'isk' }),
+    death_loss_avg: Object.freeze({ label: 'Avg Death Loss', format: 'isk' }),
+    death_loss_total: Object.freeze({ label: 'Total Death Losses', format: 'isk' }),
     observed_runs: Object.freeze({ label: 'Loot Runs', format: 'integer' }),
     drop_runs: Object.freeze({ label: 'Runs with Drop', format: 'integer' }),
     drop_rate: Object.freeze({ label: 'Drop Rate', format: 'percent' }),
@@ -57,25 +62,25 @@
     Object.freeze({
       id: 'runs-tier', label: 'Performance by Tier', mode: 'runs',
       group_by: Object.freeze(['tier']),
-      metrics: Object.freeze(['runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
+      metrics: Object.freeze(['encounters', 'runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
       sort: Object.freeze({ key: 'tier', direction: 'asc' }),
     }),
     Object.freeze({
       id: 'runs-weather', label: 'Performance by Weather', mode: 'runs',
       group_by: Object.freeze(['weather']),
-      metrics: Object.freeze(['runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
+      metrics: Object.freeze(['encounters', 'runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
       sort: Object.freeze({ key: 'weather', direction: 'asc' }),
     }),
     Object.freeze({
       id: 'runs-hull', label: 'Performance by Hull', mode: 'runs',
       group_by: Object.freeze(['hull']),
-      metrics: Object.freeze(['runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
+      metrics: Object.freeze(['encounters', 'runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
       sort: Object.freeze({ key: 'runs', direction: 'desc' }),
     }),
     Object.freeze({
       id: 'runs-fit', label: 'Performance by Fit', mode: 'runs',
       group_by: Object.freeze(['fit']),
-      metrics: Object.freeze(['runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
+      metrics: Object.freeze(['encounters', 'runs', 'survived', 'died', 'survival_pct', 'duration_avg', 'net_avg']),
       sort: Object.freeze({ key: 'runs', direction: 'desc' }),
     }),
     Object.freeze({
@@ -236,6 +241,7 @@
     MODES,
     PRESETS,
     REPORT_VERSION,
+    RUN_DOMAIN: runDomain,
     validateReportRequest,
     validateScope,
   });

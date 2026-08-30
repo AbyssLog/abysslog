@@ -11,7 +11,7 @@ const {
 } = require('../src/main/database/schema');
 const { getSchemaIssues } = require('../src/main/database/schema-validator');
 
-test('schema creation provides the normalized v6 contract', () => {
+test('schema creation provides the normalized v7 contract', () => {
   const connection = new Database(':memory:');
   try {
     connection.pragma('foreign_keys = ON');
@@ -21,7 +21,7 @@ test('schema creation provides the normalized v6 contract', () => {
       connection.pragma(`application_id = ${ABYSSLOG_APPLICATION_ID}`);
     })();
 
-    assert.equal(connection.pragma('user_version', { simple: true }), 6);
+    assert.equal(connection.pragma('user_version', { simple: true }), 7);
     assert.equal(
       connection.pragma('application_id', { simple: true }),
       ABYSSLOG_APPLICATION_ID
@@ -32,11 +32,16 @@ test('schema creation provides the normalized v6 contract', () => {
     for (const table of [
       'credentials', 'fit_identities', 'fit_snapshots', 'runs',
       'inventory_snapshots', 'appraisals', 'active_run_state',
+      'encounters', 'tracking_drafts',
     ]) {
       assert.equal(tables.has(table), true, table);
     }
     assert.equal(
       connection.pragma('table_info(runs)').some(column => column.name === 'fit_snapshot_id'),
+      true
+    );
+    assert.equal(
+      connection.pragma('table_info(runs)').some(column => column.name === 'encounter_id'),
       true
     );
     assert.deepEqual(getCurrentSchemaIssues(connection), []);
@@ -57,7 +62,7 @@ test('schema creation provides the normalized v6 contract', () => {
         INSERT INTO runs (run_uid, character_id, started_at, duration, outcome)
         VALUES ('d9428888-122b-4d54-b1f8-7b86acb06e79', 9001, 1700000000, -1, 'Survived')
       `).run(),
-      /constraint|invalid/i
+      /constraint|invalid|required/i
     );
   } finally {
     connection.close();

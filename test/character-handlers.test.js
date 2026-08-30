@@ -1,18 +1,16 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { registerCharacterDeletionHandler } = require('../src/main/character-handlers');
+const { registerAuthSettingsHandlers } = require('../src/main/ipc/auth-settings-handlers');
 const security = require('../src/shared/security');
 
 test('character deletion IPC validates input and delegates to the atomic database operation', () => {
-  let channel;
-  let handler;
+  const handlers = new Map();
   const deleted = [];
 
-  registerCharacterDeletionHandler({
+  registerAuthSettingsHandlers({
     secureHandle: (registeredChannel, registeredHandler) => {
-      channel = registeredChannel;
-      handler = registeredHandler;
+      handlers.set(registeredChannel, registeredHandler);
     },
     database: {
       deleteCharacter: characterId => {
@@ -20,10 +18,21 @@ test('character deletion IPC validates input and delegates to the atomic databas
         return true;
       },
     },
-    requireInteger: security.requireInteger,
+    security,
+    loadTokens: () => null,
+    getCharacterCapabilities: () => ({}),
+    startSso: () => {},
+    getPublicSettings: () => ({}),
+    validateObjectPayload: value => value,
+    getSecureStorageStatus: () => ({}),
+    getJaniceApiKey: () => null,
+    saveJaniceApiKey: () => {},
+    deleteJaniceApiKey: () => {},
+    recordDiagnostic: () => {},
   });
 
-  assert.equal(channel, 'auth:delete-character');
+  const handler = handlers.get('auth:delete-character');
+  assert.equal(typeof handler, 'function');
   assert.equal(handler(1001), true);
   assert.equal(handler('1002'), true);
   assert.deepEqual(deleted, [1001, 1002]);

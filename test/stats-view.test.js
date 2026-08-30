@@ -6,9 +6,8 @@ const { createDocumentHarness } = require('./support/builders');
 
 function createHarness(statsResult = {
   overall: { total_runs: 0 },
-  byTier: [],
-  byWeather: [],
   iskPerHour: 0,
+  daily: [],
 }) {
   const { elements, document } = createDocumentHarness([
     ['statsRangePreset', { value: 'all' }],
@@ -27,10 +26,6 @@ function createHarness(statsResult = {
       getStats: async filters => {
         calls.push(['stats', filters]);
         return statsResult;
-      },
-      getDailyStats: async filters => {
-        calls.push(['daily', filters]);
-        return [];
       },
     },
   };
@@ -74,7 +69,6 @@ test('statistics view owns range-to-query mapping and empty-state rendering', as
   assert.match(elements.get('statsContent').innerHTML, /No runs logged yet/);
   assert.deepEqual(calls, [
     ['stats', { character_id: 9001 }],
-    ['daily', { character_id: 9001 }],
   ]);
   assert.deepEqual(reportCalls, [['hide']]);
 });
@@ -92,55 +86,70 @@ test('statistics view initializes a missing custom range before rendering', asyn
 
 test('statistics overview delegates fit reporting instead of rendering fixed fit rows', async () => {
   const { elements, reportCalls, view } = createHarness({
-    overall: { total_runs: 1 },
-    byTier: [],
-    byWeather: [],
-    byFit: [{
-      fit_identity_id: 7,
-      fit_key: 'abc12345',
-      display_name: 'Gamma Runner',
-      representative_run_id: 42,
-      hull_name: 'Gila',
-      total_runs: 3,
-      survived: 2,
-      avg_duration: 600,
-      avg_net_isk: 100,
-    }],
+    overall: { total_runs: 3, survived: 2, died: 1 },
     iskPerHour: 0,
+    daily: [],
   });
 
   await view.render();
 
   const html = elements.get('statsContent').innerHTML;
+  const labels = [
+    'Total Runs', 'Avg Run Duration', 'Total Net', 'Avg Net / Run', 'Net / Hour',
+    'Survived', 'Survival Rate', 'Deaths', 'Total Death Losses', 'Avg Death Loss',
+  ];
+  let previousIndex = -1;
+  for (const label of labels) {
+    const index = html.indexOf(label);
+    assert.ok(index > previousIndex, `${label} should follow the previous tile`);
+    previousIndex = index;
+  }
+  assert.match(html, /Avg Run Duration/);
+  assert.doesNotMatch(html, /Avg Survival Duration/);
   assert.doesNotMatch(html, /class="analytics-fit-link"/);
   assert.equal(reportCalls[0][0], 'render');
 });
 
-test('statistics overview no longer renders the four fixed grouping tables', async () => {
-  const metrics = {
-    total_runs: 3,
-    survived: 2,
-    avg_duration: 600,
-    avg_net_isk: 100,
-  };
-  const { elements, reportCalls, view } = createHarness({
-    overall: { total_runs: 3 },
-    byTier: [{ tier: 'T5', ...metrics }],
-    byWeather: [{ weather: 'Exotic', ...metrics }],
-    byHull: [{ hull_name: 'Gila', ship_class: 'Cruiser', ...metrics }],
-    byFit: [{
-      fit_identity_id: 7,
-      fit_key: 'abc12345',
-      representative_run_id: 42,
-      hull_name: 'Gila',
-      ...metrics,
-    }],
-    iskPerHour: 0,
+test('statistics net tiles keep a general accent and color values by sign', async () => {
+  const positive = createHarness({
+    overall: {
+      total_runs: 2,
+      survived: 2,
+      died: 0,
+      total_net_isk: 100,
+      avg_net_isk: 50,
+    },
+    iskPerHour: 25,
+    daily: [],
   });
+  await positive.view.render();
 
-  await view.render();
+  const positiveHtml = positive.elements.get('statsContent').innerHTML;
+  assert.match(positiveHtml,
+    /tone-cyan[^>]*>[\s\S]*?Total Net[\s\S]*?stat-card-value green">100/);
+  assert.match(positiveHtml,
+    /tone-cyan[^>]*>[\s\S]*?Avg Net \/ Run[\s\S]*?stat-card-value green">50/);
+  assert.match(positiveHtml,
+    /tone-cyan[^>]*>[\s\S]*?Net \/ Hour[\s\S]*?stat-card-value green">25/);
 
-  const html = elements.get('statsContent').innerHTML;
-  assert.doesNotMatch(html, /data-table analytics-table stats-table/);
-  assert.equal(reportCalls[0][0], 'render');
+  const negative = createHarness({
+    overall: {
+      total_runs: 1,
+      survived: 1,
+      died: 0,
+      total_net_isk: -100,
+      avg_net_isk: -100,
+    },
+    iskPerHour: -25,
+    daily: [],
+  });
+  await negative.view.render();
+
+  const negativeHtml = negative.elements.get('statsContent').innerHTML;
+  assert.match(negativeHtml,
+    /tone-cyan[^>]*>[\s\S]*?Total Net[\s\S]*?stat-card-value red">-100/);
+  assert.match(negativeHtml,
+    /tone-cyan[^>]*>[\s\S]*?Avg Net \/ Run[\s\S]*?stat-card-value red">-100/);
+  assert.match(negativeHtml,
+    /tone-cyan[^>]*>[\s\S]*?Net \/ Hour[\s\S]*?stat-card-value red">-25/);
 });

@@ -1,8 +1,11 @@
 (function exposeSecurity(root, factory) {
-  const api = factory();
+  const api = typeof module === 'object' && module.exports
+    ? factory(require('./run-domain'))
+    : factory(root.AbyssRunDomain);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.AbyssSecurity = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, () => {
+})(typeof globalThis !== 'undefined' ? globalThis : this, runDomain => {
+  if (!runDomain) throw new Error('Security validation requires the run domain');
   const EXTERNAL_URL_RULES = [
     { host: 'login.eveonline.com', path: '/v2/oauth/authorize' },
     { host: 'discord.gg', path: '/janice' },
@@ -46,17 +49,10 @@
     'esi-location.read_online.v1',
     'esi-fittings.read_fittings.v1',
   ]);
-  const RUN_TIERS = new Set(['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'Unknown']);
-  const RUN_WEATHERS = new Set([
-    'Electrical',
-    'Dark',
-    'Exotic',
-    'Firestorm',
-    'Gamma',
-    'Unknown',
-  ]);
-  const RUN_OUTCOMES = new Set(['Survived', 'Died']);
-  const SHIP_CLASSES = new Set(['Frigate', 'Destroyer', 'Cruiser', 'Unknown']);
+  const RUN_TIERS = new Set(runDomain.REPORT_TIERS);
+  const RUN_WEATHERS = new Set(runDomain.REPORT_WEATHERS);
+  const RUN_OUTCOMES = new Set(runDomain.OUTCOMES);
+  const SHIP_CLASSES = new Set(runDomain.SHIP_CLASSES);
   const RUN_ITEM_TYPES = new Set(['gained', 'consumed', 'lost']);
   const ACTIVE_RUN_STATES = new Set(['in-abyss', 'awaiting-cargo', 'died']);
   const MAX_MONEY_VALUE = 1_000_000_000_000_000_000;
@@ -96,6 +92,14 @@
       throw new TypeError(`${label} must be a finite number between ${min} and ${max}`);
     }
     return value;
+  }
+
+  function requireUuid(value, label) {
+    const uuid = requireString(value, label, 36).toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid)) {
+      throw new TypeError(`${label} is invalid`);
+    }
+    return uuid;
   }
 
   function requireText(value, label, maxLength, { allowEmpty = true, multiline = true } = {}) {
@@ -387,6 +391,7 @@
       'cargo_before', 'cargo_after', 'drone_before', 'drone_after',
       'hull_name', 'ship_class', 'notes', 'tags', 'killmail_ids', 'appraised_at',
       'items', 'fitting', 'implants',
+      'encounter_uid',
     ]));
     return {
       character_id: requireInteger(value.character_id, 'Character ID'),
@@ -420,13 +425,67 @@
       items: validateRunItems(value.items ?? []),
       fitting: validateFitting(value.fitting ?? []),
       implants: validateImplants(value.implants ?? []),
+      encounter_uid: value.encounter_uid == null
+        ? null
+        : requireUuid(value.encounter_uid, 'Encounter UUID'),
     };
+  }
+
+  function validateTrackingDraft(value) {
+    if (!isPlainObject(value)) throw new TypeError('Tracking draft must be an object');
+    assertAllowedKeys(value, 'Tracking draft', new Set([
+      'version', 'character_id', 'tier', 'weather', 'cargo_before', 'drone_before',
+      'notes', 'tags',
+    ]));
+    if (value.version !== 1) throw new TypeError('Tracking draft version is unsupported');
+    return {
+      version: 1,
+      character_id: requireInteger(value.character_id, 'Character ID'),
+      tier: requireEnum(value.tier, 'Run tier', RUN_TIERS),
+      weather: requireEnum(value.weather, 'Run weather', RUN_WEATHERS),
+      cargo_before: requireText(value.cargo_before ?? '', 'Pre-run cargo', 512 * 1024),
+      drone_before: requireText(value.drone_before ?? '', 'Pre-run drone bay', 512 * 1024),
+      notes: requireText(value.notes ?? '', 'Run notes', 16 * 1024),
+      tags: validateTags(value.tags ?? []),
+    };
+  }
+
+  function validateEncounterData(value) {
+    if (!isPlainObject(value)) throw new TypeError('Manual encounter must be an object');
+    assertAllowedKeys(value, 'Manual encounter', new Set(['participants']));
+    const participants = requireArray(value.participants, 'Encounter participants', 3)
+      .map(validateRunData);
+    if (participants.length < 2) {
+      throw new TypeError('A group encounter requires at least two participants');
+    }
+    const characterIds = new Set(participants.map(participant => participant.character_id));
+    if (characterIds.size !== participants.length) {
+      throw new TypeError('Encounter participants must use different characters');
+    }
+    const first = participants[0];
+    const sharedFields = [
+      'started_at', 'duration', 'tier', 'weather', 'system_id', 'system_name', 'ship_class',
+    ];
+    if (participants.some(participant => sharedFields.some(field => (
+      participant[field] !== first[field]
+    )))) {
+      throw new TypeError('Encounter participants must share timing, environment, and ship class');
+    }
+    const validComposition = (
+      first.ship_class === 'Frigate' && participants.length <= 3
+    ) || (
+      first.ship_class === 'Destroyer' && participants.length === 2
+    );
+    if (!validComposition) {
+      throw new TypeError('Group encounters require up to three frigates or two destroyers');
+    }
+    return { participants };
   }
 
   function validateActiveRunSnapshot(value) {
     if (!isPlainObject(value)) throw new TypeError('Active run snapshot must be an object');
     assertAllowedKeys(value, 'Active run snapshot', new Set(['version', 'state', 'run']));
-    if (value.version !== 2) throw new TypeError('Active run snapshot version is unsupported');
+    if (value.version !== 3) throw new TypeError('Active run snapshot version is unsupported');
 
     const state = requireEnum(value.state, 'Active run state', ACTIVE_RUN_STATES);
     const run = value.run;
@@ -436,6 +495,7 @@
       'system_id', 'system_name', 'cargoBefore', 'cargoAfter', 'droneBefore', 'droneAfter',
       'hull_name', 'ship_class', 'notes', 'tags', 'fitting', 'implants', 'fitCaptured',
       'killmailItems', 'killmailIds',
+      'encounter_uid',
     ]));
 
     const expectedOutcome = state === 'in-abyss'
@@ -449,7 +509,7 @@
     }
 
     return {
-      version: 2,
+      version: 3,
       state,
       run: {
         character_id: requireInteger(run.character_id, 'Character ID'),
@@ -482,6 +542,7 @@
         fitCaptured: run.fitCaptured,
         killmailItems: validateKillmailLossItems(run.killmailItems ?? []),
         killmailIds: validateKillmailIds(run.killmailIds ?? []),
+        encounter_uid: requireUuid(run.encounter_uid, 'Encounter UUID'),
       },
     };
   }
@@ -737,31 +798,6 @@
     }
     return filters;
   }
-  function validateStatsFilters(value) {
-    if (!isPlainObject(value)) throw new TypeError('Statistics filters must be an object');
-    assertAllowedKeys(value, 'Statistics filters', new Set([
-      'character_id', 'range_start', 'range_end',
-    ]));
-    const filters = {};
-    if (value.character_id != null && value.character_id !== '') {
-      filters.character_id = requireInteger(value.character_id, 'Character ID');
-    }
-    if (value.range_start != null) {
-      filters.range_start = requireInteger(value.range_start, 'Statistics range start', { min: 0 });
-    }
-    if (value.range_end != null) {
-      filters.range_end = requireInteger(value.range_end, 'Statistics range end', { min: 1 });
-    }
-    if (
-      filters.range_start != null
-      && filters.range_end != null
-      && filters.range_end <= filters.range_start
-    ) {
-      throw new TypeError('Statistics range end must be after its start');
-    }
-    return filters;
-  }
-
   function validateRunMeta(value) {
     if (!isPlainObject(value)) throw new TypeError('Run update must be an object');
     assertAllowedKeys(value, 'Run update', new Set([
@@ -969,12 +1005,13 @@
     validateEsiTokenIdentity,
     validateEsiType,
     validateJaniceResponse,
+    validateEncounterData,
     validateOAuthTokenResponse,
     validatePublicSetting,
     validateRunData,
     validateRunEdit,
     validateRunFilters,
-    validateStatsFilters,
     validateRunMeta,
+    validateTrackingDraft,
   };
 });

@@ -3,6 +3,7 @@ const {
   createInventorySnapshot,
 } = require('../../shared/data-model-v6');
 const { createFitRepository } = require('./fit-repository-v6');
+const { createEncounterRepository } = require('./encounter-repository');
 const { createRunQueryRepository } = require('./run-query-repository-v6');
 const { runInTransaction } = require('./transaction');
 const { createNewRunUid } = require('./v6-identities');
@@ -16,6 +17,7 @@ const INVENTORY_FIELDS = Object.freeze([
 
 function createRunRepository(getDb) {
   const fitRepository = createFitRepository(getDb);
+  const encounters = createEncounterRepository(getDb);
   const queries = createRunQueryRepository(getDb);
 
   function database() {
@@ -204,12 +206,16 @@ function createRunRepository(getDb) {
     } = runData;
 
     return runInTransaction(connection, () => {
+      const encounter = encounters.ensure(runData, runData.encounter_uid, createdAt);
+      encounters.assertParticipantAllowed(encounter.id, ship_class);
       const fitSnapshot = fitRepository.ensureSnapshot(fitting, implants, hull_name);
       const info = connection.prepare(`
         INSERT INTO runs
           (run_uid, character_id, started_at, duration, tier, weather, outcome,
-           system_id, system_name, hull_name, ship_class, fit_snapshot_id, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, strftime('%s','now')))
+           system_id, system_name, hull_name, ship_class, fit_snapshot_id, notes,
+           created_at, encounter_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          COALESCE(?, strftime('%s','now')), ?)
       `).run(
         runUid || createNewRunUid(),
         character_id,
@@ -224,7 +230,8 @@ function createRunRepository(getDb) {
         ship_class || null,
         fitSnapshot?.id || null,
         notes || null,
-        createdAt
+        createdAt,
+        encounter.id
       );
       const runId = info.lastInsertRowid;
       applyInventoryFields(runId, runData, runData.appraised_at ?? null);
@@ -267,6 +274,14 @@ function createRunRepository(getDb) {
     }
   }
 
+  function saveEncounter(participants) {
+    const connection = database();
+    const encounterUid = createNewRunUid();
+    return runInTransaction(connection, () => participants.map(participant => (
+      saveRun({ ...participant, encounter_uid: encounterUid })
+    )));
+  }
+
   function clearActiveRun(characterId) {
     database().prepare('DELETE FROM active_run_state WHERE character_id = ?').run(characterId);
     return true;
@@ -285,8 +300,14 @@ function createRunRepository(getDb) {
   }
 
   function deleteRun(runId) {
-    database().prepare('DELETE FROM runs WHERE id = ?').run(runId);
-    return true;
+    const connection = database();
+    return runInTransaction(connection, () => {
+      const run = connection.prepare('SELECT encounter_id FROM runs WHERE id = ?').get(runId);
+      if (!run) return true;
+      connection.prepare('DELETE FROM runs WHERE id = ?').run(runId);
+      encounters.deleteIfEmpty(run.encounter_id);
+      return true;
+    });
   }
 
   function setFitDisplayName(fitIdentityId, displayName) {
@@ -333,6 +354,14 @@ function createRunRepository(getDb) {
   }
 
   function applyMetaUpdate(runId, meta, { cloneAppraisal = true } = {}) {
+    const encounter = database().prepare(
+      'SELECT encounter_id FROM runs WHERE id = ?'
+    ).get(runId);
+    if (encounter) {
+      encounters.assertParticipantAllowed(encounter.encounter_id, meta.ship_class, {
+        excludeRunId: runId,
+      });
+    }
     const result = database().prepare(`
       UPDATE runs SET tier = ?, weather = ?, outcome = ?, duration = ?,
         started_at = ?, hull_name = COALESCE(?, hull_name),
@@ -353,6 +382,7 @@ function createRunRepository(getDb) {
       runId
     );
     requireUpdatedRun(result);
+    encounters.refresh(encounter.encounter_id);
     if (meta.tags !== null && meta.tags !== undefined) replaceRunTags(runId, meta.tags);
     if (cloneAppraisal) {
       cloneCurrentAppraisal(runId, { outcome: meta.outcome, totalLoss: meta.total_loss });
@@ -426,6 +456,7 @@ function createRunRepository(getDb) {
     getRunById: queries.getRunById,
     getRuns: queries.getRuns,
     saveActiveRun,
+    saveEncounter,
     saveRun,
     setFitDisplayName,
     updateAppraisal,

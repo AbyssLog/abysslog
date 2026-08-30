@@ -44,6 +44,7 @@
       <button class="nav-btn" data-action="show-page" data-page="settings" aria-controls="page-settings">Settings</button>
       <button class="nav-btn" data-action="show-page" data-page="about" aria-controls="page-about">About</button>
     </nav>
+    <span class="tracking-summary" id="trackingSummary" role="status" aria-live="polite" hidden></span>
     <div class="char-switcher">
       <span class="status-dot" id="statusDot" aria-hidden="true"></span>
       <select class="char-select" id="charSelect" data-change-action="switch-character" aria-label="Active character">
@@ -66,33 +67,43 @@
 
       <div id="tracker-ui" style="display:none">
         <div id="recoveryStatus" class="alert success" role="status" aria-live="polite" style="display:none;margin-bottom:12px"></div>
+        <div id="activeEncounterStatus" class="active-encounter-status" hidden>
+          <span id="activeEncounterText" role="status" aria-live="polite"></span>
+          <span id="encounterCandidateActions" class="active-encounter-actions" hidden>
+            <button type="button" class="btn sm" data-action="confirm-encounter-group">Group characters</button>
+            <button type="button" class="btn sm ghost" data-action="dismiss-encounter-group">Keep separate</button>
+          </span>
+        </div>
         <div class="tracker-grid">
           <!-- Left: HUD + Timer + Run Controls -->
           <div class="tracker-workspace">
             <div class="hud-row">
-              <div class="hud-card" id="hudLocation">
-                <div class="hud-card-label">Location</div>
+              <div class="hud-card tile-tone tone-cyan" id="hudLocation">
+                <div class="hud-card-label"><span class="ui-icon icon-location" aria-hidden="true"></span>Location</div>
                 <div class="hud-card-value" id="hudLocationVal">—</div>
               </div>
-              <div class="hud-card">
-                <div class="hud-card-label">Hull</div>
+              <div class="hud-card tile-tone tone-cyan">
+                <div class="hud-card-label"><span class="ui-icon icon-ship" aria-hidden="true"></span>Hull</div>
                 <div class="hud-card-value" id="hudShipVal">—</div>
               </div>
-              <div class="hud-card">
-                <div class="hud-card-label">ESI</div>
+              <div class="hud-card tile-tone tone-green">
+                <div class="hud-card-label"><span class="ui-icon icon-connection" aria-hidden="true"></span>ESI</div>
                 <div class="hud-card-value" id="hudEsiVal" style="font-size:12px">Idle</div>
               </div>
-              <div class="hud-card">
-                <div class="hud-card-label">Run State</div>
+              <div class="hud-card tile-tone tone-gold" id="hudRunStateCard">
+                <div class="hud-card-label"><span class="ui-icon icon-stopwatch" aria-hidden="true"></span>Run State</div>
                 <div class="hud-card-value cyan" id="hudRunState" role="status" aria-live="polite">Awaiting</div>
               </div>
             </div>
 
             <div class="timer" id="timerDisplay">00:00:00</div>
 
-            <!-- Always-visible pre-run paste section -->
-            <div class="run-panel" style="margin-bottom:8px">
-              <div class="panel-title">Pre-Run Contents</div>
+            <!-- Stateful run contents section -->
+            <div class="run-panel run-contents-panel tile-tone tone-gold" id="preRunContentsPanel">
+              <div class="run-contents-title">
+                <div class="panel-title"><span class="ui-icon icon-cargo" aria-hidden="true"></span>Run Contents</div>
+                <span class="run-contents-stage before" id="preRunContentsStage">Before Run</span>
+              </div>
               <div class="loadout-toolbar">
                 <div class="loadout-picker">
                   <label class="field-label" for="loadoutPresetSelect">Loadout Preset</label>
@@ -108,6 +119,8 @@
                 <span id="inventoryBaselineText"></span>
                 <button class="btn sm ghost" data-action="clear-inventory-baseline" style="margin-left:8px">Clear baseline</button>
               </div>
+              <div id="preRunInventoryHome">
+                <div id="preRunInventoryFields">
               <button type="button" class="collapsible-header" data-action="toggle-collapsible" data-body="preCargoBody" data-arrow="preCargoArrow" data-hint="preCargoHint" aria-expanded="true" aria-controls="preCargoBody">
                 <span class="collapsible-label">Cargo Hold</span>
                 <span class="collapsible-hint" id="preCargoHint"></span>
@@ -124,11 +137,13 @@
               <div class="collapsible-body" id="preDroneBody">
                 <textarea class="field-textarea" id="droneBeforeText" aria-label="Pre-run drone bay contents" placeholder="In-game: open drone bay → Ctrl+A → Ctrl+C → paste here.&#10;&#10;Same format as cargo hold." style="min-height:70px" data-input-action="paste-hint" data-hint="preDroneHint" data-inventory-editor></textarea>
               </div>
+                </div>
+              </div>
             </div>
 
             <!-- State: Awaiting Run -->
-            <div id="state-awaiting" class="run-panel">
-              <div class="panel-title">Run Setup</div>
+            <div id="state-awaiting" class="run-panel tile-tone tone-cyan">
+              <div class="panel-title"><span class="ui-icon icon-gear" aria-hidden="true"></span>Run Setup</div>
               <div class="run-config">
                 <div>
                   <label class="field-label" for="tierSelect">Tier</label>
@@ -164,8 +179,8 @@
             </div>
 
             <!-- State: In Abyss -->
-            <div id="state-in-abyss" class="run-panel" style="display:none">
-              <div class="panel-title">Run in Progress</div>
+            <div id="state-in-abyss" class="run-panel tile-tone tone-cyan" style="display:none">
+              <div class="panel-title"><span class="ui-icon icon-stopwatch" aria-hidden="true"></span>Run in Progress</div>
               <div class="alert" style="margin-bottom:0">
                 ESI is monitoring your location. The timer will stop automatically when you exit or your ship is destroyed.
                 <div style="margin-top:8px;display:flex;gap:8px">
@@ -176,11 +191,17 @@
             </div>
 
             <!-- State: Awaiting Cargo (Survived) -->
-            <div id="state-awaiting-cargo" class="run-panel" style="display:none">
-              <div class="panel-title">Run Complete — Paste Post-Run Cargo</div>
+            <div id="state-awaiting-cargo" class="run-panel run-contents-panel tile-tone tone-green" style="display:none">
+              <div class="run-contents-title">
+                <div class="panel-title"><span class="ui-icon icon-cargo" aria-hidden="true"></span>Run Contents</div>
+                <span class="run-contents-stage after">After Run</span>
+              </div>
               <div class="alert success" style="margin-bottom:10px">You survived! Paste your cargo hold contents to calculate loot gained and items consumed.</div>
+              <div class="run-contents-context">
+                <span id="postRunPreSummary">Pre-run contents captured</span>
+                <button type="button" class="btn sm ghost" data-action="review-pre-run">Review Pre-Run</button>
+              </div>
               <div style="margin-bottom:8px">
-                <div class="panel-title" style="margin-bottom:8px">Post-Run Contents</div>
                 <button type="button" class="collapsible-header" data-action="toggle-collapsible" data-body="postCargoBody" data-arrow="postCargoArrow" data-hint="postCargoHint" aria-expanded="true" aria-controls="postCargoBody">
                   <span class="collapsible-label">Cargo Hold</span>
                   <span class="collapsible-hint" id="postCargoHint"></span>
@@ -206,8 +227,8 @@
             </div>
 
             <!-- State: Loss Summary (Died) -->
-            <div id="state-died" class="run-panel" style="display:none">
-              <div class="panel-title">Run Failed — Loss Summary</div>
+            <div id="state-died" class="run-panel tile-tone tone-red" style="display:none">
+              <div class="panel-title"><span class="ui-icon icon-loss" aria-hidden="true"></span>Run Failed — Loss Summary</div>
               <div class="alert err" style="margin-bottom:10px">Your ship and pod were destroyed. Calculating total loss from pre-run cargo, drones, fitting, and implants...</div>
               <div id="killmailStatus" class="alert" role="status" aria-live="polite" style="display:none;margin-bottom:10px"></div>
               <div id="loss-loading" role="status" aria-live="polite" style="text-align:center;padding:20px;color:var(--text-dim)"><span class="spinner" aria-hidden="true"></span> Appraising losses via Janice...</div>
@@ -215,17 +236,19 @@
               <div class="action-row" id="loss-actions" style="display:none">
                 <button class="btn green" data-action="save-current-run">Save Run</button>
                 <button class="btn ghost sm" id="retryKillmailBtn" data-action="retry-killmail" style="display:none">Check Killmail</button>
+                <button class="btn ghost sm" data-action="review-pre-run">Review Pre-Run</button>
                 <button class="btn ghost sm" data-action="cancel-run">Discard</button>
               </div>
             </div>
 
             <!-- State: Appraisal Results (Survived) -->
-            <div id="state-appraisal" class="run-panel" style="display:none">
-              <div class="panel-title">Appraisal Results</div>
+            <div id="state-appraisal" class="run-panel tile-tone tone-green" style="display:none">
+              <div class="panel-title"><span class="ui-icon icon-isk" aria-hidden="true"></span>Appraisal Results</div>
               <div id="appraisal-results"></div>
               <div class="action-row">
                 <button class="btn green" data-action="save-current-run">Save Run</button>
                 <button class="btn ghost sm" data-action="back-to-appraise">← Re-Appraise</button>
+                <button class="btn ghost sm" data-action="review-pre-run">Review Pre-Run</button>
                 <button class="btn ghost sm" data-action="cancel-run">Discard</button>
               </div>
             </div>
@@ -233,12 +256,12 @@
 
           <!-- Right: Info Panel -->
           <aside class="tracker-sidebar" aria-label="Run overview">
-            <div class="panel tracker-current-panel">
-              <div class="panel-title">Current Run</div>
+            <div class="panel tracker-current-panel tile-tone tone-cyan">
+              <div class="panel-title"><span class="ui-icon icon-target" aria-hidden="true"></span>Current Run</div>
               <div class="tracker-current-grid">
-                <div><div class="field-label">Tier</div><div id="infoTier" style="font-size:13px;color:var(--text-dim)">—</div></div>
-                <div><div class="field-label">Weather</div><div id="infoWeather" style="font-size:13px;color:var(--text-dim)">—</div></div>
-                <div><div class="field-label">Started</div><div id="infoStarted" style="font-size:12px;font-family:var(--font-mono);color:var(--text-dim)">—</div></div>
+                <div><div class="field-label">Tier</div><div class="tracker-info-value cyan" id="infoTier">—</div></div>
+                <div><div class="field-label">Weather</div><div class="tracker-info-value gold" id="infoWeather">—</div></div>
+                <div><div class="field-label">Started</div><div class="tracker-info-value mono" id="infoStarted">—</div></div>
                 <div><div class="field-label">Outcome</div><div id="infoOutcome">—</div></div>
               </div>
               <div class="run-journal-fields">
@@ -248,8 +271,9 @@
                 <textarea class="field-textarea" id="activeRunNotes" maxlength="16384" placeholder="Tactics, room notes, anomalies…" data-input-action="active-run-metadata"></textarea>
               </div>
             </div>
-            <div class="panel">
-              <div class="panel-title">Recent Runs</div>
+            <div id="trackerSessionMount"></div>
+            <div class="panel tile-tone tone-gold">
+              <div class="panel-title"><span class="ui-icon icon-history" aria-hidden="true"></span>Recent Runs</div>
               <div id="recentRunsList" style="font-size:12px;color:var(--text-dim)">No runs yet</div>
             </div>
           </aside>
@@ -530,6 +554,12 @@
       <span id="manualEntryTitle">Enter Run Manually</span>
       <button class="modal-close" data-action="close-manual-entry" aria-label="Close manual run dialog">✕</button>
     </div>
+    <div class="manual-entry-mode" id="manualEntryModeSwitch" role="group" aria-label="Manual entry type">
+      <button type="button" class="manual-entry-mode-option active" data-action="switch-manual-entry-mode"
+        data-manual-mode="solo" aria-pressed="true">Solo</button>
+      <button type="button" class="manual-entry-mode-option" data-action="switch-manual-entry-mode"
+        data-manual-mode="group" aria-pressed="false">Group</button>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px">
       <div>
         <label class="field-label" for="manualTier">Tier</label>
@@ -697,8 +727,10 @@
     </div>
   </div>
 </div>
-
+<div id="trackerViewModalMount"></div>
+<div id="manualEncounterModalMount"></div>
 <script src="../shared/fitting.js"></script>
+<script src="../shared/run-domain.js"></script>
 <script src="../shared/security.js"></script>
 <script src="../shared/run-tracking.js"></script>
 <script src="../shared/appraisal.js"></script>
@@ -713,10 +745,16 @@
 <script src="./history-view.js"></script>
 <script src="../shared/ship-groups.js"></script>
 <script src="./inventory-editor.js"></script>
+<script src="./tracker-view-markup.js"></script>
+<script src="./tracker-view-controller.js"></script>
 <script src="./run-session-controller.js"></script>
+<script src="./concurrent-tracking-controller.js"></script>
+<script src="./character-tracking-ui-controller.js"></script>
+<script src="./tracking-preparation-controller.js"></script>
 <script src="./navigation-controller.js"></script>
 <script src="./modal-controller.js"></script>
 <script src="./appraisal-history-view.js"></script>
+<script src="./encounter-detail-view.js"></script>
 <script src="./ui-formatters.js"></script>
 <script src="./loadout-controller.js"></script>
 <script src="./ui-task-controller.js"></script>
@@ -724,6 +762,8 @@
 <script src="./run-details-controller.js"></script>
 <script src="./fit-name-controller.js"></script>
 <script src="./manual-run-controller.js"></script>
+<script src="./manual-encounter-markup.js"></script>
+<script src="./manual-encounter-controller.js"></script>
 <script src="./character-controller.js"></script>
 <script src="./app.js"></script>
 </body>

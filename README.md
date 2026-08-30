@@ -9,8 +9,9 @@ comparison, Janice appraisals, searchable history, and statistics.
 
 ## Features
 
-- **Automatic or manual tracking:** ESI can detect Abyssal entry and exit, with
-  a configurable polling interval that defaults to five seconds.
+- **Automatic or manual tracking:** ESI can detect Abyssal entry and exit for
+  every authorized character, with a configurable polling interval that
+  defaults to five seconds.
 - **Inventory comparison:** compare cargo and drones before and after a run,
   infer tier and weather from a recognized filament, and reuse the last survived
   inventory or a saved loadout preset.
@@ -20,14 +21,17 @@ comparison, Janice appraisals, searchable history, and statistics.
   and replace estimated losses with verified killmail contents when available.
 - **Searchable History:** combine free-text search across run details, tags, and
   gained, consumed, or lost item names with structured filters.
-- **Versioned CSV:** export the current History filters and import complete 1.2
+- **Versioned CSV:** export the current History filters and import complete 1.2.2
   History files. Duplicate run UIDs are skipped.
-- **Statistics:** review survival and ISK summaries, build Run Performance or
-  Item Drops reports, and open the matching runs in History.
+- **Statistics:** review survived-run income and death losses separately, build
+  Run Performance or Item Drops reports, and open matching runs in History.
+- **Current session:** see completed runs, survival, combined run time, and net
+  value on Tracker while recording the next run.
 - **Captured fits:** group equivalent hull, module, drone, and implant setups,
   then assign an optional display name without changing historical snapshots.
-- **Multiple characters and recovery:** keep permissions, history, and active
-  state per character, and recover unfinished runs after a restart.
+- **Concurrent characters and group runs:** track authorized characters in the
+  background, link participants in the same Abyssal encounter, and keep loot,
+  consumables, fits, outcomes, and recovery state character-specific.
 - **Local data controls:** create and restore full database backups, inspect
   privacy-filtered diagnostics, and store credentials with operating-system
   encryption.
@@ -71,13 +75,20 @@ AbyssLog does not include a shared Janice key. Request a key through the
 4. Paste the pre-run cargo and drone contents.
 5. Start the run manually, or let ESI detect entry.
 
+Preparation is saved per character. Use the character dropdown to prepare or
+review another character without stopping background tracking. The dropdown
+shows which characters are active or need post-run attention.
+Keep AbyssLog running during the encounter. Tracking continues while its window
+is minimized and stops when the application closes.
+
 ## Run workflow
 
 1. **Awaiting:** enter the pre-run inventory. A recognized filament sets the
    tier and weather.
 2. **In Abyss:** the timer runs after manual start or confirmed ESI entry.
-3. **Survived:** stop the run, enter the post-run inventory, appraise the result,
-   review it, and save.
+3. **Survived:** the Run Contents panel switches from the captured pre-run
+   inventory to post-run entry. Review the earlier snapshot when needed, appraise
+   the result, and save.
 4. **Died:** AbyssLog checks for an Abyssal killmail and appraises the recorded
    loss. If the killmail is delayed or unavailable, it uses the captured pre-run
    inventory, fit, and implants as an estimate.
@@ -85,6 +96,20 @@ AbyssLog does not include a shared Janice key. Request a key through the
 After a survived run, the post-run cargo and drones become the next pre-run
 baseline. Clear or replace that baseline after unloading, restocking, or changing
 drones.
+
+When characters enter Abyssal space together, Tracker offers to link them as one
+group encounter. Suggestions require two or three frigates, or two destroyers,
+and matching ship classes. Cruisers remain solo. Confirm the suggestion only
+when the characters share the same instance.
+Enter post-run inventory separately for each participant. AbyssLog derives the
+loot collector, filament use, and individual consumables from those inventory
+changes, then shows the combined encounter result in Run Details.
+
+Use **Enter Run Manually** and select **Group** when automatic tracking was
+unavailable. Shared tier, weather, timing, and ship class are entered once,
+followed by separate character, hull, outcome, inventory, notes, and tags for
+every participant. The complete encounter is appraised before any participant
+is saved.
 
 Use **Manage** under Pre-Run Contents to save a loadout from pasted cargo and
 drone lists. A preset stores only item names and quantities. Applying one replaces
@@ -159,10 +184,15 @@ local date. A later clean exit on the same date replaces that day's automatic
 backup. The latest seven automatic backups are retained. Manual and before-restore
 backups remain until you delete them.
 
-Restore accepts complete schema-v6 AbyssLog databases only. It validates a private
-copy, creates a safety backup of the current database, replaces the live database,
-and restarts the app. Credentials restored under another operating-system account
-may not decrypt and must then be entered again.
+Restore accepts complete schema-v7 backups and verified schema-v6 backups from
+AbyssLog 1.2. It validates a private copy, creates a safety backup of the current
+database, replaces the live database, and migrates schema v6 when required.
+Credentials restored under another operating-system account may not decrypt and
+must then be entered again.
+
+Startup upgrades schema-v6 databases to schema v7 in one transaction after
+creating and verifying a standalone pre-migration backup. Older schemas remain
+unsupported.
 
 Local diagnostics are retained for seven days and limited to five files of 1 MB
 each. They contain operational categories and status codes, not error messages,

@@ -8,12 +8,13 @@ const {
 } = require('./run-csv-validation-v6');
 
 const RUN_CSV_FORMAT = 'abysslog-history';
-const RUN_CSV_FORMAT_VERSION = 1;
+const RUN_CSV_FORMAT_VERSION = 2;
 const RUN_UID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEADERS = Object.freeze([
   'format',
   'format_version',
   'run_uid',
+  'encounter_uid',
   'character_id',
   'character_name',
   'started_at',
@@ -110,6 +111,7 @@ function createRunCsvRepository(getConnection, listRuns, saveRun) {
         format: RUN_CSV_FORMAT,
         format_version: RUN_CSV_FORMAT_VERSION,
         run_uid: run.run_uid,
+        encounter_uid: run.encounter_uid,
         character_id: run.character_id,
         character_name: run.character_name,
         started_at: run.started_at,
@@ -216,7 +218,7 @@ function createRunCsvRepository(getConnection, listRuns, saveRun) {
     const headers = rows[0].map((header, index) =>
       index === 0 ? header.replace(/^\uFEFF/, '') : header);
     if (headers.length !== HEADERS.length || HEADERS.some((header, index) => headers[index] !== header)) {
-      throw new TypeError('CSV is not the supported AbyssLog 1.2 history format');
+      throw new TypeError('CSV is not the supported AbyssLog 1.2.2 history format');
     }
     const idx = name => headers.indexOf(name);
     const existingUid = db.prepare('SELECT 1 FROM runs WHERE run_uid = ?');
@@ -237,6 +239,8 @@ function createRunCsvRepository(getConnection, listRuns, saveRun) {
           }
           const runUid = get('run_uid').toLowerCase();
           if (!RUN_UID_PATTERN.test(runUid)) throw new TypeError('Run UID is invalid');
+          const encounterUid = get('encounter_uid').toLowerCase();
+          if (!RUN_UID_PATTERN.test(encounterUid)) throw new TypeError('Encounter UID is invalid');
           const targetCharacterId = characterId || security.requireInteger(get('character_id'), 'Character ID');
           const fit = validateFitSnapshot(jsonCell(get('fit_snapshot'), 'Fit snapshot'));
           const inventories = validateInventorySnapshots(
@@ -294,6 +298,7 @@ function createRunCsvRepository(getConnection, listRuns, saveRun) {
               ...item,
               unit_price_sell: referencePrice(item.type_id, item.type_name, 'implant'),
             })),
+            encounter_uid: encounterUid,
           });
           if (existingUid.get(runUid) || existingStart.get(run.character_id, run.started_at)) {
             skipped++;

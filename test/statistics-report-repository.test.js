@@ -7,12 +7,12 @@ const { createRunRepository } = require('../src/main/database/run-repository-v6'
 const {
   createStatisticsReportRepository,
 } = require('../src/main/database/statistics-report-repository');
-const { createFreshSchemaV6 } = require('../src/main/database/schema-v6');
+const { createFreshSchemaV7 } = require('../src/main/database/schema-v7');
 
 function createHarness() {
   const connection = new Database(':memory:');
   connection.pragma('foreign_keys = ON');
-  createFreshSchemaV6(connection);
+  createFreshSchemaV7(connection);
   connection.prepare('INSERT INTO characters (id, name) VALUES (?, ?)')
     .run(9001, 'Report Pilot');
   const runs = createRunRepository(() => connection);
@@ -122,6 +122,16 @@ test('run performance reports combine allowlisted filters, groupings, and metric
       net_avg: 150,
       net_total: 300,
     });
+
+    const financials = reports.getReport(request({
+      group_by: [],
+      metrics: ['net_avg', 'net_total', 'death_loss_avg', 'death_loss_total'],
+      sort: { key: 'net_total', direction: 'desc' },
+    })).rows[0].values;
+    assert.equal(financials.net_avg, 350 / 3);
+    assert.equal(financials.net_total, 350);
+    assert.equal(financials.death_loss_avg, 500);
+    assert.equal(financials.death_loss_total, 500);
   } finally {
     connection.close();
   }
@@ -252,6 +262,81 @@ test('report options expose only actual cargo gains plus used hulls and fits', (
     assert.deepEqual(options.hulls.map(hull => hull.hull_name), ['Gila']);
     assert.equal(options.fits.length, 1);
     assert.equal(options.fits[0].hull_name, 'Gila');
+  } finally {
+    connection.close();
+  }
+});
+
+test('shared encounters count once while preserving participant economics and loot', () => {
+  const { connection, reports, runs } = createHarness();
+  try {
+    connection.prepare('INSERT INTO characters (id, name) VALUES (?, ?)')
+      .run(9002, 'Second Pilot');
+    connection.prepare('INSERT INTO characters (id, name) VALUES (?, ?)')
+      .run(9003, 'Third Pilot');
+    const encounterUid = '550e8400-e29b-41d4-a716-446655440000';
+    saveRun(runs, {
+      encounter_uid: encounterUid,
+      hull_name: 'Hawk',
+      ship_class: 'Frigate',
+      fitting: [],
+      cargo_before: 'Calm Gamma Filament\t3',
+      cargo_after: 'Triglavian Survey Database\t20',
+      consumed_cost: 7,
+      loot_value: 146,
+      net_isk: 139,
+    });
+    saveRun(runs, {
+      encounter_uid: encounterUid,
+      character_id: 9002,
+      hull_name: 'Hawk',
+      ship_class: 'Frigate',
+      fitting: [],
+      cargo_before: 'Inferno Rocket\t1000',
+      cargo_after: 'Inferno Rocket\t700',
+      consumed_cost: 2,
+      net_isk: -2,
+    });
+    saveRun(runs, {
+      encounter_uid: encounterUid,
+      character_id: 9003,
+      hull_name: 'Hawk',
+      ship_class: 'Frigate',
+      fitting: [],
+      cargo_before: 'Inferno Rocket\t1000',
+      cargo_after: 'Inferno Rocket\t700',
+      consumed_cost: 3,
+      net_isk: -3,
+    });
+
+    const performance = reports.getReport(request({
+      character_id: undefined,
+      group_by: [],
+      metrics: ['encounters', 'runs', 'survived', 'net_total'],
+      sort: { key: 'encounters', direction: 'desc' },
+    })).rows[0].values;
+    assert.deepEqual(performance, {
+      encounters: 1,
+      runs: 3,
+      survived: 3,
+      net_total: 134,
+    });
+
+    const drops = reports.getReport(request({
+      version: 1,
+      mode: 'drops',
+      character_id: undefined,
+      filters: { item_name: 'Triglavian Survey Database' },
+      group_by: [],
+      metrics: ['observed_runs', 'drop_runs', 'total_qty', 'qty_per_run'],
+      sort: { key: 'total_qty', direction: 'desc' },
+    })).rows[0].values;
+    assert.deepEqual(drops, {
+      observed_runs: 1,
+      drop_runs: 1,
+      total_qty: 20,
+      qty_per_run: 20,
+    });
   } finally {
     connection.close();
   }

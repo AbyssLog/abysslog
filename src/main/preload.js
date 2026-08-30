@@ -56,9 +56,12 @@ contextBridge.exposeInMainWorld('api', {
 
   runs: {
     save: runData => ipcRenderer.invoke('runs:save', runData),
+    saveEncounter: encounter => ipcRenderer.invoke('runs:save-encounter', encounter),
     completeActive: runData => ipcRenderer.invoke('runs:complete-active', runData),
     getActive: characterId => ipcRenderer.invoke('runs:get-active', characterId),
+    getTrackingDraft: characterId => ipcRenderer.invoke('runs:get-tracking-draft', characterId),
     saveActive: snapshot => ipcRenderer.invoke('runs:save-active', snapshot),
+    saveTrackingDraft: draft => ipcRenderer.invoke('runs:save-tracking-draft', draft),
     clearActive: characterId => ipcRenderer.invoke('runs:clear-active', characterId),
     getAll: filters => ipcRenderer.invoke('runs:get-all', filters),
     getById: runId => ipcRenderer.invoke('runs:get-by-id', runId),
@@ -71,6 +74,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('runs:get-inventory-baseline', characterId),
     clearInventoryBaseline: (characterId, runId) =>
       ipcRenderer.invoke('runs:clear-inventory-baseline', characterId, runId),
+    getSessionStats: scope => ipcRenderer.invoke('runs:get-session-stats', scope),
     getStats: filters => ipcRenderer.invoke('runs:get-stats', filters),
     getStatisticsReportOptions: scope =>
       ipcRenderer.invoke('runs:get-statistics-report-options', scope),
@@ -79,7 +83,6 @@ contextBridge.exposeInMainWorld('api', {
     update: (runId, data) => ipcRenderer.invoke('runs:update', runId, data),
     exportCSV: filters => ipcRenderer.invoke('runs:export-csv', filters),
     importCSV: characterId => ipcRenderer.invoke('runs:import-csv', characterId),
-    getDailyStats: filters => ipcRenderer.invoke('runs:get-daily-stats', filters),
   },
 
   data: {

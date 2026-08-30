@@ -13,18 +13,26 @@ function expect(condition, message) {
 }
 
 const budgets = new Map([
-  ['src/renderer/app.js', 1950],
-  ['src/renderer/index.html', 750],
-  ['src/renderer/run-details-controller.js', 500],
+  ['src/renderer/app.js', 2130],
+  ['src/renderer/index.html', 775],
+  ['src/renderer/run-details-controller.js', 510],
   ['src/renderer/stats-view.js', 340],
   ['src/renderer/statistics-report-controller.js', 430],
   ['src/renderer/statistics-report-markup.js', 90],
+  ['src/renderer/tracker-view-controller.js', 220],
+  ['src/renderer/tracker-view-markup.js', 60],
+  ['src/renderer/concurrent-tracking-controller.js', 480],
+  ['src/renderer/character-tracking-ui-controller.js', 115],
+  ['src/renderer/tracking-preparation-controller.js', 90],
+  ['src/renderer/encounter-detail-view.js', 60],
   ['src/renderer/appraisal-history-view.js', 60],
   ['src/renderer/support-settings-controller.js', 310],
   ['src/renderer/loadout-controller.js', 200],
   ['src/renderer/ui-task-controller.js', 80],
   ['src/renderer/fit-name-controller.js', 80],
   ['src/renderer/manual-run-controller.js', 420],
+  ['src/renderer/manual-encounter-controller.js', 340],
+  ['src/renderer/manual-encounter-markup.js', 80],
   ['src/renderer/character-controller.js', 280],
   ['src/main/main.js', 480],
   ['src/main/oauth-service.js', 180],
@@ -32,13 +40,17 @@ const budgets = new Map([
   ['src/main/database/facade.js', 100],
   ['src/main/database/schema.js', 380],
   ['src/main/database/schema-contract-v6.js', 230],
+  ['src/main/database/schema-contract-v7.js', 90],
+  ['src/main/database/schema-v7.js', 110],
+  ['src/main/database/schema-v7-migration-service.js', 90],
   ['src/main/database/lifecycle-service.js', 180],
-  ['src/main/database/run-repository-v6.js', 450],
-  ['src/main/database/run-query-repository-v6.js', 280],
+  ['src/main/database/run-repository-v6.js', 470],
+  ['src/main/database/run-query-repository-v6.js', 290],
   ['src/main/database/run-csv-repository-v6.js', 350],
   ['src/main/database/run-csv-validation-v6.js', 210],
   ['src/main/database/statistics-report-repository.js', 410],
   ['src/shared/statistics-report.js', 260],
+  ['src/shared/run-domain.js', 30],
 ]);
 
 for (const [relativePath, maximumLines] of budgets) {
@@ -56,6 +68,7 @@ const database = read('src/main/database.js');
 const databaseFacade = read('src/main/database/facade.js');
 const databaseSchema = read('src/main/database/schema.js');
 const databaseSchemaContractV6 = read('src/main/database/schema-contract-v6.js');
+const databaseSchemaContractV7 = read('src/main/database/schema-contract-v7.js');
 const databaseLifecycle = read('src/main/database/lifecycle-service.js');
 const backupService = read('src/main/database/backup-service.js');
 const statisticsReportRepository = read('src/main/database/statistics-report-repository.js');
@@ -81,6 +94,7 @@ expect(
   /AbyssRunSession/.test(rendererApp)
     && /AbyssStatsView/.test(rendererApp)
     && /AbyssStatisticsReportController/.test(rendererApp)
+    && /AbyssTrackerView/.test(rendererApp)
     && /AbyssHistoryView/.test(rendererApp)
     && /AbyssNavigation/.test(rendererApp)
     && /AbyssModals/.test(rendererApp)
@@ -91,6 +105,7 @@ expect(
     && /AbyssUiTasks/.test(rendererApp)
     && /AbyssFitNames/.test(rendererApp)
     && /AbyssManualRuns/.test(rendererApp)
+    && /AbyssManualEncounters/.test(rendererApp)
     && /AbyssCharacters/.test(rendererApp),
   'renderer/app.js must delegate feature views, navigation, modal behavior, formatting, and focused controllers'
 );
@@ -133,6 +148,7 @@ expect(
     && /createRunRepository/.test(databaseFacade)
     && /createStatisticsRepository/.test(databaseFacade)
     && /createStatisticsReportRepository/.test(databaseFacade)
+    && /createTrackingDraftRepository/.test(databaseFacade)
     && /createRunCsvRepository/.test(databaseFacade),
   'database/facade.js must compose lifecycle, backup, settings, credentials, inventory, run, statistics, and CSV ownership'
 );
@@ -145,25 +161,27 @@ expect(
   'dynamic reports must use typed snapshot aggregation and a SQL-free allowlisted contract'
 );
 expect(
-  /SCHEMA_VERSION = SCHEMA_VERSION_V6/.test(databaseSchema)
+  /SCHEMA_VERSION = SCHEMA_VERSION_V7/.test(databaseSchema)
     && /CURRENT_SCHEMA_CONTRACT/.test(databaseSchema)
     && /getCurrentSchemaIssues/.test(databaseSchema)
     && /idx_runs_fit_snapshot_started/.test(databaseSchemaContractV6)
+    && /idx_runs_encounter/.test(databaseSchemaContractV7)
     && /appraisal_current_per_run/.test(databaseSchemaContractV6)
-    && /foreignKeys/.test(databaseSchemaContractV6)
-    && /createFreshSchemaV6/.test(databaseSchema)
-    && !/schema-v5|migrateV5ToV6|LEGACY/.test(databaseSchema)
+    && /foreignKeys/.test(databaseSchemaContractV7)
+    && /createFreshSchemaV7/.test(databaseSchema)
+    && !/schema-v5|migrateV5ToV6|LEGACY/.test(databaseSchema + databaseSchemaContractV7)
     && !/ship_name/.test(databaseSchema),
   'database/schema.js must define only the current schema without legacy migration paths'
 );
 expect(
-  /currentVersion !== SCHEMA_VERSION/.test(databaseLifecycle)
+  /currentVersion !== SCHEMA_VERSION && currentVersion !== 6/.test(databaseLifecycle)
+    && /migrateFromSchemaV6/.test(databaseLifecycle)
     && /applicationId !== 0 && applicationId !== ABYSSLOG_APPLICATION_ID/.test(databaseLifecycle)
     && /getCurrentSchemaIssues/.test(databaseLifecycle)
-    && /schemaVersion !== SCHEMA_VERSION/.test(backupService)
+    && /allowSchemaV6 && schemaVersion === 6/.test(backupService)
     && /getCurrentSchemaIssues/.test(backupService)
-    && !/migrate|legacy|schema-v5/i.test(databaseLifecycle + backupService),
-  'database startup and restore must accept only the current schema'
+    && !/schema-v5|legacy/i.test(databaseLifecycle + backupService),
+  'database startup and restore must migrate only verified schema-v6 data into schema v7'
 );
 const removedLegacyRuntimeFiles = [
   'schema-v5.js',

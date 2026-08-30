@@ -69,6 +69,18 @@
     let pendingAppraisal = null;
     let submitting = false;
     let generation = 0;
+    let initialEntrySignature = '';
+
+    function entrySignature() {
+      return JSON.stringify([...document.querySelectorAll(
+        '#manualEntryModal input, #manualEntryModal select, #manualEntryModal textarea'
+      )].map(control => [control.id, control.value, Boolean(control.checked)]));
+    }
+
+    function hasUnsavedInput() {
+      return !editRunId && Boolean(initialEntrySignature)
+        && entrySignature() !== initialEntrySignature;
+    }
 
     function setSubmitting(value) {
       submitting = value;
@@ -91,6 +103,7 @@
       editRunId = null;
       editOriginal = null;
       pendingAppraisal = null;
+      initialEntrySignature = '';
       return true;
     }
 
@@ -100,6 +113,8 @@
       editOriginal = null;
       pendingAppraisal = null;
       document.getElementById('manualEntryTitle').textContent = 'Enter Run Manually';
+      const modeSwitch = document.getElementById('manualEntryModeSwitch');
+      if (modeSwitch) modeSwitch.hidden = false;
       document.getElementById('manualSubmitLabel').textContent = 'Appraise & Save';
       document.getElementById('manualSaveBtn').style.display = 'none';
       document.getElementById('manualTier').value = state.settings.default_tier || '';
@@ -120,6 +135,7 @@
       date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
       document.getElementById('manualDate').value = date.toISOString().slice(0, 16);
       updateOutcome();
+      initialEntrySignature = entrySignature();
       openModal('manualEntryModal');
     }
 
@@ -132,6 +148,8 @@
       pendingAppraisal = null;
       editOriginal = { outcome: run.outcome, total_loss: run.total_loss || 0 };
       document.getElementById('manualEntryTitle').textContent = 'Edit Run';
+      const modeSwitch = document.getElementById('manualEntryModeSwitch');
+      if (modeSwitch) modeSwitch.hidden = true;
       document.getElementById('manualSubmitLabel').textContent = 'Re-Appraise';
       document.getElementById('manualSaveBtn').style.display = 'inline-flex';
       document.getElementById('manualTier').value = run.tier || '';
@@ -376,6 +394,7 @@
 
     return Object.freeze({
       close,
+      hasUnsavedInput,
       invalidatePreview,
       openEdit,
       openNew,

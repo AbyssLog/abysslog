@@ -143,17 +143,6 @@ test('run IPC payloads are schema-validated and sanitized', () => {
     drop_item_name: 'Triglavian Survey Database',
     limit: 5,
   });
-  assert.deepEqual(security.validateStatsFilters({
-    character_id: '123',
-    range_start: 1_700_000_000,
-    range_end: 1_700_086_400,
-  }), {
-    character_id: 123,
-    range_start: 1_700_000_000,
-    range_end: 1_700_086_400,
-  });
-  assert.throws(() => security.validateStatsFilters({ range_start: 20, range_end: 20 }));
-  assert.throws(() => security.validateStatsFilters({ unexpected: true }));
   assert.throws(() => security.validateRunData({ ...run, outcome: 'Won' }));
   assert.throws(() => security.validateRunData({ ...run, unexpected: true }));
   assert.throws(() => security.validateRunFilters({ limit: 1001 }));
@@ -208,10 +197,11 @@ test('run IPC payloads are schema-validated and sanitized', () => {
 
 test('active run recovery snapshots are bounded and state-consistent', () => {
   const snapshot = security.validateActiveRunSnapshot({
-    version: 2,
+    version: 3,
     state: 'in-abyss',
     run: {
       character_id: 123,
+      encounter_uid: '550e8400-e29b-41d4-a716-446655440000',
       started_at: 1_700_000_000,
       duration: 0,
       tier: 'T4',
@@ -237,6 +227,7 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
 
   assert.equal(snapshot.state, 'in-abyss');
   assert.equal(snapshot.run.character_id, 123);
+  assert.equal(snapshot.run.encounter_uid, '550e8400-e29b-41d4-a716-446655440000');
   assert.equal(snapshot.run.system_name, 'Abyssal #32000001');
   assert.equal(snapshot.run.notes, 'Watch the final room');
   assert.deepEqual(snapshot.run.tags, ['Testing']);
@@ -254,6 +245,52 @@ test('active run recovery snapshots are bounded and state-consistent', () => {
     ...snapshot,
     unexpected: true,
   }), /unexpected field/);
+});
+
+test('per-character tracking drafts retain only pre-run preparation fields', () => {
+  const draft = security.validateTrackingDraft({
+    version: 1,
+    character_id: 123,
+    tier: 'T2',
+    weather: 'Dark',
+    cargo_before: 'Calm Dark Filament\t3',
+    drone_before: '',
+    notes: 'Group run',
+    tags: ['Multibox', 'multibox'],
+  });
+  assert.deepEqual(draft.tags, ['Multibox']);
+  assert.throws(() => security.validateTrackingDraft({
+    ...draft,
+    cargo_after: 'Loot',
+  }), /unexpected field/);
+  assert.throws(() => security.validateTrackingDraft({
+    ...draft,
+    character_id: 456,
+    tier: 'T9',
+  }), /tier/i);
+});
+
+test('manual encounter validation requires unique valid group participants', () => {
+  const participant = (characterId, shipClass = 'Destroyer') => ({
+    character_id: characterId,
+    started_at: 1_800_000_000,
+    duration: 750,
+    tier: 'T2',
+    weather: 'Dark',
+    outcome: 'Survived',
+    hull_name: shipClass === 'Destroyer' ? 'Jackdaw' : 'Gila',
+    ship_class: shipClass,
+  });
+  const encounter = security.validateEncounterData({
+    participants: [participant(1001), participant(1002)],
+  });
+  assert.equal(encounter.participants.length, 2);
+  assert.throws(() => security.validateEncounterData({
+    participants: [participant(1001), participant(1001)],
+  }), /different characters/i);
+  assert.throws(() => security.validateEncounterData({
+    participants: [participant(1001, 'Cruiser'), participant(1002, 'Cruiser')],
+  }), /three frigates or two destroyers/i);
 });
 
 test('ESI and OAuth responses are reduced to bounded schemas', () => {
@@ -490,14 +527,18 @@ test('renderer policy blocks inline script and inline event handlers', () => {
   const characterJs = fs.readFileSync(
     path.join(projectRoot, 'src/renderer/character-controller.js'), 'utf8'
   );
+  const trackerViewJs = fs.readFileSync(
+    path.join(projectRoot, 'src/renderer/tracker-view-controller.js'), 'utf8'
+  );
 
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
   const scriptDirective = csp.split(';').map(part => part.trim()).find(part => part.startsWith('script-src'));
   assert.equal(scriptDirective, "script-src 'self'");
   assert.doesNotMatch(html, /\son(?:click|error|input|change)\s*=/i);
   assert.doesNotMatch(appJs, /\son(?:click|error|input|change)\s*=/i);
-  assert.match(appJs, /\$\{esc\(r\.tier\)\}/);
-  assert.match(appJs, /\$\{esc\(r\.weather\)\}/);
+  assert.doesNotMatch(trackerViewJs, /\son(?:click|error|input|change)\s*=/i);
+  assert.match(trackerViewJs, /\$\{escapeHtml\(run\.tier\)\}/);
+  assert.match(trackerViewJs, /\$\{escapeHtml\(run\.weather\)\}/);
   assert.doesNotMatch(appJs, /setInterval\(pollESI/);
   assert.match(appJs, /runESIPollLoop/);
   assert.match(appJs, /calculateBackoffDelay/);
@@ -566,12 +607,9 @@ test('renderer exposes accessible form, dialog, and disclosure semantics', () =>
 
 test('IPC bridge matches guarded main-process handlers', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'src/main/main.js'), 'utf8');
-  const handlerSources = [
-    fs.readFileSync(path.join(projectRoot, 'src/main/character-handlers.js'), 'utf8'),
-    ...fs.readdirSync(path.join(projectRoot, 'src/main/ipc'))
-      .filter(name => name.endsWith('.js'))
-      .map(name => fs.readFileSync(path.join(projectRoot, 'src/main/ipc', name), 'utf8')),
-  ];
+  const handlerSources = fs.readdirSync(path.join(projectRoot, 'src/main/ipc'))
+    .filter(name => name.endsWith('.js'))
+    .map(name => fs.readFileSync(path.join(projectRoot, 'src/main/ipc', name), 'utf8'));
   const handlerSource = handlerSources.join('\n');
   const preload = fs.readFileSync(path.join(projectRoot, 'src/main/preload.js'), 'utf8');
   const database = [
@@ -596,6 +634,7 @@ test('IPC bridge matches guarded main-process handlers', () => {
 
   assert.deepEqual([...invokedChannels].sort(), [...handlerChannels].sort());
   assert.match(main, /sandbox:\s*true/);
+  assert.match(main, /backgroundThrottling:\s*false/);
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
   assert.match(main, /setPermissionCheckHandler/);
   assert.match(main, /permission === 'clipboard-read'/);

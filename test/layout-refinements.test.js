@@ -22,6 +22,10 @@ const statsReportMarkup = fs.readFileSync(
   path.join(projectRoot, 'src', 'renderer', 'statistics-report-markup.js'),
   'utf8'
 );
+const trackerViewMarkup = fs.readFileSync(
+  path.join(projectRoot, 'src', 'renderer', 'tracker-view-markup.js'),
+  'utf8'
+);
 
 test('empty survived post-run drone snapshots display the pre-run bay as unchanged', () => {
   assert.deepEqual(
@@ -44,6 +48,43 @@ test('tracker places Run Setup after Recent Runs and history uses balanced inven
   assert.equal((runDetailsJs.match(/class="run-detail-inventory-card"/g) || []).length, 6);
   assert.match(styles, /\.run-detail-inventory-card \{[^}]*display: flex/s);
   assert.match(styles, /\.inventory-unchanged-badge/);
+});
+
+test('Tracker swaps inventory stages and owns the current session summary', () => {
+  assert.match(html, /id="preRunContentsPanel"/);
+  assert.match(html, /id="state-awaiting-cargo"[^>]*run-contents-panel/);
+  assert.match(html, /data-action="review-pre-run"/);
+  assert.match(html, /id="trackerSessionMount"/);
+  assert.match(trackerViewMarkup, /id="trackerSessionPanel"/);
+  assert.match(trackerViewMarkup, /id="preRunReviewModal"[^>]*role="dialog"/);
+  assert.doesNotMatch(statsViewJs, /Latest Session/);
+  assert.match(html, /id="trackingSummary"[^>]*role="status"/);
+  assert.match(html, /data-action="confirm-encounter-group"/);
+  assert.match(html, /data-action="dismiss-encounter-group"/);
+  assert.match(html, /data-action="open-manual-entry"/);
+  assert.doesNotMatch(html, /data-action="open-manual-encounter"/);
+  assert.match(html, /id="manualEntryModeSwitch"[^>]*role="group"/);
+});
+
+test('Tracker and Statistics tiles use local decorative icons and restrained color tones', () => {
+  const iconDirectory = path.join(projectRoot, 'assets', 'icons');
+  for (const name of [
+    'location', 'ship', 'connection', 'stopwatch', 'cargo', 'target',
+    'session', 'history', 'gear', 'runs', 'survival', 'isk', 'loss',
+  ]) {
+    assert.equal(fs.existsSync(path.join(iconDirectory, `${name}.svg`)), true, name);
+  }
+  assert.match(html, /class="ui-icon icon-location" aria-hidden="true"/);
+  assert.match(html, /class="ui-icon icon-cargo" aria-hidden="true"/);
+  assert.match(html,
+    /class="hud-card tile-tone tone-cyan">\s*<div class="hud-card-label"><span class="ui-icon icon-ship"[^>]*><\/span>Hull/);
+  assert.match(trackerViewMarkup, /class="ui-icon icon-session" aria-hidden="true"/);
+  assert.match(statsViewJs, /statCard\('runs', 'cyan'/);
+  assert.match(statsViewJs, /statCard\('loss', 'red'/);
+  assert.match(styles, /\.stat-grid \{[^}]*grid-template-columns: repeat\(5/);
+  assert.match(styles, /@media \(max-width: 1080px\)[\s\S]*\.stat-grid \{[^}]*repeat\(2/);
+  assert.match(styles, /\.ui-icon \{[\s\S]*mask: var\(--ui-icon\)/);
+  assert.match(styles, /\.hud-card\.tile-tone, \.stat-card\.tile-tone/);
 });
 
 test('unchanged drone fallback remains visual until edited and clipboard wording is explicit', () => {

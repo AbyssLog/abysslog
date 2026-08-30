@@ -40,6 +40,10 @@ function mapRunSummary(run) {
     fit_identity_id: run.fit_identity_id,
     fit_key: run.fit_key,
     fit_display_name: run.fit_display_name,
+    encounter_uid: run.encounter_uid,
+    encounter_started_at: run.encounter_started_at,
+    encounter_duration: run.encounter_duration,
+    encounter_participant_count: run.encounter_participant_count,
     started_at: run.started_at,
     duration: run.duration,
     tier: run.tier,
@@ -72,6 +76,18 @@ function mapRunDetail(run) {
     fitting: (run.fitting || []).map(mapFittingItem),
     implants: (run.implants || []).map(mapImplant),
     killmail_ids: (run.killmail_ids || []).map(Number),
+    encounter_participants: (run.encounter_participants || []).map(participant => ({
+      id: participant.id,
+      character_id: participant.character_id,
+      character_name: participant.character_name,
+      outcome: participant.outcome,
+      hull_name: participant.hull_name,
+      ship_class: participant.ship_class,
+      loot_value: participant.loot_value,
+      consumed_cost: participant.consumed_cost,
+      net_isk: participant.net_isk,
+      total_loss: participant.total_loss,
+    })),
   };
 }
 
