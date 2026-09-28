@@ -13,6 +13,7 @@ function registerAuthSettingsHandlers({
   validateObjectPayload,
   getSecureStorageStatus,
   getJaniceApiKey,
+  getJaniceKeyStatus,
   saveJaniceApiKey,
   deleteJaniceApiKey,
   recordDiagnostic,
@@ -53,6 +54,7 @@ function registerAuthSettingsHandlers({
 
   secureHandle('secrets:status', () => getSecureStorageStatus());
   secureHandle('secrets:has-janice-key', () => Boolean(getJaniceApiKey()));
+  secureHandle('secrets:janice-key-status', () => getJaniceKeyStatus());
   secureHandle('secrets:set-janice-key', apiKey => saveJaniceApiKey(apiKey));
   secureHandle('secrets:delete-janice-key', () => deleteJaniceApiKey());
 }

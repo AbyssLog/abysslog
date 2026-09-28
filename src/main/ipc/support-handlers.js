@@ -56,7 +56,8 @@ function registerSupportHandlers({
         + inspection.runCount + ' ' + runLabel + '. AbyssLog will first preserve the current '
         + 'database as a before-restore backup, then restart.\n\n'
         + 'Credentials encrypted on another operating-system installation may not be '
-        + 'recoverable; affected characters and the Janice API key will need to be reconnected.',
+        + 'recoverable; reconnect affected characters and re-enter any personal Janice key. '
+        + 'The included Janice key remains available.',
       buttons: ['Cancel', 'Restore and Restart'],
       defaultId: 0,
       cancelId: 0,

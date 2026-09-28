@@ -106,6 +106,10 @@ async function inspectRenderer(page) {
     })(),
     errorNoticeHidden: document.getElementById('globalErrorNotice')?.hidden,
     errorMessage: document.getElementById('globalErrorMessage')?.textContent || '',
+    janiceKeyAvailable: typeof S !== 'undefined' && S.hasJaniceKey === true,
+    janiceKeySource: typeof S !== 'undefined' ? S.janiceKeyStatus?.source : null,
+    hasCustomJaniceKey: typeof S !== 'undefined' ? S.janiceKeyStatus?.hasCustomKey : null,
+    janiceKeyInputEmpty: document.getElementById('janiceKeyInput')?.value === '',
   })`);
   return JSON.parse(serialized);
 }
@@ -151,10 +155,23 @@ async function main() {
   const port = parsePort(process.argv[2]);
   const page = await findRendererTarget(port);
   const renderer = await waitForInitializedRenderer(page);
+  if (process.argv.includes('--require-bundled-janice')) {
+    if (!hasBundledJaniceKey(renderer)) {
+      throw new Error('Packaged application did not enable the bundled Janice key on a fresh profile');
+    }
+    console.log('Bundled Janice key is active on a fresh profile.');
+  }
   console.log(`Packaged renderer loaded successfully: ${renderer.url}`);
   if (process.argv.includes('--close-after-verify')) {
     await requestCleanRendererClose(page);
   }
+}
+
+function hasBundledJaniceKey(renderer) {
+  return renderer.janiceKeyAvailable === true
+    && renderer.janiceKeySource === 'bundled'
+    && renderer.hasCustomJaniceKey === false
+    && renderer.janiceKeyInputEmpty === true;
 }
 
 if (require.main === module) {
@@ -164,6 +181,7 @@ if (require.main === module) {
   });
 } else {
   module.exports = {
+    hasBundledJaniceKey,
     isRendererInitialized,
     parsePort,
     requestCleanRendererClose,

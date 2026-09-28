@@ -7,10 +7,14 @@ function createCredentialService({
   database,
   security,
   platform = process.platform,
+  bundledJaniceApiKey = null,
 }) {
   if (!safeStorage || !database || !security) {
     throw new TypeError('Credential service requires storage, database, and validation');
   }
+  const bundledKey = bundledJaniceApiKey === null
+    ? null
+    : security.requireTrimmedText(bundledJaniceApiKey, 'Bundled Janice key', 4096);
 
   function isSecureStorageAvailable() {
     if (!safeStorage.isEncryptionAvailable()) return false;
@@ -102,7 +106,17 @@ function createCredentialService({
   }
 
   function getJaniceApiKey() {
-    return decryptSecret(database.getCredential(JANICE_CREDENTIAL_KIND, null));
+    return decryptSecret(database.getCredential(JANICE_CREDENTIAL_KIND, null)) || bundledKey;
+  }
+
+  function getJaniceKeyStatus() {
+    const stored = database.getCredential(JANICE_CREDENTIAL_KIND, null);
+    const customKey = decryptSecret(stored);
+    return {
+      available: Boolean(customKey || bundledKey),
+      source: customKey ? 'custom' : bundledKey ? 'bundled' : 'none',
+      hasCustomKey: Boolean(stored),
+    };
   }
 
   return Object.freeze({
@@ -110,6 +124,7 @@ function createCredentialService({
     deleteJaniceApiKey,
     encryptSecret,
     getJaniceApiKey,
+    getJaniceKeyStatus,
     getSecureStorageStatus,
     isSecureStorageAvailable,
     loadTokens,

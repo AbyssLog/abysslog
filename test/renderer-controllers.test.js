@@ -130,6 +130,7 @@ test('support settings controller uses injected formatting, polling, and schedul
   const dom = new JSDOM(`
     <input id="janiceKeyInput" value="test-key" type="password">
     <button id="removeJaniceKeyBtn"></button>
+    <div id="janiceKeyStatus"></div>
     <div id="secureStorageStatus"></div>
     <input id="pollIntervalInput" value="10">
     <input id="defaultTierInput" value="T5">
@@ -146,6 +147,7 @@ test('support settings controller uses injected formatting, polling, and schedul
     activeCharId: 9001,
     capabilities: { tracking: true },
     hasJaniceKey: false,
+    janiceKeyStatus: { available: false, source: 'none', hasCustomKey: false },
     secureStorage: { available: true, backend: 'test' },
     settings: { esi_poll_interval: '5' },
     dataStatus: null,
@@ -157,7 +159,10 @@ test('support settings controller uses injected formatting, polling, and schedul
       janice: {
         testKey: async () => ({ items: [{ effectivePrices: { buyPrice: 123 } }] }),
       },
-      secrets: { setJaniceKey: async key => secretCalls.push(key) },
+      secrets: {
+        setJaniceKey: async key => secretCalls.push(key),
+        janiceKeyStatus: async () => ({ available: true, source: 'custom', hasCustomKey: true }),
+      },
       settings: { set: async (key, value) => settingsCalls.push([key, value]) },
     },
     state,
@@ -182,6 +187,66 @@ test('support settings controller uses injected formatting, polling, and schedul
   assert.equal(pollingStarts, 1);
   assert.equal(scheduled.length, 1);
   assert.equal(scheduled[0][1], 2500);
+});
+
+test('settings tests the bundled key and restores it after removing a personal key', async () => {
+  const dom = new JSDOM(`
+    <input id="janiceKeyInput" type="password">
+    <button id="removeJaniceKeyBtn"></button>
+    <div id="janiceKeyStatus"></div><div id="secureStorageStatus"></div>
+    <div id="janiceTestResult"></div>
+  `);
+  const state = {
+    hasJaniceKey: true,
+    janiceKeyStatus: { available: true, source: 'bundled', hasCustomKey: false },
+    secureStorage: { available: false, backend: 'test' },
+    settings: {},
+  };
+  const appraisalCalls = [];
+  let deletions = 0;
+  const controller = createSupportSettingsController({
+    document: dom.window.document, state,
+    api: {
+      secrets: {
+        deleteJaniceKey: async () => { deletions += 1; },
+        janiceKeyStatus: async () => ({ available: true, source: 'bundled', hasCustomKey: false }),
+      },
+      janice: { appraise: async (...args) => {
+        appraisalCalls.push(args);
+        return { items: [{ effectivePrices: { buyPrice: 123 } }] };
+      } },
+    },
+    formatBytes: String, formatIsk: String, renderCharList: () => {},
+    refreshSavedRunViews: async () => {}, startPolling: () => {}, confirmAction: () => true,
+  });
+  const byId = id => dom.window.document.getElementById(id);
+  controller.load();
+  assert.equal(byId('janiceKeyInput').value, '');
+  assert.equal(byId('janiceKeyInput').disabled, true);
+  assert.equal(byId('removeJaniceKeyBtn').style.display, 'none');
+  assert.match(byId('janiceKeyStatus').textContent, /No setup needed/);
+  await controller.testJaniceKey();
+  assert.deepEqual(appraisalCalls, [[[{ name: 'Tritanium', qty: 1 }], 'buy']]);
+  assert.match(byId('janiceTestResult').textContent, /API key valid/);
+
+  state.secureStorage.available = true;
+  state.janiceKeyStatus = { available: true, source: 'custom', hasCustomKey: true };
+  controller.load();
+  assert.equal(byId('removeJaniceKeyBtn').style.display, 'inline-flex');
+  assert.match(byId('janiceKeyStatus').textContent, /Using your personal/);
+  await controller.removeJaniceKey();
+  assert.equal(deletions, 1);
+  assert.equal(state.hasJaniceKey, true);
+  assert.equal(state.janiceKeyStatus.source, 'bundled');
+  assert.equal(byId('removeJaniceKeyBtn').style.display, 'none');
+  assert.match(byId('janiceTestResult').textContent, /will use the included key/);
+
+  state.hasJaniceKey = false;
+  state.janiceKeyStatus = { available: false, source: 'none', hasCustomKey: false };
+  controller.load();
+  assert.match(byId('janiceKeyStatus').textContent, /no usable Janice key/);
+  await controller.testJaniceKey();
+  assert.match(byId('janiceTestResult').textContent, /Enter an API key first/);
 });
 
 test('UI tasks report failures and run bounded recovery without rejecting', async () => {

@@ -60,6 +60,8 @@ jobs:
         run: npm run setup
 
       - name: Build unsigned Windows preview
+        env:
+          JANICE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.JANICE_API_KEY || '' }}
         run: npm run build:win
 
       - name: Smoke test packaged application
@@ -97,6 +99,8 @@ jobs:
         run: npm run setup
 
       - name: Build unsigned macOS preview
+        env:
+          JANICE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.JANICE_API_KEY || '' }}
         run: npm run build:mac
 
       - name: Upload macOS preview
@@ -129,6 +133,8 @@ jobs:
         run: npm run setup
 
       - name: Build Linux preview
+        env:
+          JANICE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.JANICE_API_KEY || '' }}
         run: npm run build:linux
 
       - name: Upload Linux preview

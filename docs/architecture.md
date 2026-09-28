@@ -63,7 +63,9 @@ requests are blocked.
 - `ipc-guard.js` and `ipc/`: sender checks, payload bounds, restore blocking, and
   feature-specific IPC registration.
 - `oauth-service.js` and `credential-service.js`: PKCE, authorization persistence,
-  credential validation, and `safeStorage` encryption.
+  credential validation, and `safeStorage` encryption. Personal Janice keys take
+  priority over the build-injected default from `bundled-janice-key.js`; only
+  availability, source, and saved-key presence cross the status IPC boundary.
 - `esi.js`, `janice.js`, and `http-client.js`: validated external-service clients,
   bounded HTTP, retries, and rate-limit waits.
 - `database.js`: stable persistence entry point.
@@ -241,7 +243,8 @@ SQLite uses WAL mode, foreign keys, and secure deletion.
 - `characters`: public EVE identity.
 - `settings`: public preferences.
 - `credentials`: format-1 `safeStorage` ciphertext for OAuth tokens and the
-  Janice key.
+  optional personal Janice key. The shared default lives in the application
+  bundle and is not copied into the database.
 - `runs`: stable `run_uid`, metadata, canonical `hull_name`, and an optional fit
   snapshot reference. Each row is one character's ship entry.
 - `encounters`: shared timing, tier, weather, and Abyssal identity for one or

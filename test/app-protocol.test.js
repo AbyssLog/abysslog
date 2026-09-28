@@ -43,6 +43,8 @@ test('application protocol rejects other origins and traversal attempts', () => 
     'https://bundle/src/renderer/index.html',
     'abysslog-app://other/src/renderer/index.html',
     'abysslog-app://bundle/src/main/main.js',
+    'abysslog-app://bundle/src/main/bundled-janice-key.json',
+    'abysslog-app://bundle/.janice-api-key',
     'abysslog-app://bundle/node_modules/better-sqlite3/index.js',
     'abysslog-app://bundle/src/renderer/%2e%2e%5cmain%5cmain.js',
     'abysslog-app://bundle/assets/%00logo.png',

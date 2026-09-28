@@ -1,6 +1,6 @@
 {
   "name": "abysslog",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "EVE Online Abyssal Deadspace run tracker",
   "author": "Erinys",
   "license": "MIT",
@@ -24,7 +24,7 @@
     "test:coverage": "node --test --experimental-test-coverage",
     "start": "electron .",
     "build:win": "electron-builder --win --publish never",
-    "build:win:release": "electron-builder --win nsis --x64 --publish never",
+    "build:win:release": "node scripts/prepare-bundled-janice.js --required && electron-builder --win nsis --x64 --publish never",
     "build:mac": "electron-builder --mac --publish never",
     "build:linux": "electron-builder --linux --publish never",
     "build:all": "electron-builder --win --mac --linux --publish never",
@@ -35,6 +35,7 @@
   "build": {
     "appId": "com.abysslog.app",
     "productName": "AbyssLog",
+    "beforePack": "./scripts/prepare-bundled-janice.js",
     "directories": {
       "output": "dist"
     },

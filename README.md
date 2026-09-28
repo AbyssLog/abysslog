@@ -62,18 +62,23 @@ in your browser:
 Permissions are stored per character and can be changed later. Manual run entry
 remains available when no optional ESI features are selected.
 
-### Add a Janice API key
+### Janice appraisals
 
-AbyssLog does not include a shared Janice key. Request a key through the
-[Janice Discord](https://discord.gg/janice), then save and test it in **Settings**.
+Official releases include a shared Janice key with permission from the Janice
+author, so appraisals work without requesting a key. **Settings** shows whether
+the included key or a personal key is in use; **Test** checks the active key.
+
+You can optionally save your own key in **Settings**. It takes priority over the
+included key, and removing it restores the included key. Personal keys are
+available through the [Janice Discord](https://discord.gg/janice). Source builds
+and pull-request previews may need a personal key if no shared key was bundled.
 
 ### Record the first run
 
-1. Open **Settings** and save a Janice API key.
-2. Add an EVE character, or use manual entry without ESI.
-3. Open **Tracker**.
-4. Paste the pre-run cargo and drone contents.
-5. Start the run manually, or let ESI detect entry.
+1. Add an EVE character, or use manual entry without ESI.
+2. Open **Tracker**.
+3. Paste the pre-run cargo and drone contents.
+4. Start the run manually, or let ESI detect entry.
 
 Preparation is saved per character. Use the character dropdown to prepare or
 review another character without stopping background tracking. The dropdown
@@ -142,18 +147,36 @@ npm run build:mac
 npm run build:linux
 ```
 
+To include the shared Janice key in a local build, set `JANICE_API_KEY` in the
+build environment or save the key in the Git-ignored `.janice-api-key` file at
+the project root. An explicitly set environment variable takes priority.
+The packaging hook generates `src/main/bundled-janice-key.json`, also ignored by
+Git, and includes it in the app. Run `node scripts/prepare-bundled-janice.js`
+before `npm start` to use that key in development. Builds without either input
+clear any previously generated key and support personal keys in Settings.
+
+Bundled desktop keys can be extracted from the distributed application. Build
+injection keeps the shared key out of source control; it does not make it secret
+from recipients of the app. Rotate it by replacing the build key and publishing
+a new release.
+
 Run `npm run check` before submitting a change. It checks architectural boundaries
 and runs the complete test suite. Use `npm run test:coverage` for a coverage report.
 
 ## Publishing a Windows release
 
 Public releases use immutable GitHub releases and unsigned Windows installers.
+Configure the repository's GitHub Actions secret `JANICE_API_KEY` with the shared
+key before releasing. `build:win:release` fails if no key is available. The release
+workflow and trusted branch previews inject this secret only during packaging;
+pull-request previews do not receive it.
+
 Set the same version in `package.json`, `package-lock.json`, and `version.json`,
 merge the release commit into `main`, then create and push a matching annotated tag:
 
 ```bash
-git tag -a v1.2.2 -m "AbyssLog v1.2.2"
-git push origin v1.2.2
+git tag -a v1.2.3 -m "AbyssLog v1.2.3"
+git push origin v1.2.3
 ```
 
 The release workflow:
@@ -175,9 +198,11 @@ The SQLite database is stored in the application data directory:
 - **macOS:** `~/Library/Application Support/abysslog/abysslog.db`
 - **Linux:** `~/.config/abysslog/abysslog.db`
 
-OAuth tokens and the Janice API key are encrypted with Electron `safeStorage` and
-stored in the credentials table. Sign-in and credential storage are disabled if
-a secure operating-system provider is unavailable.
+OAuth tokens and optional personal Janice keys are encrypted with Electron
+`safeStorage` and stored in the credentials table. Sign-in and credential storage
+are disabled if a secure operating-system provider is unavailable. The included
+Janice key belongs to the application bundle and requires no database entry or
+operating-system encryption provider.
 
 On each clean exit, AbyssLog writes a verified automatic backup for the current
 local date. A later clean exit on the same date replaces that day's automatic

@@ -1,6 +1,6 @@
 # AbyssLog Privacy Notice
 
-Last updated: 25 August 2026
+Last updated: 28 September 2026
 
 AbyssLog is a local, non-commercial application. The developer does not operate
 an AbyssLog account service or application server. The app does not include telemetry, advertising, or crash reporting,
@@ -13,14 +13,20 @@ AbyssLog stores the following data in a local SQLite database:
 
 - EVE character IDs, names, portrait URLs, and selected ESI permissions;
 - EVE OAuth access and refresh tokens;
-- the Janice API key you provide;
+- an optional personal Janice API key, if you provide one;
 - run history, notes, tags, systems, cargo, drones, fittings, implants,
   appraisals, appraisal items, and matching killmail IDs;
 - unfinished-run checkpoints, inventory baselines, and app settings.
 
-OAuth tokens and the Janice API key are encrypted with Electron `safeStorage`
+OAuth tokens and personal Janice API keys are encrypted with Electron `safeStorage`
 before storage. Sign-in and secret storage are disabled when a secure
 operating-system encryption provider is unavailable.
+
+Official releases include an application-owned Janice key with the author's
+permission. This shared key is part of the app bundle, can be extracted from it,
+and is not stored in your database. A saved personal key takes priority; removing
+it returns appraisals to the included key. If a restored personal key cannot be
+decrypted, the included key is used when available.
 
 On each clean exit, AbyssLog writes a verified full database backup for the
 current local date and retains the latest seven automatic backups. Manual and
@@ -30,8 +36,8 @@ personal data and encrypted credentials as the live database.
 A restore validates a private copy, creates a safety backup of the current
 database, replaces the live database, and restarts the app. Credentials restored
 under another operating-system installation or user profile may not decrypt.
-Reconnect the affected EVE characters and enter the Janice API key again if
-needed.
+Reconnect the affected EVE characters and re-enter your personal Janice API key
+if you want to keep using it. The included key remains available.
 
 ## History CSV exports
 
@@ -65,8 +71,9 @@ AbyssLog communicates directly from your computer with:
   AbyssLog filters that response locally and stores only the captured hull,
   modules, rigs, and drones;
 - **EVE Images** (`images.evetech.net`) for character portraits;
-- **Janice** (`janice.e-351.com`) for item appraisals. The app sends your Janice
-  key, item names, and quantities and requests non-persistent appraisals;
+- **Janice** (`janice.e-351.com`) for item appraisals. The app sends the included
+  key or your personal key, item names, and quantities and requests non-persistent
+  appraisals;
 - **GitHub** (`api.github.com` and `github.com`) to retrieve release information
   only when you select **Check for Updates**, and to open a project or release
   link that you select.

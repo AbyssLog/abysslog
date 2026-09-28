@@ -214,6 +214,7 @@ async function createRendererHarness() {
     secrets: apiGroup({
       status: async () => ({ available: true, backend: 'test' }),
       hasJaniceKey: async () => true,
+      janiceKeyStatus: async () => ({ available: true, source: 'bundled', hasCustomKey: false }),
     }),
     data: apiGroup({
       getStatus: async () => null,

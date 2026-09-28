@@ -74,10 +74,12 @@ jobs:
         run: npm run setup
 
       - name: Build unsigned Windows installer
+        env:
+          JANICE_API_KEY: ${{ secrets.JANICE_API_KEY }}
         run: npm run build:win:release
 
       - name: Smoke test packaged application
-        run: npm run test:package:win
+        run: npm run test:package:win -- -RequireBundledJaniceKey
 
       - name: Create release checksums
         run: npm run release:checksums

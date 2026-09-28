@@ -33,10 +33,19 @@
       const keyInput = document.getElementById('janiceKeyInput');
       keyInput.value = '';
       keyInput.disabled = !state.secureStorage.available;
-      keyInput.placeholder = state.hasJaniceKey
+      const keyStatus = state.janiceKeyStatus;
+      keyInput.placeholder = keyStatus.hasCustomKey
         ? 'Saved securely - enter a replacement'
-        : 'Your Janice API key...';
-      document.getElementById('removeJaniceKeyBtn').style.display = state.hasJaniceKey ? 'inline-flex' : 'none';
+        : 'Optional personal API key...';
+      document.getElementById('removeJaniceKeyBtn').style.display = keyStatus.hasCustomKey ? 'inline-flex' : 'none';
+      const statusText = keyStatus.source === 'custom'
+        ? 'Using your personal Janice key.'
+        : keyStatus.source === 'bundled'
+          ? 'Appraisals are ready using the included Janice key. No setup needed.'
+          : 'This build has no usable Janice key. Add a personal key to enable appraisals.';
+      document.getElementById('janiceKeyStatus').textContent = statusText
+        + (keyStatus.hasCustomKey && keyStatus.source !== 'custom'
+          ? ' Your saved personal key could not be read; replace or remove it.' : '');
 
       const storageStatus = document.getElementById('secureStorageStatus');
       storageStatus.textContent = state.secureStorage.available
@@ -203,14 +212,21 @@
     }
 
     async function removeJaniceKey() {
-      if (!confirmAction('Remove the saved Janice API key?')) return;
+      if (!confirmAction('Remove your saved personal Janice key? The included key will be used if available.')) return;
       await api.secrets.deleteJaniceKey();
-      state.hasJaniceKey = false;
+      await refreshJaniceKeyStatus();
       loadSettingsPage();
       const resultEl = document.getElementById('janiceTestResult');
-      resultEl.textContent = 'Saved API key removed.';
+      resultEl.textContent = state.hasJaniceKey
+        ? 'Personal key removed. Appraisals will use the included key.'
+        : 'Personal key removed. Add a key to enable appraisals.';
       resultEl.className = 'alert success';
       resultEl.style.display = 'block';
+    }
+
+    async function refreshJaniceKeyStatus() {
+      state.janiceKeyStatus = await api.secrets.janiceKeyStatus();
+      state.hasJaniceKey = state.janiceKeyStatus.available;
     }
 
     async function importCSV() {
@@ -238,7 +254,7 @@
       };
       if (apiKey) {
         await api.secrets.setJaniceKey(apiKey);
-        state.hasJaniceKey = true;
+        await refreshJaniceKeyStatus();
       }
       for (const [key, value] of Object.entries(updates)) {
         await api.settings.set(key, value);

@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
   secrets: {
     status: () => ipcRenderer.invoke('secrets:status'),
     hasJaniceKey: () => ipcRenderer.invoke('secrets:has-janice-key'),
+    janiceKeyStatus: () => ipcRenderer.invoke('secrets:janice-key-status'),
     setJaniceKey: apiKey => ipcRenderer.invoke('secrets:set-janice-key', apiKey),
     deleteJaniceKey: () => ipcRenderer.invoke('secrets:delete-janice-key'),
   },
