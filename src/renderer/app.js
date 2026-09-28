@@ -49,6 +49,7 @@ const S = {
   capabilities: { tracking: false, fitting: false, implants: false, killmails: false },
   characterCapabilities: {},
   hasJaniceKey: false,
+  janiceKeyStatus: { available: false, source: 'none', hasCustomKey: false },
   secureStorage: { available: false, backend: 'unknown' },
   dataStatus: null,
   diagnosticsStatus: null,
@@ -350,7 +351,7 @@ async function init() {
     S.settings,
     S.characters,
     S.secureStorage,
-    S.hasJaniceKey,
+    S.janiceKeyStatus,
     S.dataStatus,
     S.diagnosticsStatus,
     S.loadoutPresets,
@@ -358,11 +359,12 @@ async function init() {
     window.api.settings.getAll(),
     window.api.auth.getCharacters(),
     window.api.secrets.status(),
-    window.api.secrets.hasJaniceKey(),
+    window.api.secrets.janiceKeyStatus(),
     window.api.data.getStatus(),
     window.api.diagnostics.getStatus(),
     window.api.loadouts.get(),
   ]);
+  S.hasJaniceKey = S.janiceKeyStatus.available;
   await refreshCharacterCapabilities();
 
   loadSettingsPage();

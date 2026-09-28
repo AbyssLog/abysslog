@@ -38,4 +38,5 @@ validates the backup, preserves the current database as a safety backup, replace
 the live database, and restarts.
 
 After reinstalling the operating system, reconnect any EVE characters and enter
-the Janice API key again if the restored credentials cannot be decrypted.
+a personal Janice API key again if the restored credentials cannot be decrypted.
+The included Janice key remains available without re-entering it.

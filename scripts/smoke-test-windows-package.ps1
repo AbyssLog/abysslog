@@ -3,6 +3,7 @@ param(
   [string]$AppPath,
   [string]$SeedDatabasePath,
   [string]$NodePath = 'node',
+  [switch]$RequireBundledJaniceKey,
   [ValidateRange(5, 120)]
   [int]$TimeoutSeconds = 30
 )
@@ -131,7 +132,11 @@ try {
 
   $devToolsPort = Get-Content -LiteralPath $devToolsPortPath | Select-Object -First 1
   $rendererVerifier = Join-Path $PSScriptRoot 'verify-packaged-renderer.js'
-  & $NodePath $rendererVerifier $devToolsPort '--close-after-verify'
+  $verifierArguments = @($devToolsPort, '--close-after-verify')
+  if ($RequireBundledJaniceKey) {
+    $verifierArguments += '--require-bundled-janice'
+  }
+  & $NodePath $rendererVerifier @verifierArguments
   if ($LASTEXITCODE -ne 0) {
     throw "Packaged renderer verification failed with exit code $LASTEXITCODE"
   }

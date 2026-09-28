@@ -4,10 +4,25 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  hasBundledJaniceKey,
   isRendererInitialized,
   parsePort,
   requestCleanRendererClose,
 } = require('../scripts/verify-packaged-renderer');
+
+test('release smoke check requires a bundled key on a fresh profile without revealing it', () => {
+  const renderer = {
+    janiceKeyAvailable: true,
+    janiceKeySource: 'bundled',
+    hasCustomJaniceKey: false,
+    janiceKeyInputEmpty: true,
+  };
+  assert.equal(hasBundledJaniceKey(renderer), true);
+  assert.equal(hasBundledJaniceKey({ ...renderer, janiceKeyAvailable: false }), false);
+  assert.equal(hasBundledJaniceKey({ ...renderer, janiceKeySource: 'custom' }), false);
+  assert.equal(hasBundledJaniceKey({ ...renderer, hasCustomJaniceKey: true }), false);
+  assert.equal(hasBundledJaniceKey({ ...renderer, janiceKeyInputEmpty: false }), false);
+});
 
 function healthyRenderer(readyState) {
   return {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.3 (28 September 2026)
+
+- Include an author-approved shared Janice key in release builds so appraisals
+  need no API-key setup. Personal keys remain optional and take priority.
+- Show the active Janice key source in Settings and restore the included key
+  when a personal key is removed.
+
 ## 1.2.2 (30 August 2026)
 
 - Reworked Tracker so post-run inventory replaces the pre-run panel after a

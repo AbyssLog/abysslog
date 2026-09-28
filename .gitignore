@@ -7,3 +7,6 @@ dist-*/
 .DS_Store
 Thumbs.db
 /RELEASE_CHECKLIST.md
+/src/main/bundled-janice-key.json
+/Janice.txt
+/.janice-api-key

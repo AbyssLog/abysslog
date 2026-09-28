@@ -27,6 +27,7 @@ const db = require('./database');
 const { createDiagnostics } = require('./diagnostics');
 const esi = require('./esi');
 const { createCredentialService } = require('./credential-service');
+const { readBundledJaniceKey } = require('./bundled-janice-key');
 const { createIpcGuard } = require('./ipc-guard');
 const janice = require('./janice');
 const { createOAuthService } = require('./oauth-service');
@@ -43,6 +44,7 @@ const credentialService = createCredentialService({
   safeStorage,
   database: db,
   security,
+  bundledJaniceApiKey: readBundledJaniceKey(),
 });
 
 let mainWindow;
@@ -419,6 +421,7 @@ registerAuthSettingsHandlers({
   getPublicSettings,
   validateObjectPayload: ipcGuard.validateObjectPayload,
   getSecureStorageStatus: credentialService.getSecureStorageStatus,
+  getJaniceKeyStatus: credentialService.getJaniceKeyStatus,
   getJaniceApiKey: credentialService.getJaniceApiKey,
   saveJaniceApiKey: credentialService.saveJaniceApiKey,
   deleteJaniceApiKey: credentialService.deleteJaniceApiKey,
